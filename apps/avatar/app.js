@@ -106,12 +106,15 @@
         for (var i = 0; i < styles.length; i++) {
           var s = styles[i];
           if (!s || !s.id || !s.name) { continue; }
+          /* 产品隔离：只要本产品的风格（历史数据无 product 字段视为 avatar） */
+          if (s.product && s.product !== 'avatar') { continue; }
           valid.push({
             id: String(s.id),
             name: String(s.name),
             imageUrl: typeof s.imageUrl === 'string' ? s.imageUrl : '',
             prompt: typeof s.prompt === 'string' ? s.prompt : '',
-            providerId: s.providerId || ''
+            providerId: s.providerId || '',
+            product: 'avatar'
           });
         }
         if (!valid.length) { return false; }

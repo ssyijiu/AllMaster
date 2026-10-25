@@ -222,6 +222,11 @@
     var CONFIG_TABLE = 'app_config';
     var SECRETS_TABLE = 'app_secrets';
     var CONFIG_ID = 'default';
+    /* 平台产品清单：风格按 product 字段归属产品（存量数据无该字段视为 avatar） */
+    var PLATFORM_PRODUCTS = [
+      { id: 'avatar', name: '头像制作大师' },
+      { id: 'pixelart', name: '拼豆大师' }
+    ];
 
     function $(id) { return document.getElementById(id); }
 
@@ -345,7 +350,10 @@
         return {
           adminUserId: data.adminUserId || '',
           providers: Array.isArray(data.providers) ? data.providers : [],
-          styles: Array.isArray(data.styles) ? data.styles : [],
+          styles: (Array.isArray(data.styles) ? data.styles : []).map(function (s) {
+            /* 存量风格无 product 字段，默认归属第一个产品（avatar） */
+            return Object.assign({}, s, { product: s.product || PLATFORM_PRODUCTS[0].id });
+          }),
           providerKeys: sec.providerKeys || {},
           accessKey: sec.accessKey || '',
           paySecret: sec.paySecret || ''
@@ -536,6 +544,7 @@
           '<div><label class="field-label">风格名称</label><input class="text-input" data-f="name" value="' + esc(s.name) + '"/></div>' +
           '<div><label class="field-label">标识 id（小写字母/数字）</label><input class="text-input mono" data-f="id" value="' + esc(s.id) + '"/></div>' +
           '<div><label class="field-label">绑定的服务商</label><select class="text-input" data-f="providerId"></select></div>' +
+          '<div><label class="field-label">所属产品（前台按产品隔离展示）</label><select class="text-input" data-f="product"></select></div>' +
           '</div>' +
           '<div class="grid-3">' +
           '<div><label class="field-label">封面图（前台风格卡展示）</label>' +
@@ -565,6 +574,16 @@
         noneOpt.textContent = '（未绑定）';
         if (!s.providerId) { noneOpt.selected = true; }
         providerSel.insertBefore(noneOpt, providerSel.firstChild);
+
+        /* 所属产品下拉（change 由下方通用 select[data-f] 处理器写回 s.product） */
+        var productSel = card.querySelector('[data-f="product"]');
+        PLATFORM_PRODUCTS.forEach(function (pp) {
+          var opt = document.createElement('option');
+          opt.value = pp.id;
+          opt.textContent = pp.name;
+          if ((s.product || PLATFORM_PRODUCTS[0].id) === pp.id) { opt.selected = true; }
+          productSel.appendChild(opt);
+        });
 
         renderCover(card.querySelector('[data-cover]'), s);
 
@@ -657,7 +676,8 @@
             id: s.id, name: s.name,
             imageUrl: s.imageUrl || '',
             prompt: s.prompt == null ? '' : String(s.prompt),
-            providerId: s.providerId || ''
+            providerId: s.providerId || '',
+            product: s.product || PLATFORM_PRODUCTS[0].id
           };
         })
       };
@@ -839,7 +859,8 @@
       var base = 'style-' + Date.now().toString(36);
       cfg.styles.push({
         id: base, name: '新风格', imageUrl: '', prompt: '',
-        providerId: cfg.providers.length ? cfg.providers[0].id : ''
+        providerId: cfg.providers.length ? cfg.providers[0].id : '',
+        product: PLATFORM_PRODUCTS[0].id
       });
       renderStyles();
       showSaveMsg('已新增风格，填写后记得点右下角「保存全部配置」', '');

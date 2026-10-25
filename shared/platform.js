@@ -1,8 +1,11 @@
 /* =========================================================
  * 平台层（所有产品共用）：云服务 / 登录 / 积分钱包 / 支付
  * - 本文件不含任何产品业务；产品通过 Platform.setup(ctx) 接入
- *   ctx: { els, store, showHint, callbackPath, userChipTitle,
+ *   ctx: { els, store, showHint, callbackPath, userChipTitle, productSlug,
  *          onLoginSuccess(user), onSignOut() }
+ *     productSlug（可选）：产品隔离标识。传入后钱包套餐只显示
+ *     本产品（app_products.product === slug）或未标注产品的通用套餐；
+ *     不传则显示全部套餐（单产品向后兼容）。
  * - 返回: { applySession, openLogin, closeLogin, openWallet, closeWallet,
  *           walletService, loadPayChannels, handlePaidReturn,
  *           bindAuthEvents, renderAuthUI }
@@ -55,6 +58,7 @@
     var cloudService = Platform.cloud;
     var showHint = ctx.showHint || function () {};
     var callbackPath = ctx.callbackPath || '/';
+    var productSlug = ctx.productSlug || '';
     var onLoginSuccess = ctx.onLoginSuccess || function () {};
     var onSignOut = ctx.onSignOut || function () {};
 
@@ -190,6 +194,10 @@
       if (!cloud || !cloud.database || !cloud.database.from) { return; }
       cloud.database.from('app_products').select('*').eq('active', true).order('sort').then(function (res) {
         var list = (res && res.data) || [];
+        /* 产品隔离：传了 productSlug 只显示本产品（或未标注 product 的通用）套餐 */
+        if (productSlug) {
+          list = list.filter(function (p) { return !p.product || p.product === productSlug; });
+        }
         els.productGrid.innerHTML = '';
         if (!list.length) {
           els.productGrid.innerHTML = '<p class="hint">暂无可售套餐</p>';

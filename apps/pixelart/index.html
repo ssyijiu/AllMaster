@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="拼豆大师：AI 生成拼豆图纸。登录、积分钱包与「全员大师」平台全产品通用。" />
+  <title>拼豆大师 · AI 生成拼豆图纸</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%2322C55E'/%3E%3Ccircle cx='10' cy='10' r='3' fill='%23fff'/%3E%3Ccircle cx='22' cy='10' r='3' fill='%23fff'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%23fff'/%3E%3Ccircle cx='10' cy='22' r='3' fill='%23fff'/%3E%3Ccircle cx='22' cy='22' r='3' fill='%23fff'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/shared/base.css" />
+  <link rel="stylesheet" href="/apps/pixelart/pixelart.css" />
+</head>
+<body>
+  <!-- ===== SVG 图标 Sprite（仅占位页需要的最小集合） ===== -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+    <symbol id="i-user-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M7 20.66V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.66"/></symbol>
+    <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></symbol>
+    <symbol id="i-message-circle" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+  </svg>
+
+  <!-- ===== 顶部导航 ===== -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="brand-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><circle cx="7" cy="7" r="2.6" fill="#22C55E"/><circle cx="17" cy="7" r="2.6" fill="#F59E0B"/><circle cx="12" cy="12" r="2.6" fill="#3B82F6"/><circle cx="7" cy="17" r="2.6" fill="#EC4899"/><circle cx="17" cy="17" r="2.6" fill="#8B5CF6"/></svg>
+        </span>
+        <span>拼豆大师</span>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn secondary" id="btnLogin" type="button" hidden>
+          <svg class="icon icon-16" aria-hidden="true"><use href="#i-user-circle"/></svg>
+          <span>登录</span>
+        </button>
+        <span class="user-chip" id="userChip" hidden>
+          <svg class="icon icon-16" aria-hidden="true"><use href="#i-user-circle"/></svg>
+          <span id="userChipText"></span>
+        </span>
+        <button class="btn secondary small" id="btnWallet" type="button" hidden title="点击查看积分与充值">
+          <svg class="icon icon-16" aria-hidden="true"><use href="#i-sparkles"/></svg>
+          <span>积分 <b id="walletBalance">–</b></span>
+        </button>
+        <button class="btn ghost small" id="btnSignOut" type="button" hidden>退出</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <!-- 占位页：产品功能（AI 生成拼豆图纸）待需求详述后开发 -->
+    <section class="hero">
+      <h1>AI 生成拼豆图纸，即将上线</h1>
+      <p>上传图片或输入想法，AI 帮你生成可直接开拼的拼豆图纸。功能开发中，敬请期待。</p>
+    </section>
+
+    <section class="panel coming-panel">
+      <div class="bead-demo" aria-hidden="true"></div>
+      <p class="hint">登录与积分钱包已接入「全员大师」平台：积分、兑换码与头像制作大师通用。</p>
+    </section>
+
+    <footer class="footer">
+      <p>「全员大师」平台产品 · 拼豆大师</p>
+    </footer>
+  </main>
+
+  <!-- ===== 登录弹窗（结构与平台层 els 约定一致） ===== -->
+  <div class="modal-mask" id="loginModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+      <div class="modal-head">
+        <h3 id="loginTitle">登录</h3>
+        <button class="btn ghost btn-close-modal" id="btnCloseLogin" type="button" aria-label="关闭登录" style="width:32px;height:32px;">
+          <svg class="icon icon-16" aria-hidden="true"><use href="#i-x"/></svg>
+        </button>
+      </div>
+      <p class="modal-desc">登录后积分全平台通用。不登录也可以先逛逛。</p>
+
+      <span class="group-label">手机验证码登录 / 注册</span>
+      <label class="field-label" for="loginPhone">手机号</label>
+      <div class="phone-row">
+        <input type="tel" id="loginPhone" class="text-input mono" inputmode="numeric" maxlength="11"
+               placeholder="请输入 11 位手机号" autocomplete="tel" />
+        <button class="btn secondary small" id="btnSendCode" type="button">获取验证码</button>
+      </div>
+      <p class="field-error" id="errPhone" hidden>请输入正确的 11 位手机号</p>
+
+      <label class="field-label" for="loginCode">验证码</label>
+      <input type="text" id="loginCode" class="text-input mono" inputmode="numeric" maxlength="6"
+             placeholder="短信验证码" autocomplete="one-time-code" />
+      <p class="field-error" id="errCode" hidden>请输入正确的验证码</p>
+
+      <button class="btn primary big" id="btnPhoneLogin" type="button">登录 / 注册</button>
+
+      <div class="login-divider"><span>或</span></div>
+      <button class="btn ghost big" id="btnWechatLogin" type="button">
+        <svg class="icon icon-20" aria-hidden="true"><use href="#i-message-circle"/></svg>
+        微信扫码 / 一键登录
+      </button>
+      <p class="hint" id="loginMsg"></p>
+    </div>
+  </div>
+
+  <!-- ===== 积分钱包弹窗 ===== -->
+  <div class="modal-mask" id="walletModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="walletTitle">
+      <div class="modal-head">
+        <h3 id="walletTitle">积分钱包</h3>
+        <button class="btn ghost btn-close-modal" id="btnCloseWallet" type="button" aria-label="关闭钱包" style="width:32px;height:32px;">
+          <svg class="icon icon-16" aria-hidden="true"><use href="#i-x"/></svg>
+        </button>
+      </div>
+      <p class="modal-desc">积分在「全员大师」全产品通用；生成拼豆图纸的扣费标准以功能上线说明为准。</p>
+      <p class="wallet-balance">当前余额 <b id="walletBalanceBig">–</b> 积分</p>
+      <span class="group-label">充值套餐</span>
+      <div class="product-grid" id="productGrid"></div>
+      <p class="hint" id="payChannelsNote"></p>
+      <div class="login-divider"><span>或</span></div>
+      <span class="group-label">兑换码兑换</span>
+      <div class="phone-row">
+        <input type="text" id="redeemCode" class="text-input mono" placeholder="输入兑换码，如 AVXXXXXXXX" />
+        <button class="btn secondary small" id="btnRedeem" type="button">兑换</button>
+      </div>
+      <p class="hint" id="walletMsg"></p>
+      <span class="group-label">积分明细</span>
+      <div class="txn-list" id="txnHistory"><p class="hint">加载中…</p></div>
+    </div>
+  </div>
+
+  <!-- ===== script 顺序固定：云 SDK CDN → 平台层 → 产品层 ===== -->
+  <script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js"></script>
+  <script src="/shared/platform.js"></script>
+  <script src="/apps/pixelart/app.js"></script>
+</body>
+</html>
