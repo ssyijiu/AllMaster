@@ -2,6 +2,7 @@
 .ai-config.json
 .pay-config.json
 .pay-state.json
+.pixelart-config.json
 
 # ===== WorkBuddy 平台文件 =====
 .wbapp_*.genie

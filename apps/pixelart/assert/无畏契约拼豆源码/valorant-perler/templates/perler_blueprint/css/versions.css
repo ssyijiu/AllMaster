@@ -1,0 +1,34 @@
+/* ===== [VERSIONS] 版本样式 ===== */
+/* 顶栏右侧：版本 · 导出；编辑中有未保存改动时「放弃 / 保存」顶替导出（未保存的改动不进导出图） */
+#topRight{margin-left:auto; flex:none; display:flex; align-items:center; gap:6px; position:relative; z-index:30}
+body.editing.dirty #flowExpBtn{display:none}
+#topRight #edActs{margin-left:0}
+#verBtn{
+  display:none; border:none; background:transparent; color:var(--txt2); cursor:pointer;
+  font-family:var(--font-d); font-weight:700; font-size:12px; letter-spacing:.06em; padding:6px 6px;
+}
+#verBtn.show{display:inline-block}
+#verBtn:hover, #verBtn.open{color:var(--teal)}
+#verPanel{
+  position:absolute; right:0; top:calc(100% + 4px); width:188px; display:none; flex-direction:column;
+  background:var(--panel); border:1px solid var(--line2); box-shadow:0 8px 24px rgba(0,0,0,.4);
+}
+#verPanel.show{display:flex}
+#verPanel .bd{max-height:260px; overflow-y:auto; padding:3px 0}
+#verPanel .it{display:flex; align-items:baseline; gap:8px; padding:4px 10px; cursor:pointer; font-size:11px; color:var(--txt3)}
+#verPanel .it:hover{background:var(--panel2); color:var(--txt2)}
+#verPanel .it .v{font-family:var(--font-d); font-weight:700; font-size:12px; color:var(--txt); min-width:26px}
+#verPanel .it .t{flex:1}
+#verPanel .it.cur .v::after{content:" ●"; color:var(--red); font-size:8px}
+/* 侧栏红点：这个规格 / 色板 / 颜色数量下存过版本 */
+.pal-btn{position:relative}
+.has-ver::before{
+  content:""; display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--red);
+  box-shadow:0 0 6px var(--red); margin-right:4px; vertical-align:middle;
+}
+.size-card.has-ver::before, .pal-btn.has-ver::before{position:absolute; top:6px; left:6px; margin:0; z-index:1}
+#verTip{
+  position:fixed; z-index:50; pointer-events:none; display:none; white-space:nowrap;
+  background:rgba(15,25,35,.95); color:var(--txt); border-left:3px solid var(--red); font-size:12px; padding:5px 9px;
+}
+#verTip.show{display:block}

@@ -1,0 +1,6 @@
+/* ===== [POSTER-FONT] 腾讯体子集：分享图海报文字用（js/poster.js 的 TS 字体栈）=====
+ * 300 = W3（只含海报固定标签用字，含五种烫法名与「烫效果模拟」），700 = W7（GB2312 一级常用字 + ASCII + 常用标点，玩家标题也用它）。
+ * 构建时字体文件内联成 data URI，单文件离线可用；子集外的生僻字自动回退系统黑体。 */
+@font-face{font-family:"TencentSans"; font-weight:300; font-display:block; src:url("assets/fonts/TencentSans-W3.woff2") format("woff2")}
+@font-face{font-family:"TencentSans"; font-weight:700; font-display:block; src:url("assets/fonts/TencentSans-W7.woff2") format("woff2")}
+/* ===== [POSTER-FONT] END ===== */

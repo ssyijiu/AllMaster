@@ -1,0 +1,89 @@
+/* ============ 舞台 ============ */
+.stage{flex:1; display:flex; flex-direction:column; min-width:0; position:relative}
+.viewtabs{display:flex; gap:6px; padding:10px 14px 0; align-items:center}
+.viewtab{
+  appearance:none; position:relative; isolation:isolate; border:1px solid var(--line); background:var(--line); color:var(--txt2);
+  font-family:var(--font-d); font-size:13px; font-weight:700; letter-spacing:.14em;
+  padding:8px 22px; cursor:pointer; transition:all .15s; white-space:nowrap;
+  clip-path:polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%);
+}
+.viewtab::before{content:""; position:absolute; inset:0; z-index:-1; background:var(--bg); clip-path:polygon(8px 0,100% 0,calc(100% - 8px) 100%,0 100%)}
+.viewtab + .viewtab{margin-left:-8px}
+/* 第一个页签左缘竖直、贴齐画布左边，右侧保留斜边（同游戏顶栏「对战」块） */
+.viewtab:first-child{clip-path:polygon(0 0,100% 0,calc(100% - 8px) 100%,0 100%)}
+.viewtab:first-child::before{clip-path:polygon(0 0,100% 0,calc(100% - 8px) 100%,0 100%)}
+/* 无原图（文生图）：「转换图」成为第一个页签并做成平直矩形；它没有斜边可嵌，
+   所以第二个页签不再左移 8px，左缘也改竖直，两签之间只留父容器的 gap */
+body.no-source .viewtab:first-child,
+body.no-source .viewtab:first-child::before{clip-path:none}
+body.no-source .viewtab:first-child + .viewtab{margin-left:0}
+body.no-source .viewtab:first-child + .viewtab,
+body.no-source .viewtab:first-child + .viewtab::before{clip-path:polygon(0 0,100% 0,calc(100% - 8px) 100%,0 100%)}
+.viewtab:hover{color:var(--txt); border-color:var(--txt3); background:var(--txt3)}
+.viewtab.active{background:var(--txt); color:var(--bg); border-color:var(--txt)}
+.viewtab.active::before{background:var(--txt)}
+#hlStatus{
+  margin-left:auto; font-family:var(--font-d); font-size:13px; letter-spacing:.1em; color:var(--teal);
+  border:1px dashed var(--teal); clip-path:var(--cut-sm); padding:7px 12px 5px; display:none; cursor:pointer;
+}
+#hlStatus.show{display:block}
+.canvas-wrap{
+  flex:1; position:relative; margin:12px 14px 0; min-height:0;
+  border:1px solid var(--line); background:var(--panel);
+  overflow:auto; display:none; align-items:center; justify-content:center;
+}
+.canvas-wrap.active{display:flex}
+#view-source{padding:30px}
+#view-source .src-card{gap:36px}
+.src-card{text-align:center}
+.src-card.multi{display:flex; gap:36px; flex-wrap:wrap; justify-content:center}
+.src-card .frame{border:1px solid var(--line2); clip-path:var(--cut); padding:10px; background:var(--panel2)}
+.src-card img{display:block; max-height:60vh; max-width:36vw; object-fit:contain}
+.src-card .cap{margin-top:12px; font-family:var(--font-d); letter-spacing:.24em; font-size:13px; color:var(--txt2)}
+.src-card .cap b{color:var(--red)}
+#effectImg{image-rendering:pixelated; max-height:78vh; max-width:78%; border:1px solid var(--line2); background:var(--paper)}
+#view-grid{background:var(--paper); padding:0; overflow:hidden} /* 图纸自己平移缩放，容器不滚动 */
+#gridCanvas{display:block; width:100%; height:100%; cursor:grab; touch-action:none}
+#gridCanvas.panning{cursor:grabbing}
+
+/* 编辑反馈角标：只在落笔 / 悬停预览时出现 */
+.hud{
+  position:absolute; left:44px; bottom:10px; background:rgba(15,25,35,.55); /* 左缘避开标尺（RULER 34 + 10），与编辑角标同一基准 */ color:var(--txt2);
+  font-family:var(--font-d); font-size:11px; letter-spacing:.08em; padding:4px 9px; pointer-events:none;
+  border-left:2px solid var(--line2); line-height:1.5;
+}
+.hud b{color:var(--txt); font-weight:700}
+.zoomctl{position:absolute; right:10px; top:10px; display:flex; flex-direction:column; gap:4px}
+.zoomctl button{
+  width:30px; height:30px; border:1px solid var(--line); background:rgba(15,25,35,.88); color:var(--txt);
+  font-size:16px; cursor:pointer; font-family:var(--font-d);
+}
+.zoomctl button:hover{background:var(--red); border-color:var(--red)}
+.zoomctl button.on{background:var(--teal); border-color:var(--teal); color:#0B141A}
+.zoomctl button.zfit{font-size:11px; font-weight:700; letter-spacing:0; padding:0}
+.zoomctl button:disabled, .zoomctl button:disabled:hover{opacity:.38; cursor:default; background:rgba(15,25,35,.88); border-color:var(--line)}
+#zoomPct, .zview .zpct{
+  font-family:var(--font-d); font-size:11px; color:var(--txt2); text-align:center;
+  background:rgba(15,25,35,.88); border:1px solid var(--line); padding:2px 0; letter-spacing:.04em;
+}
+.zoomctl{display:flex; flex-direction:column; top:52px}
+.hud{display:none}
+.hud.show{display:block}
+/* 画布右上按钮组：grid 单列 + 撑满 = 组内按钮同宽（取最宽者） */
+.canvas-tools{position:absolute; top:10px; right:10px; z-index:5; display:grid; gap:4px}
+.mirror-btn{
+  width:100%; text-align:center;
+  border:1px solid var(--line); background:rgba(15,25,35,.88); color:var(--txt);
+  font-family:var(--font-d); font-weight:700; font-size:13px; letter-spacing:.1em;
+  padding:8px 14px; cursor:pointer; clip-path:var(--cut-sm); transition:all .15s;
+}
+.mirror-btn:hover{border-color:var(--teal); color:var(--teal)}
+.mirror-btn.on{background:var(--teal); border-color:var(--teal); color:#0B141A}
+
+
+/* [VIEW-ZOOM] 原图 / 转换图：容器不滚动，内容由 .zstage 的 transform 缩放平移；缩放组位置与图纸一致（右上） */
+.canvas-wrap.zview{overflow:hidden; touch-action:none; cursor:grab}
+.canvas-wrap.zview.panning{cursor:grabbing}
+.zview .zstage{display:flex; align-items:center; justify-content:center; transform-origin:center center}
+.zview .zstage img{-webkit-user-drag:none; user-select:none; pointer-events:none}
+.zview .zoomctl{top:10px; z-index:5; cursor:default}

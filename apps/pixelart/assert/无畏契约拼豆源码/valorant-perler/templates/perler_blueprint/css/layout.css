@@ -1,0 +1,127 @@
+/* ============ 布局 ============ */
+main{flex:1; display:flex; min-height:0; position:relative}
+aside{
+  background:var(--panel);
+  display:flex; flex-direction:column; min-height:0; overflow-y:auto; overflow-x:hidden;
+}
+aside::-webkit-scrollbar{width:6px}
+aside::-webkit-scrollbar-thumb{background:var(--line)}
+.panel-section{padding:14px 14px 12px; border-bottom:1px solid var(--line)}
+.panel-label{
+  font-family:var(--font-d); font-size:11px; letter-spacing:.22em; color:var(--txt2);
+  font-weight:700; margin-bottom:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  user-select:none;
+}
+.panel-label::before{content:""; width:8px; height:8px; background:var(--red); clip-path:polygon(0 0,100% 0,100% 100%); transform:rotate(135deg)}
+.panel-label .r{margin-left:auto; color:var(--teal); letter-spacing:.08em; font-weight:600}
+.size-card .meta{line-height:1.5}
+
+/* 规格卡片（带效果图缩略） */
+.size-grid{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px}
+.size-card{
+  border:1px solid var(--line); background:var(--panel2); cursor:pointer; padding:8px;
+  position:relative; transition:border-color .15s; clip-path:var(--cut-tr);
+}
+.size-card:hover{border-color:var(--teal)}
+.size-card.active{border-color:var(--red); box-shadow:inset 0 0 0 1px var(--red)}
+.size-card img{width:100%; image-rendering:pixelated; display:block; background:var(--paper); aspect-ratio:1; object-fit:contain}
+/* 尺寸与颗数同一行、在卡内居中（与缩略图对齐）：「78×78 (1443颗)」，卡太窄放不下时颗数换到下一行，仍居中 */
+.size-card .nm{display:flex; flex-wrap:wrap; justify-content:center; align-items:baseline; column-gap:3px; margin-top:6px; min-width:0}
+.size-card .n{font-family:var(--font-d); font-size:15px; font-weight:700; letter-spacing:.06em}
+.size-card .meta{font-size:9.5px; color:var(--txt2); letter-spacing:0; white-space:nowrap}
+.size-card .badge{
+  position:absolute; top:0; right:0; background:var(--red); color:#fff;
+  font-size:9.5px; letter-spacing:.08em; padding:2px 6px 2px 8px; font-weight:700;
+  clip-path:polygon(8px 0,100% 0,100% 100%,0 100%);
+}
+
+/* 色板 */
+.pal-list{display:flex; flex-direction:column; gap:5px}
+.pal-btn{
+  clip-path:var(--cut-sm); border:1px solid var(--line); background:var(--panel2);
+  color:var(--txt2); cursor:pointer; padding:7px 12px;
+  display:flex; align-items:center; justify-content:space-between;
+  font-family:var(--font-d); font-size:14px; font-weight:600; letter-spacing:.08em; transition:all .15s;
+}
+.pal-btn .sub{font-size:10px; color:var(--txt3); letter-spacing:.14em}
+.pal-btn:hover{border-color:var(--line2); color:var(--txt)}
+.pal-btn.active{border-color:var(--red); color:var(--txt); background:linear-gradient(90deg,rgba(255,70,85,.18),var(--panel2) 60%)}
+.pal-btn.active .sub{color:var(--red)}
+.pal-list{max-height:260px; overflow-y:auto; padding-right:4px}
+.budget-row{padding:2px 2px 0}
+#budgetSlider{width:100%; accent-color:var(--red); cursor:pointer; margin:0}
+.budget-ticks{display:flex; justify-content:space-between; padding:0 4px; margin-top:2px}
+.budget-ticks span{font-size:10px; color:var(--txt3); letter-spacing:.04em}
+.budget-ticks span i{font-style:normal}
+.budget-ticks span.on{color:var(--red); font-weight:700}
+.budget-ticks span.def::after{content:" ◆"; color:var(--teal)}
+.pal-group{font-size:10px; color:var(--txt3); letter-spacing:.18em; margin:6px 0 1px}
+.pal-group:first-child{margin-top:0}
+.tier-row{display:grid; grid-template-columns:repeat(5,1fr); gap:4px; margin-bottom:2px}
+.tier-chip{
+  clip-path:var(--cut-sm); border:1px solid var(--line); background:var(--panel2); color:var(--txt2);
+  cursor:pointer; padding:5px 0; font-family:var(--font-d); font-size:13px; font-weight:600; letter-spacing:.04em; transition:all .15s;
+}
+.tier-chip:hover{border-color:var(--line2); color:var(--txt)}
+.tier-chip.def::after{content:" ◆"; color:var(--teal); font-size:9px}
+.tier-chip.active{border-color:var(--red); color:var(--txt); background:linear-gradient(180deg,rgba(255,70,85,.22),var(--panel2))}
+.pal-note{font-size:11px; color:var(--txt3); line-height:1.5; margin-top:8px; display:none}
+.pal-note.show{display:block}
+
+/* 色号表 */
+.crow-legend{position:relative; margin:0 0 8px; padding:8px 28px 8px 10px; background:var(--panel2); border-radius:4px;
+  font-size:11px; line-height:1.6; color:var(--txt2); letter-spacing:.02em}
+.crow-legend p{margin:0; padding-left:1.5em; text-indent:-1.5em}
+.crow-legend .x{position:absolute; top:3px; right:4px; width:20px; height:20px; padding:0; border:none; background:transparent;
+  color:var(--txt3); font-size:15px; line-height:1; cursor:pointer}
+.crow-legend .x:hover{color:var(--txt)}
+.crow-legend.closed{display:none !important}
+/* 总勾选框：右边对齐每行的打卡方框（列表右内边距 8px + 行内边距 6px + 行边框 1px） */
+.crow-all{display:flex; align-items:center; justify-content:flex-end; gap:6px; padding:0 15px 4px 14px; font-size:11px; color:var(--txt2); cursor:pointer; user-select:none}
+.crow-all:hover{color:var(--txt)}
+.crow-all .tick{width:22px; height:22px; border:1px solid var(--line2); background:transparent; color:transparent; cursor:pointer; padding:0;
+  font-size:12px; line-height:1; font-family:var(--font-d); font-weight:700; clip-path:var(--cut-sm); transition:all .15s}
+.crow-all:hover .tick{border-color:var(--teal)}
+.crow-all .tick.some{border-color:var(--teal); color:var(--teal)}
+.crow-all .tick.all{background:var(--teal); border-color:var(--teal); color:#0B141A}
+.crow .now{font-style:normal; margin-left:5px; padding:0 4px; font-family:var(--font-b); font-size:9.5px; font-weight:600; letter-spacing:0;
+  color:#0B141A; background:var(--teal); vertical-align:1px}
+.color-list{padding:0 8px 10px 14px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px 6px}
+.sortseg{margin-left:8px; display:inline-flex; border:1px solid var(--line); clip-path:var(--cut-sm)}
+.sortseg button{border:none; background:var(--panel2); color:var(--txt3); font-size:10.5px; letter-spacing:.1em; padding:2px 10px; cursor:pointer; font-family:var(--font-b)}
+.sortseg button.on{background:var(--red); color:#fff}
+.crow{
+  display:grid; grid-template-columns:20px minmax(0,1fr) auto 22px; gap:6px; align-items:center; min-width:0;
+  padding:6px; cursor:pointer; border:1px solid var(--line); background:rgba(255,255,255,.015); transition:background .12s;
+}
+.crow:hover{background:var(--panel2)}
+.crow.hl{border-color:var(--teal); background:rgba(0,200,200,.08)}
+.crow .sw{width:20px; height:20px; border:1px solid rgba(255,255,255,.25); clip-path:var(--cut-sm)}
+.crow .tick{
+  width:22px; height:22px; border:1px solid var(--line2); background:transparent; color:transparent;
+  cursor:pointer; font-size:12px; line-height:1; clip-path:var(--cut-sm); transition:all .15s;
+  font-family:var(--font-d); font-weight:700; padding:0;
+}
+.crow .tick:hover{border-color:var(--teal); color:var(--teal)}   /* 没打卡时是空方框，悬停才露出 ✓ */
+.crow.done .tick{background:var(--teal); border-color:var(--teal); color:#0B141A}
+.crow.done .sw{filter:saturate(.25) brightness(.8)}
+.crow.done .code,.crow.done .name,.crow.done .use{opacity:.42}
+.crow.done .bar i{background:var(--txt3)}
+#progWrap{margin-bottom:8px; padding:8px 10px; background:var(--panel2); border:1px solid var(--line); clip-path:var(--cut-sm)}
+.prog-top{display:flex; align-items:baseline; gap:10px; margin-bottom:6px}
+#progPct{font-family:var(--font-d); font-size:24px; font-weight:700; line-height:1; color:var(--teal); letter-spacing:.02em}
+.prog-top #progReset{margin-left:auto}
+#progBar{height:6px; background:var(--bg); clip-path:polygon(2px 0,100% 0,100% 100%,0 100%)}
+#progBar i{display:block; height:100%; width:0%; background:linear-gradient(90deg,var(--teal),var(--red)); transition:width .3s}
+#progTxt{font-family:var(--font-d); font-size:11px; color:var(--txt2); letter-spacing:.06em; white-space:nowrap}
+#progReset{font-size:10px; color:var(--txt3); cursor:pointer; letter-spacing:.1em; white-space:nowrap}
+#progReset:hover{color:var(--red)}
+.crow .ci{display:flex; flex-direction:column; gap:1px; min-width:0}
+.crow .code{font-family:var(--font-d); font-weight:700; font-size:13px; letter-spacing:.05em}
+.crow .name{font-size:11px; color:var(--txt2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.crow .name .hex{color:var(--txt3); font-size:10px}
+.crow .use{text-align:right; font-family:var(--font-d); font-size:12px; font-weight:600}
+.crow .use small{display:block; font-size:10px; color:var(--txt3); font-weight:500}
+.crow .bar{grid-column:1/-1; height:3px; background:var(--bg); position:relative}
+.crow .bar i{position:absolute; inset:0 auto 0 0; background:var(--red)}
+.crow.hl .bar i{background:var(--teal)}

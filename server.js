@@ -27,6 +27,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const crypto = require('crypto');
 const querystring = require('querystring');
 const { URL } = require('url');
@@ -455,6 +456,98 @@ async function handleAdminSyncKey(req, res) {
   return sendJson(res, 200, { ok: true });
 }
 
+/* ---------- 拼豆大师：沙箱环境诊断（只读） ---------- */
+
+/* 拼豆大师服务器本地配置（.pixelart-config.json）：accUserId（生图服务 WB ID）、
+   pythonExe（拼豆链路用的解释器，路径不存在时回落 python3——本机指向 venv，沙箱系统 python3 自带依赖）、
+   promptLLM（写槽位的视觉 chat 模型，null=模板兜底） */
+const PIXELART_CONFIG_FILE = path.join(ROOT, '.pixelart-config.json');
+const PERLER_DIR = path.join(ROOT, 'apps/pixelart/assert/无畏契约拼豆源码/valorant-perler');
+
+function pixelartPython() {
+  const cfg = readDotJson(PIXELART_CONFIG_FILE) || {};
+  const wanted = (cfg.pythonExe || '').trim();
+  if (wanted) {
+    try { fs.accessSync(wanted, fs.constants.X_OK); return wanted; } catch (_) {}
+  }
+  return 'python3';
+}
+
+/* GET /api/pixelart/env-check：探测沙箱能否跑拼豆 Python 链。
+   返回 python3 版本/路径、关键依赖导入结果、pip 可用性、val-perler 服务健康、WB ID（脱敏）。
+   传 ?chain=1 时额外用注入的 WB ID 真实执行一次 render --check-id（验证源码执行路径）。 */
+function handlePixelartEnvCheck(res, deep) {
+  const { execFile } = require('child_process');
+  const out = { python: null, pip: null, imports: {}, valPerler: null, wbId: null, home: os.homedir() };
+
+  /* WB ID 来源：.pixelart-config.json → env → ~/.workbuddy/user-*-personal */
+  function maskId(id) { return id ? id.slice(0, 4) + '…' + id.slice(-4) : null; }
+  const pxcfg = readDotJson(PIXELART_CONFIG_FILE) || {};
+  let wbId = (pxcfg.accUserId || '').trim() || (process.env.ACC_USER_ID || '').trim() || null;
+  let wbIdSource = pxcfg.accUserId ? 'config' : (process.env.ACC_USER_ID ? 'env' : null);
+  if (!wbId) {
+    try {
+      const wbDir = path.join(os.homedir(), '.workbuddy');
+      const hit = fs.readdirSync(wbDir).find((n) => /^user-[0-9a-f-]{36}-personal$/i.test(n));
+      if (hit) { wbId = hit.slice(5, 41); wbIdSource = 'home-dir'; }
+    } catch (_) {}
+  }
+  out.wbId = maskId(wbId);
+  out.wbIdSource = wbIdSource || 'none';
+
+  const probe = [
+    'import json,sys,shutil',
+    "info={'exe':sys.executable,'ver':sys.version.split()[0],'pip':bool(shutil.which('pip3') or shutil.which('pip'))}",
+    'mods={}',
+    "for m in ['PIL','numpy','cv2','skimage','sklearn','requests']:",
+    '    try:',
+    '        __import__(m); mods[m]=True',
+    '    except Exception:',
+    '        mods[m]=False',
+    "info['imports']=mods",
+    "print(json.dumps(info))",
+  ].join('\n');
+  const pyExe = pixelartPython();
+  out.pythonExe = pyExe;
+  const py = execFile(pyExe, ['-c', probe], { timeout: 15000 }, (err, stdout) => {
+    if (err) {
+      out.python = { ok: false, error: String(err.message || err).slice(0, 200) };
+    } else {
+      try {
+        const info = JSON.parse(stdout);
+        out.python = { ok: true, exe: info.exe, version: info.ver };
+        out.pip = info.pip;
+        out.imports = info.imports;
+      } catch (e2) {
+        out.python = { ok: false, error: '解析失败: ' + String(stdout).slice(0, 120) };
+      }
+    }
+    /* val-perler 服务健康（Node 侧 fetch，不依赖 python） */
+    const finish = () => sendJson(res, 200, out);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    fetch('https://val-perler.qq.com/health', { signal: ctrl.signal })
+      .then((r) => { out.valPerler = { ok: r.ok, status: r.status }; })
+      .catch((e3) => { out.valPerler = { ok: false, error: String(e3.message || e3).slice(0, 120) }; })
+      .finally(() => {
+        clearTimeout(timer);
+        /* 深度自检：用注入的 WB ID 真实执行 render --check-id（源码执行路径 + ID 鉴权） */
+        if (!deep || !wbId) { return finish(); }
+        execFile(pyExe, ['val_perler.py', 'render', '--check-id'], {
+          cwd: path.join(PERLER_DIR, 'scripts'),
+          timeout: 30000,
+          env: Object.assign({}, process.env, { ACC_USER_ID: wbId })
+        }, (err2, stdout2, stderr2) => {
+          out.chain = err2
+            ? { ok: false, error: String(stderr2 || err2.message).slice(-300) }
+            : { ok: true, output: String(stdout2).slice(-300) };
+          finish();
+        });
+      });
+  });
+  if (!py) { return sendJson(res, 500, { error: { message: '无法启动探测进程' } }); }
+}
+
 function serveStatic(req, res) {
   const url = new URL(req.url, 'http://localhost');
   let pathname = decodeURIComponent(url.pathname);
@@ -462,6 +555,11 @@ function serveStatic(req, res) {
   /* 目录穿越与隐藏文件防护 */
   const safePath = path.normalize(pathname).replace(/^(\.\.[/\\])+/, '');
   if (safePath.split('/').some((seg) => seg.startsWith('.'))) {
+    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('403 Forbidden');
+  }
+  /* assert 目录存放产品源码/资产备份，不经 HTTP 下发 */
+  if (safePath.split('/').includes('assert')) {
     res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
     return res.end('403 Forbidden');
   }
@@ -524,6 +622,20 @@ const server = http.createServer((req, res) => {
   if (pathOnly === '/api/admin/sync-key') {
     if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
     return handleAdminSyncKey(req, res);
+  }
+  if (pathOnly === '/api/pixelart/env-check') {
+    if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
+    return handlePixelartEnvCheck(res, fullUrl.searchParams.get('chain') === '1');
+  }
+  if (pathOnly === '/api/pixelart/generate') {
+    if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
+    return require('./apps/pixelart/generate').handleGenerate(req, res, sendJson);
+  }
+  if (pathOnly === '/api/pixelart/task') {
+    return require('./apps/pixelart/generate').handleTaskStatus(req, res, fullUrl, sendJson);
+  }
+  if (pathOnly === '/api/pixelart/task/html') {
+    return require('./apps/pixelart/generate').handleTaskHtml(req, res, fullUrl, sendJson);
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405); return res.end('405 Method Not Allowed');

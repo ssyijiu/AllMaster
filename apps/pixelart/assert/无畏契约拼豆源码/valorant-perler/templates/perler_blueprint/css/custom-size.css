@@ -1,0 +1,34 @@
+/* ===== [CUSTOM-SIZE] 自定义方形 ===== */
+/* 输入卡：规格卡第一张，和其他卡同宽；上半块对应缩略图位置放输入框，下半块是「生成」 */
+#csRow.cs-card{
+  border:1px dashed var(--line2); background:var(--panel2); padding:8px; clip-path:var(--cut-tr);
+  display:flex; flex-direction:column; min-width:0;
+}
+#csRow .cs-in{flex:1; display:flex; flex-direction:column; justify-content:center; gap:6px; aspect-ratio:auto}
+#csRow .cs-t{font-family:var(--font-d); font-size:15px; font-weight:700; letter-spacing:.06em; color:var(--txt)}
+#csRow .cs-field{display:flex; align-items:center; gap:4px; background:var(--panel); border:1px solid var(--line); padding:0 6px}
+#csRow .cs-field:focus-within{border-color:var(--teal)}
+#csRow input{
+  width:0; flex:1; min-width:0; background:transparent; border:none; color:var(--txt);
+  font-family:var(--font-d); font-size:14px; font-weight:600; padding:7px 0; outline:none; -moz-appearance:textfield;
+}
+#csRow input::-webkit-inner-spin-button,#csRow input::-webkit-outer-spin-button{-webkit-appearance:none; margin:0}
+#csRow .cs-eq{font-family:var(--font-d); font-size:12px; font-weight:600; color:var(--txt3); white-space:nowrap}
+#csRow .cs-eq.on{color:var(--teal)}
+#csRow .btn{padding:6px 0; font-size:12px; width:100%}
+/* 说明只在输错时出现（范围已写在 placeholder 与 title 里），平时不占卡面 */
+#csNote{display:none; font-size:10px; color:var(--red); line-height:1.4; margin-top:4px}
+#csRow.bad .cs-field{border-color:var(--red)}
+#csRow.bad #csNote{display:block}
+.size-card .cs-del{
+  position:absolute; top:3px; left:3px; width:18px; height:18px; border:0; background:rgba(15,25,35,.72); color:var(--txt2);
+  font-size:10px; line-height:18px; cursor:pointer; opacity:0; transition:opacity .15s
+}
+.size-card:hover .cs-del{opacity:1}
+.size-card .cs-del:hover{background:var(--red); color:#fff}
+.size-card.pending{cursor:progress}
+.size-card.pending:hover{border-color:var(--line)}
+.size-card .cs-ph{aspect-ratio:1; background:var(--paper); display:flex; align-items:flex-end; padding:8px}
+.size-card .cs-bar{flex:1; height:4px; background:var(--paper-line)}
+.size-card .cs-bar i{display:block; height:100%; width:0; background:var(--red); transition:width .2s}
+.size-card.pending .meta{color:var(--teal)}

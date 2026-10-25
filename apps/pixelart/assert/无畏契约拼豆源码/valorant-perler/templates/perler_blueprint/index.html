@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover, shrink-to-fit=no">
+<title>{{TASK_NAME}} · 交互拼豆图纸</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* @include css/base.css */
+/* @include css/layout.css */
+/* @include css/stage.css */
+/* @include css/view-3d.css */
+/* @include css/edit-mode.css */
+/* @include css/islands.css */
+/* @include css/custom-size.css */
+/* @include css/versions.css */
+/* @include css/footer.css */
+/* @include css/flow.css */
+/* @include css/iron-flat.css */
+/* @include css/fonts.css */
+/* @include css/poster.css */
+/* @include css/style-picker.css */
+</style>
+</head>
+<body>
+<header>
+  <div class="title-block">
+    <!-- [TITLE] 作品标题可改：点铅笔原地改名，存本机；导出文件名与导出图里的标题跟着用 -->
+    <div class="title-row">
+      <h1><span id="taskTitle">{{TASK_NAME}}</span><span class="title-sfx"> · 交互拼豆图纸</span></h1>
+      <button id="titleEdit" type="button" title="修改作品标题" aria-label="修改作品标题">✎</button>
+    </div>
+    <div class="sub">创建时间 {{RENDERED_AT}}<span id="artStyleMark"></span></div>
+  </div>
+  <div class="spacer"></div>
+  <!-- 顶栏右侧：浏览时、编辑中没有未保存改动时「版本 · 分享 · 导出」；编辑中有未保存改动时「版本 · 放弃 · 保存」顶替分享 / 导出 -->
+  <div id="topRight">
+    <!-- [VERSIONS] 版本按钮 + 版本面板 -->
+    <button id="verBtn" title="版本记录"></button>
+    <div id="verPanel"><div class="bd" id="verList"></div></div>
+    <!-- [EDIT-MODE] 编辑中有未保存改动时显示「未保存 · 放弃 · 保存」，顶替导出；保存 = 存一个版本；改动保存、放弃或撤销清空后换回导出；退出编辑走底部「完成编辑」或 Esc -->
+    <div id="edActs">
+      <span id="edDirty">● 未保存</span>
+      <button id="edDiscard" class="btn" title="放弃本次编辑的全部改动">放弃</button>
+      <button id="edSave" class="btn primary" title="保存为新版本，并另存一份带着改动的新 HTML（⌘/Ctrl+S）">保存</button>
+    </div>
+    <!-- [POSTER] 导出：从底部抽屉出海报（js/poster.js） -->
+    <button class="btn primary" id="flowExpBtn">导出</button>
+  </div>
+</header>
+<main>
+  <!-- [FLOW] 编辑栏：可拉起 / 收起（把手），可放底部 / 右侧 / 左侧；顶部三站 Tab 只分类栏内内容 -->
+  <div id="dock">
+    <button id="dockHandle" type="button" aria-label="收起编辑栏" aria-expanded="true"><i></i></button>
+    <!-- [FLOW] 侧栏宽度拖拽条：编辑栏钉左 / 右侧时贴在朝画布的那条边上 -->
+    <div id="dockResize" role="separator" aria-orientation="vertical" aria-label="拖动调整编辑栏宽度" title="拖动调整宽度，双击恢复默认"></div>
+    <div id="dockBody">
+    <nav id="flowNav">
+      <button data-st="plan"><b>1</b><span>规格调整</span></button>
+      <button data-st="edit"><b>2</b><span>图纸编辑</span></button>
+      <button data-st="codes"><b>3</b><span>辅助拼豆</span></button>
+      <!-- 编辑栏位置：三个图标直接画出「栏在窗口的哪一边」，当前位置高亮；仅宽屏出现 -->
+      <div id="navDock" role="group" aria-label="编辑栏位置">
+        <button type="button" data-pos="left" title="编辑栏放左侧" aria-label="编辑栏放左侧"><svg viewBox="0 0 16 16"><rect class="o" x="1.5" y="2.5" width="13" height="11" rx="1.5"/><rect class="f" x="2.5" y="3.5" width="4" height="9"/></svg></button>
+        <button type="button" data-pos="bottom" title="编辑栏放底部" aria-label="编辑栏放底部"><svg viewBox="0 0 16 16"><rect class="o" x="1.5" y="2.5" width="13" height="11" rx="1.5"/><rect class="f" x="2.5" y="8.5" width="11" height="4"/></svg></button>
+        <button type="button" data-pos="right" title="编辑栏放右侧" aria-label="编辑栏放右侧"><svg viewBox="0 0 16 16"><rect class="o" x="1.5" y="2.5" width="13" height="11" rx="1.5"/><rect class="f" x="9.5" y="3.5" width="4" height="9"/></svg></button>
+      </div>
+    </nav>
+  <aside>
+    <div class="panel-section" data-st="plan">
+      <div class="panel-label">拼豆板尺寸</div>
+      <!-- [CUSTOM-SIZE] 自定义方形规格输入：规格卡里的第一张卡（玩家常要自己的尺寸，放最前面一眼可见）；renderSizes 每次重绘都把它放回第一位 -->
+      <div class="size-grid" id="sizeGrid">
+        <div id="csRow" class="cs-card">
+          <div class="cs-in">
+            <span class="cs-t">自定义</span>
+            <div class="cs-field"><input id="csN" type="number" inputmode="numeric" min="15" max="156" placeholder="边长"><span class="cs-eq" id="csEcho">×N</span></div>
+            <button id="csGo" class="btn">生成</button>
+          </div>
+          <div id="csNote"></div>
+        </div>
+      </div>
+    </div>
+    <!-- [STYLE-PICKER] 主体分类与模板条：人物或角色展示六模板，其他主体隐藏本区。点卡查看示意并复制话术回对话重做（js/style-picker.js）。 -->
+    <div class="panel-section" data-st="plan" id="styleSec">
+      <div class="panel-label">是否人物或角色</div>
+      <select id="portraitSelect" aria-label="是否人物或角色">
+        <option value="character">人物或角色</option>
+        <option value="prop">其他主体</option>
+      </select>
+      <div id="portraitTemplates">
+        <div class="panel-label">模板重做</div>
+        <div id="styleStrip"></div>
+        <div class="style-hint" id="styleHint"></div>
+      </div>
+    </div>
+    <!-- 颜色数量、色号规格默认收起，规格调整站一屏内能看到两个标题；点标题展开 -->
+    <div class="panel-section sec-closed" data-st="plan">
+      <div class="panel-label">颜色数量 <span class="r" id="budgetHint"></span></div>
+      <div class="budget-row">
+        <input type="range" id="budgetSlider" min="0" step="1">
+        <div class="budget-ticks" id="budgetTicks"></div>
+      </div>
+    </div>
+    <!-- [EDIT-MODE] 编辑站第一行：工具条；颜色按钮展开下方「颜色」区里的全部色号 -->
+    <div id="edControls" data-st="edit">
+      <div id="edBar">
+        <button id="edChip" type="button" title="颜色（C）" aria-label="选择颜色" aria-controls="edPal" aria-expanded="false"><span class="sw" id="edChipSw"></span><span class="cd" id="edChipCd"></span></button>
+        <div class="sep"></div>
+        <button data-tool="brush" title="画笔（B）：按住拖动连续绘制"><i>✎</i><span>画笔</span></button>
+        <button data-tool="fill" title="填充（G）：把相连的同色区域换成当前色"><img src="assets/tools/fill.png" alt="填充"><span>填充</span></button>
+        <button data-tool="eraser" title="橡皮（X）：清除格子"><img src="assets/tools/eraser.png" alt="橡皮"><span>橡皮</span></button>
+        <button data-tool="picker" title="取色（I）：吸取当前格颜色，完成后返回上一工具"><img src="assets/tools/picker.png" alt="取色"><span>取色</span></button>
+        <button data-tool="lasso" title="套索（L）：圈选像素，或先选颜色再圈只选这些颜色；选中后按住拖走，切到填充在选区里点一下整块换色" aria-haspopup="menu" aria-controls="edLassoMenu" aria-expanded="false"><img src="assets/tools/lasso.png" alt="套索"><span id="edLassoLbl">套索</span></button>
+        <div class="sep"></div>
+        <button id="edUndo" title="撤销（⌘/Ctrl+Z）"><svg class="ed-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg><span>撤销</span></button>
+        <button id="edRedo" title="重做（⌘/Ctrl+Shift+Z）"><svg class="ed-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg><span>重做</span></button>
+      </div>
+      <!-- [EDIT-MODE] 套索选法：点套索按钮弹出，脚本挪到 body 下按按钮位置摆放（避开工具条的横向滚动裁切） -->
+      <div id="edLassoMenu" role="menu" aria-label="套索选法">
+        <button type="button" role="menuitemradio" data-lasso="draw"><svg class="ed-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17c-2.5-1.5-3.5-3.6-3-6 .8-3.6 5-6 9.5-5.2S20.5 10 19.4 13c-1 2.8-5 4.2-9 3.4" stroke-dasharray="3 2.4"/><path d="M8 16.5c-1 1.4-1.2 2.7-.4 4"/></svg><b>圈选</b><small>圈里的像素全部选中</small></button>
+        <button type="button" role="menuitemradio" data-lasso="color"><svg class="ed-ico" viewBox="0 0 24 24" aria-hidden="true"><path class="f" d="M9 6.5v12.2l3-3 2.2 4.8 2.2-1-2.2-4.7h4.2z"/><path d="M5.6 4.4l1.6 1.6M9.4 2.6v2.2M3.6 8.6h2.2"/></svg><b>按色圈选</b><small>先选颜色，只圈这些颜色</small></button>
+      </div>
+    </div>
+    <!-- [EDIT-MODE] 颜色：选色与用量合一。在用颜色按颗数降序，色块上带颗数与占比条，点即选用；
+         没用过的颜色走「全部色号」（搜索 + 全色板），已在用的色在那里也带颗数 -->
+    <div class="panel-section" id="edColorSec" data-st="edit">
+      <div class="panel-label">颜色 <span class="r" id="edColorHint"></span><button type="button" id="edPalMore" class="ed-more" aria-controls="edPal">全部色号</button></div>
+      <div class="grid" id="edColorGrid"></div>
+        <div id="edPal">
+          <div class="hd"><span>全部色号 · <b id="edPalName"></b></span><button id="edPalClose" title="收起（C）">✕</button></div>
+          <input id="edPalSearch" placeholder="搜索色号 / 颜色名称 / HEX">
+          <div class="bd">
+            <div class="sec" id="edPalAllTitle">全部色号</div><div class="grid" id="edPalAll"></div>
+          </div>
+          <div class="foot" id="edPalFoot">悬停查看颜色名称，点击选取</div>
+        </div>
+    </div>
+    <!-- ===== [ISLANDS] 孤立像素区块 BEGIN（编辑站常驻，没有时计数为 0；恢复/移除是编辑操作，只在图纸编辑站出现） ===== -->
+    <div class="panel-section sec-closed" id="islandSec" data-st="edit">
+      <div class="panel-label">孤立像素 <span class="r" id="islandHint"></span></div>
+      <div class="island-note" id="islandNote"></div>
+      <div id="islandList"></div>
+      <button id="islandAllBtn"></button>
+    </div>
+    <!-- ===== [ISLANDS] 孤立像素区块 END ===== -->
+    <div class="panel-section sec-closed" data-st="plan">
+      <div class="panel-label">色号规格</div>
+      <div class="pal-list" id="palList"></div>
+      <div class="pal-note show" id="palNote"></div>
+    </div>
+    <div class="panel-section" data-st="codes">
+      <div class="panel-label">拼豆进度记录表
+        <span class="r" id="hlHint"></span>
+        <span class="sortseg"><button data-key="count" class="on">用量</button><button data-key="code">色号</button></span>
+      </div>
+      <!-- [TRACKER] 进度头：大号百分比 + 进度条 + 颗数 / 色数；下面两步说明这张表怎么用 -->
+      <div id="progWrap">
+        <div class="prog-top"><b id="progPct">0%</b><span id="progTxt"></span><span id="progReset">清空记录</span></div>
+        <div id="progBar"><i></i></div>
+      </div>
+      <!-- [TRACKER] 用法提示：灰底卡片，右上角 × 关闭后本机不再出现 -->
+      <div class="crow-legend" id="crowTip"><button class="x" id="crowTipX" title="关闭提示" aria-label="关闭提示">×</button><p>1、点击颜色后，图纸上会高亮这个颜色，方便对照下豆</p><p>2、下豆完成后，可点击右边方框打勾，更新当前拼豆进度</p></div>
+      <!-- [TRACKER] 总勾选框：与每行方框同列，三态（空 / 部分 − / 全部 ✓），全部打勾后文案变「全不选」 -->
+      <div class="crow-all"><span id="crowAllTxt">全选</span><button class="tick" id="crowAll" aria-label="全选"></button></div>
+      <div class="color-list" id="colorRows"></div>
+    </div>
+    <!-- [FLOW] 每站底部的「下一步」 -->
+    <div class="flow-next" data-st="plan edit codes">
+      <div id="flowHint"></div>
+      <button class="btn primary" id="flowNextBtn"></button>
+    </div>
+  </aside>
+    </div>
+  </div>
+  <div class="stage">
+    <div class="viewtabs">
+      <button class="viewtab" data-view="source">原图</button>
+      <button class="viewtab" data-view="pixel">转换图</button>
+      <button class="viewtab active" data-view="grid">拼豆图纸</button>
+      <div class="modeseg show" id="modeSeg" title="平面视角：拼装图纸 · 3D 视角：换个角度看成品效果">
+        <div class="modeseg-btns"><i class="modeseg-knob no-anim" aria-hidden="true"></i><button data-mode="2d" class="on">平面</button><button data-mode="3d">3D</button></div><span class="modeseg-sep"></span><span class="modeseg-suffix">视角</span>
+      </div>
+      <div id="hlStatus" title="点击取消高亮"></div>
+    </div>
+    <!-- [VIEW-ZOOM] 原图 / 转换图：内容包在 .zstage 里缩放平移，右上角缩放组与图纸同款；各看法缩放状态独立保存 -->
+    <div class="canvas-wrap zview" id="view-source">
+      <div class="zstage"><div class="src-card" id="sourceCards"></div></div>
+      <div class="zoomctl"><button data-z="in">+</button><button data-z="out">−</button><button data-z="fit" class="zfit" title="恢复 100% 大小" aria-label="恢复 100% 大小" disabled>恢复</button><div class="zpct">100%</div></div>
+    </div>
+    <div class="canvas-wrap zview" id="view-pixel">
+      <div class="zstage"><div class="src-card">
+        <div class="frame"><img src="/* @inline PIXEL_ART_PNG */" alt="像素图"></div>
+        <div class="cap">转换图</div>
+      </div></div>
+      <div class="zoomctl"><button data-z="in">+</button><button data-z="out">−</button><button data-z="fit" class="zfit" title="恢复 100% 大小" aria-label="恢复 100% 大小" disabled>恢复</button><div class="zpct">100%</div></div>
+    </div>
+    <div class="canvas-wrap active" id="view-grid">
+      <canvas id="gridCanvas"></canvas>
+      <!-- [IRON] 烫法质感层：平面烫豆预览选了带纹理的烫法时叠在图纸画布上（js/iron-gl.js） -->
+      <canvas id="ironGL"></canvas>
+      <!-- 画布右上「换个看法」按钮组：同宽竖排。平面是镜像 + 模拟烫豆，3D视角 是俯视｜斜视 + 模拟烫豆 -->
+      <div class="canvas-tools">
+        <!-- [VIEW-3D] 3D视角 的镜头预设：俯视 / 斜视并排一行，两个合起来与下方「模拟烫豆」同宽；平面下隐藏 -->
+        <div id="v3Cam">
+          <button id="v3Top" class="mirror-btn" title="镜头移到豆板正上方">俯视</button>
+          <button id="v3Show" class="mirror-btn" title="回到斜上方的默认展示角度">斜视</button>
+        </div>
+        <button id="mirrorBtn" class="mirror-btn">⇄ 镜像</button>
+        <!-- [IRON] 平面烫豆预览开关 -->
+        <button id="ironBtn" class="mirror-btn show" title="在平面图纸上直接预览烫豆后的熔豆效果">模拟烫豆</button>
+      </div>
+      <div class="zoomctl">
+        <button id="zoomIn">+</button>
+        <button id="zoomOut">−</button>
+        <button id="zoomFit" class="zfit" title="恢复 100% 大小" aria-label="恢复 100% 大小" disabled>恢复</button>
+        <div id="zoomPct">100%</div>
+      </div>
+      <div class="hud" id="hud"></div>
+      <!-- [EDIT-MODE] 移动（手掌）：只挪视角不改图，不算编辑工具，编辑态才出现在画布右下角 -->
+      <button id="edHandBtn" type="button" title="移动（H）：拖动移动视角；按住套索选区可拖走选区；再点一次回到原来的工具" aria-label="移动"><img src="assets/tools/hand.png" alt=""></button>
+      <!-- [EDIT-MODE] 选区浮条：有套索选区时贴在选区旁；按住选区直接拖 = 移动；换色用填充在选区里点一下 -->
+      <div id="edSelPop"><span id="edSelN"></span><button id="edSelClear" type="button" title="取消选择（Esc）">取消</button></div>
+      <!-- [VIEW-3D] 3D 豆板画布 -->
+      <div id="v3Wrap"></div>
+      <!-- [VIEW-3D] 操作提示：进 3D视角 后显示，玩家一转动镜头就消失（本次打开页面内不再出现） -->
+      <div id="v3Hint"></div>
+      <!-- [3D-PROGRESS] 3D 左上：进度图例（有进度时自动出现，无开关） -->
+      <div id="v3Legend"><span><i class="lg-done"></i>已拼</span><span><i class="lg-cur"></i>正在拼</span><span><i class="lg-todo"></i>还没拼</span></div>
+      <!-- ===== [EDIT-MODE] 画布编辑提示 BEGIN ===== -->
+      <div id="edBadge">● 图纸编辑 <span>改完点右上角「保存」存一个版本</span><div id="edBadgeSub"></div></div>
+      <div id="edModal"><div class="box"><div class="t" id="edModalT"></div><div class="m" id="edModalM"></div><div class="b" id="edModalB"></div></div></div>
+      <div id="edTip"></div>
+      <div id="edHoldRing"></div>
+      <!-- ===== [EDIT-MODE] 画布编辑提示 END ===== -->
+      <!-- [EDIT-MODE] 旧「换色 REPLACE」居中浮窗已删：换色 / 批量去色统一走编辑态，点击色块直接进入编辑 -->
+    </div>
+    <!-- [IRON] 烫豆控制条：平面与 3D视角 共用这一条，进度共享（点「模拟烫豆」打开）。放在舞台层而不是画布容器里：画布容器可能带滚动条，浮层贴不到真正的底沿 -->
+    <div id="ironBar" class="meltbar">
+      <!-- [IRON] 控制条：左边「播放」按钮，中间进度滑条（可收窄，不写字），右边烫法按钮 -->
+      <button id="ironPlay" class="heat"><i class="ico"></i><span>播放</span></button>
+      <input type="range" id="ironMelt" min="0" max="1000" value="0" aria-label="烫豆进度">
+      <div id="ironStyles"></div>
+    </div>
+    <div style="height:12px"></div>
+  </div>
+</main>
+<footer>
+  <span class="tag">无畏契约拼豆专家</span>
+  <span>如需调整图案或重新生成，请回到 WorkBuddy 对话</span>
+  <span class="r">编辑内容自动保存在本设备 · <span id="restoreGrid" style="display:none;cursor:pointer;color:var(--red)">恢复初始图纸</span></span>
+</footer>
+<!-- ===== [POSTER] 导出图纸抽屉（css/poster.css、js/poster.js） ===== -->
+<div id="psMask"></div>
+<section id="ps" class="export" role="dialog" aria-label="导出图纸">
+  <div id="psHead"><i class="grip"></i><h2 id="psTitleH">导出图纸</h2>
+    <button id="psClose" title="收起"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 4l6.5 6.5M20 4l-6.5 6.5M4 20l6.5-6.5M20 20l-6.5-6.5"/></svg></button>
+  </div>
+  <div id="psBody">
+    <div id="psStageArea">
+      <div id="psStageWrap"><canvas id="psStage"></canvas>
+        <div id="psZoom"><button id="psZOut" title="缩小">−</button><button id="psZReset" title="还原到 100%（缩放只作用在图纸区，出图与预览一致）">100%</button><button id="psZIn" title="放大">＋</button></div>
+      </div>
+    </div>
+    <div id="psDock">
+      <!-- 控制坞顺序：分享图 → 背景色 → 色号表 → 底部栏，下载按钮锚定末尾。
+           分享图（主图）：一个下拉单选「图纸」或某种烫法的烫后效果（图纸、分隔线、五种「X烫效果」）；下面的胶囊开关是它的二级选项——图纸有色号 / 网格 / 发光，烫后效果只有发光。
+           底部栏：原图开关 + 烫后小图下拉（多选：「无」、分隔线、五种烫法，每选一种放一张「X烫效果模拟」小图）；主图已经用的烫法在这里置灰，不重复放。
+           两个烫法下拉共用一个自绘弹出菜单 #psMenu（微切角，与抽屉配色一致），不用系统原生下拉。
+           主图之后的选项都是一行一段（.ps-line）：左侧白字段名，右侧控件；窄控制坞里段名换到控件上方。 -->
+      <!-- 选项行：每行「段名（白字）+ 控件」，段名列宽固定，控件左对齐，整块尽量矮，把高度让给预览 -->
+      <!-- 主图段：段名后紧跟左对齐的两行——第一行选主图（图纸 / 烫后效果，主选项），第二行是随之变化的开关（衍生选项，小一号） -->
+      <div class="ps-line ps-line-sec ps-line-main"><span class="ps-k">分享图</span>
+        <div class="ps-grp">
+          <button type="button" class="ps-dd" id="psIronMain" title="主图放图纸，或某种烫法的烫后效果"><span class="v"></span></button>
+          <div class="ps-pair">
+            <div class="ps-sw on" data-k="codes"><span class="dot"></span><span class="t">色号</span></div>
+            <div class="ps-sw on" data-k="grid"><span class="dot"></span><span class="t">网格</span></div>
+            <div class="ps-sw on" data-k="glow" id="psGlow"><span class="dot"></span><span class="t">发光</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="ps-line ps-line-sec"><span class="ps-k">背景色</span>
+        <div class="ps-bgs" id="psBgs">
+          <i data-bg="#0F1923" class="on" title="黑" style="background:#0F1923"></i><i data-bg="#0B1E3A" title="墨蓝" style="background:#0B1E3A"></i><i data-bg="#ECE8E1" title="米白" style="background:#ECE8E1"></i><i data-bg="#DDE3E9" title="冷白" style="background:#DDE3E9"></i><label title="自选"><input type="color" id="psBgPick" value="#2B3A4A"></label>
+        </div>
+      </div>
+      <div class="ps-line ps-line-sec"><span class="ps-k">色号表</span>
+        <div class="ps-step" id="psChipRng" role="slider" tabindex="0" aria-label="色号表大小（最左是关，越往右色块越大）" aria-valuemin="0" aria-valuemax="5"><i class="fill"></i><b class="knob"></b></div>
+        <b class="ps-val" id="psChipVal">12 个 / 行</b>
+      </div>
+      <div class="ps-line ps-line-sec"><span class="ps-k">底部栏</span>
+        <div class="ps-foot">
+          <div class="ps-sw on" data-k="source" id="psOptSource"><span class="dot"></span><span class="t">原图</span></div>
+          <button type="button" class="ps-dd" id="psIron" title="底栏放哪几种烫后小图（可多选）"><span class="v"></span></button>
+        </div>
+      </div>
+      <div id="psDl"><span class="lbl">下载</span><span class="fmtn" id="psFmtName">PNG</span><button type="button" class="fmt" id="psFmt" title="切换为 PDF" aria-label="切换导出格式">⇄</button></div>
+    </div>
+  </div>
+  <div id="psMenu" role="listbox" hidden></div>
+</section>
+<div id="psSave"><div class="tip"><b>长按图片保存到相册</b><span class="sz"></span></div><img alt="分享图"><button type="button" class="go" hidden>保存 PDF</button><div class="x">点空白处关闭</div></div>
+<!-- ===== [POSTER] END ===== -->
+<div class="toast" id="toast"></div>
+<!-- ===== [STYLE-PICKER] 画风大图层（js/style-picker.js）：效果图居中，左侧小图是原图，箭头指向效果 ===== -->
+<div id="styleViewer" role="dialog" aria-label="画风预览">
+  <button id="styleViewerClose" title="关闭" aria-label="关闭">✕</button>
+  <div class="sp-stage">
+    <div class="sp-reference">
+      <div class="sp-src"><img id="styleViewerImg" alt="原图"><span class="sp-src-lb">原图</span></div>
+      <span class="sp-arrow">→</span>
+    </div>
+    <div class="sp-eff">
+      <img id="styleViewerEffectImg" alt="画风效果">
+      <div id="styleViewerCapRow"><span id="styleViewerCap"></span><span id="spEffectTag">本图所用</span></div>
+      <button type="button" id="styleCopyBtn">复制提示词</button>
+    </div>
+    <div class="sp-pad"></div>
+  </div>
+</div>
+<!-- [SAVE-FILE] 点「保存」另存出的新 HTML 把本地存档写在这里，打开时回灌到本地（js/save-file.js） -->
+<script id="perlerSaved" type="application/json">null</script>
+<script>
+/* @include js/storage.js */
+</script>
+<script>
+/* @inline DATA_JS */
+/* @inline THREE_JS */
+/* @inline STYLE_GUIDE_JSON */
+</script>
+<script>
+/* @include js/state.js */
+/* @include js/save-file.js */
+/* @include js/title.js */
+/* @include js/palette-resolve.js */
+/* @include js/style-picker.js */
+/* @include js/sidebar.js */
+/* @include js/view-switch.js */
+/* @include js/canvas.js */
+/* @include js/view-smooth.js */
+/* @include js/canvas-input.js */
+/* @include js/view-zoom.js */
+/* @include js/edit-mode.js */
+/* @include js/view-3d.js */
+/* @include js/islands.js */
+/* @include js/custom-size.js */
+/* @include js/versions.js */
+/* @include js/flow.js */
+/* @include js/iron-styles.js */
+/* @include js/iron-gl.js */
+/* @include js/iron-flat.js */
+/* @include js/poster.js */
+/* @include js/touch.js */
+/* @include js/init.js */
+</script>
+</body>
+</html>

@@ -1,0 +1,313 @@
+/* =====================================================================
+ * [FLOW] 站点流布局（全宽度统一，无独立桌面版）
+ * 页面按玩家动线分三站：规格调整 → 图纸编辑 → 辅助拼豆。
+ * 结构：顶栏 → 画布（含看图 tab）→ 编辑栏 #dock（把手 / 站点 Tab / 当前站面板，aside 区块按 data-st 过滤）。
+ * 编辑栏位置可选：底部（默认）/ 右侧 / 左侧（body[data-nav]，偏好存本机）；
+ * 窗口 < 960px 时始终钉在底部，位置切换按钮不出现。
+ * 站点逻辑在 js/flow.js；触屏专属手感集中在文件尾 @media (hover:none) and (pointer:coarse)。
+ * ===================================================================== */
+
+/* 页脚不占版面：「恢复初始图纸」在顶栏导出弹窗里 */
+footer{display:none}
+
+/* ---------- 面板区块折叠：点区块标题（▼）收起 / 展开本区块 ---------- */
+.panel-section .panel-label{cursor:pointer}
+.panel-section .panel-label::before{transition:transform .15s}
+/* !important 压过子元素的 ID 级 display 规则（如 #islandList{display:flex}），否则该区块收不起来 */
+.panel-section.sec-closed > :not(.panel-label){display:none !important}
+.panel-section.sec-closed .panel-label{margin-bottom:0}
+.panel-section.sec-closed .panel-label::before{transform:rotate(45deg)}
+
+/* ---------- 编辑栏 #dock：把手 + 站点 Tab + 当前站面板 ----------
+ * 页面最上方（原图 / 像素图 / 图纸、平面 / 3D）只管「怎么看」；编辑栏管「图纸产出与使用的动线」：
+ * 顶部三个 Tab 给栏内内容分类，把手拉起 / 收起整个栏，位置可钉底部 / 右侧 / 左侧。 */
+main{flex-direction:column}
+.stage{order:0; flex:1; min-height:0}
+#dock{
+  order:1; flex:none; width:100%; display:flex; flex-direction:column; min-height:0; position:relative; z-index:8;
+  background:var(--panel); border-top:1px solid var(--line2); box-shadow:0 -8px 24px rgba(0,0,0,.35);
+}
+#dockBody{flex:1 1 auto; min-width:0; min-height:0; display:flex; flex-direction:column}
+#dock aside{flex:1 1 auto; min-height:0; height:var(--dock-h, 34vh); width:100%; overscroll-behavior:contain; scroll-padding-bottom:74px}   /* [FLOW] 三站等高，内容多在栏内滚；scroll-padding-bottom 让滚动定位的元素避开吸底按钮 */
+body.dock-closed #dock aside{display:none}   /* 收起只藏面板，站点 Tab 留着：看得出停在哪一站，点哪站就展开到哪站（侧栏模式在宽屏段整栏收起） */
+aside > [data-st]{display:none}
+body[data-st="plan"]  aside > [data-st~="plan"],
+body[data-st="edit"]  aside > [data-st~="edit"],
+body[data-st="codes"] aside > [data-st~="codes"]{display:block}
+
+/* 把手（底部栏）：栏顶一条不写字的拖动横条。往上拖变高、往下拖变矮，拖过最矮即收起；点一下收起 / 展开（js/flow.js）。
+ * 可见的只有中间 36×4 的短杠；::before 向上多给 10px、中间 160px 宽的点按区，不占栏高也不挡整条画布下沿。 */
+#dockHandle{
+  flex:none; align-self:stretch; position:relative; height:14px; margin:0; padding:0; cursor:grab;
+  border:none; background:transparent; display:flex; align-items:center; justify-content:center;
+  touch-action:none; -webkit-tap-highlight-color:transparent;
+}
+#dockHandle::before{content:""; position:absolute; top:-10px; bottom:0; left:50%; width:160px; transform:translateX(-50%)}
+#dockHandle::after{content:""; width:36px; height:4px; border-radius:2px; background:var(--txt3); transition:background .15s, width .15s}
+@media (hover:hover){ #dockHandle:hover::after{background:var(--txt2)} } /* 触屏点按后 :hover 会粘住，只给能悬停的设备 */
+#dockHandle i{display:none}
+#dockResize{display:none}
+/* 拖动中：整页上下箭头光标、不选中文字，短杠变青、略加长 */
+body.dock-resizing-h, body.dock-resizing-h *{cursor:ns-resize !important; user-select:none !important}
+body.dock-resizing-h #dockHandle::after{background:var(--teal); width:48px}
+/* iPhone 底部 Home 指示条（上滑回桌面的那根横条）会盖住贴底的东西：底部编辑栏整体让出安全区 */
+#dock{padding-bottom:env(safe-area-inset-bottom, 0px)}
+body.dock-closed #dock{padding-bottom:max(6px, env(safe-area-inset-bottom, 0px))}
+
+/* 底部面板是扁的：规格卡横向滑动省高度，色板不自己限高 */
+.size-grid{grid-template-columns:none; grid-auto-flow:column; grid-auto-columns:92px; overflow-x:auto; padding-bottom:4px}
+.size-card img{aspect-ratio:1}
+.pal-list{max-height:none}
+
+/* 每站的「下一步」：贴在面板底部，只在规格调整 / 图纸编辑两站出现 */
+.flow-next{position:sticky; bottom:0; z-index:2; padding:10px 12px; background:var(--panel); border-top:1px solid var(--line); flex-direction:column; gap:6px}
+aside > .flow-next{display:none}
+body[data-st="plan"] aside > .flow-next, body[data-st="edit"] aside > .flow-next, body[data-st="codes"] aside > .flow-next{display:flex}
+#flowHint{font-size:11px; color:var(--txt2); letter-spacing:.04em}
+#flowNextBtn{width:100%; padding:12px 0; font-size:14px}
+
+/* ---------- 站点 Tab（栏内顶部） ---------- */
+#flowNav{
+  display:flex; flex:none; height:44px; align-items:stretch; padding:0 10px; gap:4px;
+  border-bottom:1px solid var(--line);
+}
+#flowNav button[data-st]{
+  flex:1; min-width:0; border:none; background:transparent; color:var(--txt3); cursor:pointer;
+  display:flex; align-items:center; justify-content:center; gap:7px;
+  font-family:var(--font-d); font-size:13px; font-weight:700; letter-spacing:.1em; white-space:nowrap;
+  transition:color .15s, background .15s;
+}
+#flowNav button[data-st]:hover{color:var(--txt2)}
+#flowNav button b{
+  flex:none; width:22px; height:22px; line-height:22px; text-align:center; font-size:12px;
+  border:1px solid var(--line2); clip-path:var(--cut-sm); transition:all .2s;
+}
+#flowNav button.seen{color:var(--txt2)}
+#flowNav button.seen b{border-color:var(--teal); color:var(--teal)}
+#flowNav button.on{color:var(--txt); background:var(--panel2); box-shadow:inset 0 -3px 0 var(--red)}
+#flowNav button.on b{background:var(--red); border-color:var(--red); color:#fff}
+/* 编辑栏位置：三个图标并列（左 / 底 / 右），图标里的实块就是栏的位置；窄屏只能钉底部，整组不出现 */
+#navDock{flex:none; display:flex; align-items:center; gap:2px; margin-left:auto; padding:0 4px 0 10px; border-left:1px solid var(--line)}
+#navDock button{
+  width:30px; height:30px; padding:0; border:1px solid transparent; background:transparent; color:var(--txt3);
+  cursor:pointer; display:flex; align-items:center; justify-content:center; clip-path:var(--cut-sm); transition:color .15s, background .15s;
+}
+#navDock svg{width:18px; height:18px; display:block}
+#navDock svg .o{fill:none; stroke:currentColor; stroke-width:1.2}
+#navDock svg .f{fill:currentColor; opacity:.35}
+#navDock button:hover{color:var(--txt)}
+#navDock button.on{color:var(--teal); background:rgba(0,200,200,.12)}
+#navDock button.on svg .f{opacity:.9}
+@media (max-width:959px){ #navDock{display:none} }
+
+/* ---------- 宽屏（≥960px）：栏内内容限宽居中、不铺满 ---------- */
+@media (min-width:960px){
+  #dock aside{padding-inline:max(0px, calc((100% - 920px)/2))}
+  /* 底部栏至少 340px：规格调整站默认态（尺寸卡 + 收起的颜色数量 / 色号规格 + 下一步）一屏放下，不被吸底按钮盖住；三站仍等高 */
+  #dock aside{height:var(--dock-h, max(34vh, 340px))}
+  /* 底部栏的规格卡加宽到放得下「156×156（4300颗）」一行；缩略图保持 74px 高、居中，卡片比尺寸与颗数分两行时矮一行。侧栏模式卡片本来就宽，不动 */
+  body[data-nav="bottom"] .size-grid{grid-auto-columns:136px}
+  body[data-nav="bottom"] .size-card img{aspect-ratio:auto; height:74px; background:transparent}
+  #flowNav{padding-inline:max(10px, calc((100% - 920px)/2))}
+
+  /* ---------- 编辑栏钉右侧 / 左侧：整栏换边，把手在朝画布那条边的中部 ---------- */
+  body[data-nav="right"] main, body[data-nav="left"] main{flex-direction:row}
+  body[data-nav="right"] #dock, body[data-nav="left"] #dock{
+    width:var(--dock-w, 380px); flex-direction:row; align-items:stretch; border-top:none; box-shadow:none;
+  }
+  /* 宽度拖拽条：朝画布那条边上 8px 宽的热区，悬停 / 拖动时亮一条青线 */
+  body[data-nav="right"] #dockResize, body[data-nav="left"] #dockResize{
+    display:block; position:absolute; top:0; bottom:0; width:8px; z-index:9; cursor:col-resize; touch-action:none;
+  }
+  body[data-nav="right"] #dockResize{left:-4px}
+  body[data-nav="left"] #dockResize{right:-4px}
+  #dockResize::after{content:""; position:absolute; top:0; bottom:0; left:3px; width:2px; background:transparent; transition:background .15s}
+  #dockResize:hover::after, body.dock-resizing #dockResize::after{background:var(--teal)}
+  body.dock-resizing, body.dock-resizing *{cursor:col-resize !important; user-select:none !important}
+  body.dock-closed #dockResize{display:none !important}
+  body[data-nav="right"] #dock{border-left:1px solid var(--line2)}
+  body[data-nav="left"] #dock{order:-1; border-right:1px solid var(--line2)}
+  body[data-nav="right"] #dock aside, body[data-nav="left"] #dock aside{padding-inline:0}
+  body[data-nav="right"] #flowNav, body[data-nav="left"] #flowNav{padding-inline:4px; gap:2px}
+  /* 侧栏窄：站点 Tab 只留序号 + 文字，缩字距；位置切换按钮收窄 */
+  body[data-nav="right"] #flowNav button[data-st], body[data-nav="left"] #flowNav button[data-st]{gap:4px; font-size:12px; letter-spacing:0}
+  body[data-nav="right"] #flowNav button b, body[data-nav="left"] #flowNav button b{width:18px; height:18px; line-height:18px; font-size:11px}
+  body[data-nav="right"] #navDock, body[data-nav="left"] #navDock{padding:0 0 0 4px}
+  body[data-nav="right"] #navDock button, body[data-nav="left"] #navDock button{width:24px; height:24px}
+  body[data-nav="right"] #navDock svg, body[data-nav="left"] #navDock svg{width:16px; height:16px}
+  body[data-nav="right"] #dockHandle, body[data-nav="left"] #dockHandle{align-self:center; width:22px; height:84px; margin:0 -11px 0 0; padding:0; flex-direction:column; border-radius:11px; cursor:pointer; border:1px solid var(--line2); background:var(--panel2); color:var(--txt2); box-shadow:0 2px 8px rgba(0,0,0,.35)}
+  body[data-nav="right"] #dockHandle::before, body[data-nav="left"] #dockHandle::before{content:none}
+  @media (hover:hover){ body[data-nav="right"] #dockHandle:hover, body[data-nav="left"] #dockHandle:hover{color:var(--teal); border-color:var(--teal)} }
+  body[data-nav="right"].dock-closed #dockHandle, body[data-nav="left"].dock-closed #dockHandle{background:var(--red); border-color:var(--red); color:#fff}
+  body[data-nav="right"] #dockHandle i, body[data-nav="left"] #dockHandle i{display:block; width:8px; height:8px; border-right:2px solid currentColor; border-bottom:2px solid currentColor; transition:transform .15s}
+  body[data-nav="right"].dock-closed #dockBody, body[data-nav="left"].dock-closed #dockBody{display:none}
+  body[data-nav="right"].dock-closed #dock, body[data-nav="left"].dock-closed #dock{padding-bottom:0}
+  body[data-nav="left"] #dockHandle{margin:0 0 0 -11px}
+  body[data-nav="right"] #dockHandle::after, body[data-nav="left"] #dockHandle::after{content:none}
+  body[data-nav="left"] #dockHandle{order:2}
+  /* 箭头朝向：展开时指向「栏要收去的那一边」，收起后反向 */
+  body[data-nav="right"] #dockHandle i{transform:translateX(-2px) rotate(-45deg)}
+  body[data-nav="left"]  #dockHandle i{transform:translateX(2px) rotate(135deg)}
+  body[data-nav="right"].dock-closed #dockHandle i{transform:translateX(2px) rotate(135deg)}
+  body[data-nav="left"].dock-closed  #dockHandle i{transform:translateX(-2px) rotate(-45deg)}
+  body[data-nav="right"].dock-closed #dock, body[data-nav="left"].dock-closed #dock{width:19px}
+  /* 侧栏是高的：规格卡回到两列栅格、色板恢复限高 */
+  body[data-nav="right"] .size-grid, body[data-nav="left"] .size-grid{
+    grid-auto-flow:row; grid-template-columns:repeat(2,minmax(0,1fr)); grid-auto-columns:auto; overflow-x:visible;
+  }
+  body[data-nav="right"] .pal-list, body[data-nav="left"] .pal-list{max-height:260px}
+
+  /* ---------- 侧栏是窄而高的：横向不挤、纵向放开 ----------
+   * 底部栏是扁的，才需要两列、紧凑行距；侧栏高度富余、宽度紧，就改成单列、拉开行距与区块间距。 */
+  body[data-nav="right"] .panel-section, body[data-nav="left"] .panel-section{padding:16px 16px 14px}
+  /* 编辑工具条：放不下就折行，不再横向滚动把「移动 / 撤销 / 重做」藏到右边 */
+  /* 编辑工具条：当前色独占第一行（铺满），工具 + 撤销重做排第二行，不再横向滚动把后几个工具藏起来 */
+  body[data-nav="right"] #edBar, body[data-nav="left"] #edBar{flex-wrap:wrap; overflow-x:visible; row-gap:6px; justify-content:space-between}
+  body[data-nav="right"] #edBar #edChip, body[data-nav="left"] #edBar #edChip{flex:1 0 100%}
+  body[data-nav="right"] #edBar #edChip + .sep, body[data-nav="left"] #edBar #edChip + .sep{display:none}
+  body[data-nav="right"] #edBar #edChip, body[data-nav="left"] #edBar #edChip{justify-content:flex-start}
+  body[data-nav="right"] #edBar, body[data-nav="left"] #edBar{gap:0}
+  body[data-nav="right"] #edBar button:not(#edChip), body[data-nav="left"] #edBar button:not(#edChip){width:auto; flex:1 1 0; min-width:30px; padding:0 1px}
+  body[data-nav="right"] #edBar .sep, body[data-nav="left"] #edBar .sep{margin:0 2px}
+  body[data-nav="right"] #edControls, body[data-nav="left"] #edControls{padding:10px 16px 8px}
+  body[data-nav="right"] #edColorSec .grid, body[data-nav="left"] #edColorSec .grid{gap:8px; margin:6px 0 10px}
+  /* 拼豆进度记录表：单列，一行一色；行高、行距拉开 */
+  body[data-nav="right"] .color-list, body[data-nav="left"] .color-list{grid-template-columns:minmax(0,1fr); gap:6px; padding:0 0 12px}
+  body[data-nav="right"] .crow, body[data-nav="left"] .crow{padding:9px 10px; gap:10px; grid-template-columns:22px minmax(0,1fr) auto 24px}
+  body[data-nav="right"] .crow .ci, body[data-nav="left"] .crow .ci{flex-direction:row; align-items:baseline; gap:8px}
+  body[data-nav="right"] .crow .use, body[data-nav="left"] .crow .use{display:flex; align-items:baseline; gap:3px}
+  body[data-nav="right"] .crow .use small, body[data-nav="left"] .crow .use small{display:inline}
+  body[data-nav="right"] .crow .bar, body[data-nav="left"] .crow .bar{margin-top:2px}
+  body[data-nav="right"] #progWrap, body[data-nav="left"] #progWrap{padding:12px 14px; margin-bottom:14px}
+  body[data-nav="right"] .crow-legend, body[data-nav="left"] .crow-legend{margin:0 0 14px; font-size:12px}
+  body[data-nav="right"] .panel-section .panel-label, body[data-nav="left"] .panel-section .panel-label{margin-bottom:12px}
+  body[data-nav="right"] .flow-next, body[data-nav="left"] .flow-next{padding:12px 16px}
+}
+
+/* ---------- 窄屏（≤820px）：紧凑化 ---------- */
+@media (max-width:820px){
+  header{height:46px; gap:8px; padding:0 10px}
+  .title-block{flex:1; min-width:0}
+  .title-block h1{font-size:14px; letter-spacing:.04em; overflow:hidden; text-overflow:ellipsis}
+  .title-block .sub, .spacer{display:none}
+  header .btn#flowExpBtn{padding:7px 12px; font-size:12px}
+
+  .panel-section{padding:8px 12px 7px}
+  .panel-section .panel-label{margin-bottom:6px}
+  .panel-label{font-size:12px}
+  .island-note{margin:2px 0 4px}
+  #edColorSec .grid{margin:2px 0 6px}
+  .crow-legend{margin:2px 0 4px}
+
+  .viewtabs{padding:6px 8px 0; gap:4px; flex-wrap:wrap}
+  .viewtab{padding:6px 12px; font-size:12px; letter-spacing:.08em}
+  #edDirty{display:none !important}
+  #modeSeg{padding:0}
+  #modeSeg button{padding:4px 9px; font-size:11px}
+  #hlStatus{padding:5px 8px 3px; font-size:12px}
+  #edActs .btn{padding:7px 12px; font-size:12px}
+  .canvas-wrap{margin:6px 0 0; border-left:none; border-right:none}
+  #view-source{padding:12px}
+  #view-source .src-card.multi{gap:16px}
+  .zview .zoomctl{top:8px}
+  .src-card img{max-width:86vw; max-height:48vh}
+  .mirror-btn{padding:6px 10px; font-size:12px}
+  .canvas-tools{top:8px; right:8px}
+  .zoomctl{top:46px}
+  .hud{font-size:10.5px; padding:5px 9px; left:40px; bottom:6px}
+  body.editing .hud{bottom:6px}
+  /* 提示条落在图纸区顶部（top 由 toast() 按画布位置写入 --toast-top），单行，超长省略，不压顶栏与页签 */
+  .toast, body.editing .toast{
+    top:var(--toast-top, 96px); bottom:auto; left:50%; right:auto; transform:translateX(-50%);
+    max-width:calc(100vw - 104px); white-space:nowrap; /* 左右各让出缩放按钮列 */ overflow:hidden; text-overflow:ellipsis; text-align:center;
+    padding:7px 14px; font-size:12px; letter-spacing:.04em;
+  }
+  .toast.wrap, body.editing .toast.wrap{width:max-content; white-space:normal; line-height:1.5}   /* 少数必须读全的提示（toast 第三个参数）放不下时折成两行 */
+
+  /* 编辑站工具区与画布分别占位 */
+  #edControls{padding:6px 8px 5px}
+  #edBar{padding:3px; justify-content:space-between}
+  #edBar button{width:36px; height:42px}
+  #edBar .sep{margin:0 1px}
+  #edBar #edChip{min-width:56px; height:42px; padding:0 5px 0 3px; gap:4px}
+  #edChip .sw{width:30px; height:30px}
+  #edChip .cd{white-space:nowrap; font-size:13px}
+  #edBadge{left:8px; top:8px; font-size:12px; padding:4px 9px}
+  #edBadge span{display:none}
+  #edHandBtn{right:8px; bottom:8px; width:40px; height:40px}
+  #edSelPop{gap:4px}
+  #edSelPop button{height:32px; padding:0 9px}
+  #edModal .box{width:min(340px, 90vw)}
+  /* 窄屏弹窗按钮竖排全宽：长文案不挤成一排 */
+  #edModal .b{flex-direction:column; align-items:stretch; gap:8px}
+  #edModal .b button{width:100%; padding:11px 0; text-align:center; white-space:normal; line-height:1.4}
+  #edModal .b button.primary{order:-1}
+
+}
+
+/* ---------- 小屏手机（≤430px，iPhone 竖屏）：在 ≤820 紧凑档之上字号与留白再收一档 ----------
+ * 原则：正文 / 标签 ~11–12px、按钮 ~11–12px、主按钮 13px；不低于 10px（色号小字除外），点按区不缩。 */
+@media (max-width:430px){
+  header{height:42px; gap:6px; padding:0 8px}
+  .title-block h1{font-size:12.5px; letter-spacing:.02em}
+  #titleEdit{width:20px; height:20px; font-size:12px}
+  #topRight{gap:4px}
+  header .btn#flowExpBtn, #edActs .btn{padding:5px 9px; font-size:11px; letter-spacing:.06em}
+  #verBtn{font-size:11px; padding:5px 3px}
+
+  .viewtabs{padding:5px 6px 0; gap:3px}
+  .viewtab{padding:5px 9px; font-size:11px; letter-spacing:.04em}
+  #modeSeg{padding:0}
+  #modeSeg button{padding:3px 7px; font-size:10.5px; letter-spacing:.06em}
+  .mirror-btn{padding:5px 8px; font-size:11px; letter-spacing:.06em}
+  .zoomctl button{width:26px; height:26px; font-size:14px}
+  .hud{font-size:10px; padding:4px 7px}
+  #edBadge{font-size:11px; padding:3px 8px}
+
+  #flowNav{height:38px; padding:0 6px; gap:2px}
+  #flowNav button[data-st]{font-size:12px; letter-spacing:.04em; gap:5px}
+  #flowNav button b{width:18px; height:18px; line-height:18px; font-size:11px}
+  .panel-section{padding:7px 10px 6px}
+  .panel-label{font-size:11px; letter-spacing:.14em}
+  #edBar button{width:34px; height:38px}
+  #edBar button span{font-size:10px}
+  #edBar #edChip{height:38px}
+  #edChip .sw{width:26px; height:26px}
+  #edChip .cd{font-size:12px}
+  /* 色号块一行 6 个左右（360–430px 宽都是 6 个）：色样与颗数条压矮，色号仍写在色样上 */
+  #edColorSec .grid{grid-template-columns:repeat(auto-fill,minmax(50px,1fr)); gap:4px}
+  .ed-count .sw{height:22px}
+  .ed-count .code{font-size:11.5px}
+  .ed-count .qty{font-size:9.5px; padding:3px 1px 2px}
+  .size-grid{grid-auto-columns:84px}
+  .size-card .n{font-size:13px}
+  .size-card .meta{font-size:9px}
+  #csRow .cs-t{font-size:13px}
+  .crow .code{font-size:12px}
+  .crow .name{font-size:10.5px}
+  #flowHint{font-size:10.5px}
+  #flowNextBtn{padding:10px 0; font-size:13px}
+  .flow-next{padding:8px 10px}
+}
+
+/* ---------- 触屏手感（按输入方式，与布局无关） ---------- */
+@media (hover:none) and (pointer:coarse){
+  body{
+    touch-action:manipulation; overscroll-behavior:none;
+    -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent;
+  }
+  input{-webkit-user-select:text; user-select:text}
+  button:active, .size-card:active, .pal-btn:active, .crow:active{filter:brightness(1.3)}
+  /* 触屏上 :hover 会在点按后粘住：把常见的悬停态压回常态 */
+  .btn:not(.primary):hover{background:var(--panel2); border-color:var(--line); color:var(--txt)}
+  .size-card:hover{border-color:var(--line)}
+  .size-card.active:hover{border-color:var(--red)}
+  .crow:hover{background:transparent}
+  .crow.hl:hover{background:rgba(0,200,200,.08)}
+  .zoomctl button:hover{background:rgba(15,25,35,.88); border-color:var(--line)}
+  .mirror-btn:hover{border-color:var(--line); color:var(--txt)}
+  .mirror-btn.on:hover{border-color:var(--teal); color:#0B141A}
+  #edBar button:hover:not(:disabled){border-color:transparent}
+  .viewtab:hover{color:var(--txt2); border-color:var(--line)}
+  .viewtab.active:hover{color:var(--bg); border-color:var(--txt)}
+}

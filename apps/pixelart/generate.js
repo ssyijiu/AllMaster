@@ -1,0 +1,267 @@
+/* 拼豆大师：生成链路（产品层模块，server.js 挂载路由）
+ *
+ * 流程：POST /api/pixelart/generate（上传图 + 画风 + 备注）
+ *   → 落盘工作目录 → 组装提示词四槽位（LLM 优先，未配置时模板兜底）
+ *   → 后台 spawn val_perler.py generate（生图 → 切格 → 单文件图纸 HTML）
+ *   → 立即返回 taskId；GET /api/pixelart/task?id= 轮询；完成后 GET /api/pixelart/task/html?id= 取图纸
+ *
+ * 配置读服务器本地 .pixelart-config.json：
+ *   accUserId  生图服务 WB ID（spawn 时注入 ACC_USER_ID 环境变量）
+ *   pythonExe  解释器路径（不存在回落 python3）
+ *   promptLLM  { baseUrl, model, apiKey?, providerId? } 视觉 chat 模型；null/缺 Key = 模板兜底
+ */
+'use strict';
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
+const { execFile, spawn } = require('child_process');
+
+const ROOT = path.join(__dirname, '..', '..');
+const CONFIG_FILE = path.join(ROOT, '.pixelart-config.json');
+const AI_CONFIG_FILE = path.join(ROOT, '.ai-config.json');
+const PERLER_DIR = path.join(ROOT, 'apps/pixelart/assert/无畏契约拼豆源码/valorant-perler');
+const PERLER_SCRIPTS = path.join(PERLER_DIR, 'scripts');
+const STYLE_GUIDE_JSON = path.join(PERLER_DIR, 'assets', 'style_guide.json');
+const TASK_ROOT = path.join(os.tmpdir(), 'pixelart-tasks');
+const GEN_TIMEOUT_MS = 8 * 60 * 1000;   // 生图+切格上限（实测约 1 分钟）
+const TASK_TTL_MS = 2 * 60 * 60 * 1000; // 渲染服务只保留 2 小时，任务记录同步过期
+
+/* 内存任务表：{ id: { status, error?, htmlPath?, workDir, startedAt } } */
+const tasks = new Map();
+
+function readConfig() { try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch (_) { return {}; } }
+function readAiKeys() { try { return (JSON.parse(fs.readFileSync(AI_CONFIG_FILE, 'utf8')) || {}).providerKeys || {}; } catch (_) { return {}; } }
+function pythonExe() {
+  const wanted = (readConfig().pythonExe || '').trim();
+  if (wanted) { try { fs.accessSync(wanted, fs.constants.X_OK); return wanted; } catch (_) {} }
+  return 'python3';
+}
+
+function loadStyleGuide() {
+  try { return JSON.parse(fs.readFileSync(STYLE_GUIDE_JSON, 'utf8')); } catch (_) { return { styles: [] }; }
+}
+function findStyle(styleId) {
+  return loadStyleGuide().styles.find((s) => s.id === styleId) || null;
+}
+
+/* ---------- 提示词四槽位 ---------- */
+
+/* 模板兜底：无 LLM 配置时按主体类型 + 用户备注拼出四槽位（口径对齐 SKILL.md 的槽位定义） */
+function templateSlots(subject, styleLabel, notes) {
+  const note = (notes || '').trim();
+  if (subject === 'prop') {
+    return {
+      game_knowledge: '',
+      subject_description: '参考图中的道具按原有造型、比例和主色重画，标志性特征与纹样保留清楚。'
+        + (note ? '玩家要求：' + note : ''),
+      image_analysis: '参考图为用户上传的原图。保留：道具的轮廓造型、主色分区和标志细节。舍弃：背景、阴影和与道具无关的内容。',
+      composition: '正方形画面，道具居中，主体占画面约三分之二，主体外透明背景。'
+    };
+  }
+  return {
+    game_knowledge: '',
+    subject_description: '保留参考图人物或人形角色的身份辨识点：发型剪影与发色分区、脸型或面罩特征、服装结构与主色、标志配饰。'
+      + (note ? '玩家要求：' + note : ''),
+    image_analysis: '参考图为用户上传的原图。保留：发型、脸型、服装主色与标志配饰等身份特征。舍弃：背景、武器、手持物与身外特效。',
+    composition: '正方形画面，人物居中完整入画，主体高约占画面 85%，四周留少量透明空白。'
+  };
+}
+
+/* LLM 读图写槽位：返回 null 表示未配置/失败（调用方回落模板） */
+async function llmSlots(imageBase64, subject, notes) {
+  const cfg = readConfig().promptLLM;
+  if (!cfg || !cfg.baseUrl || !cfg.model) { return null; }
+  const keys = readAiKeys();
+  const apiKey = (cfg.providerId && keys[cfg.providerId]) || cfg.apiKey || '';
+  if (!apiKey) { return null; }
+  const system = [
+    '你是拼豆图纸（像素画底稿）的提示词专家。用户会上传一张图，请分析图片并输出四个提示词段落，最终 JSON 只含这四个键：',
+    'game_knowledge：角色/道具的身份与可核对的辨识点（发型剪影、发色分区、肤色、标志服饰配件）；从图里读，读不出就留空字符串。',
+    'subject_description：具体比例、动作、表情、道具与配饰，保留图中原有特征。',
+    'image_analysis：分清参考图要保留的身份辨识点与要舍弃的内容（背景、武器、特效等）。',
+    'composition：取景——主体位置、占画面比例、完整入画范围，主体外透明背景。',
+    '要求：全部中文；每段 1~3 句、具体可执行；不写画风与像素化要求（由其他段落负责）；',
+    '玩家备注优先于图片内容。' + (subject === 'prop' ? '主体是道具/物品，不是人像。' : '主体是人物/人形角色。'),
+    (notes || '').trim() ? '玩家备注：' + notes.trim() : '',
+    '只输出 JSON 对象本身，不要 markdown 代码块。'
+  ].filter(Boolean).join('\n');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
+  try {
+    const res = await fetch(String(cfg.baseUrl).replace(/\/+$/, '') + '/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: cfg.model,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: system },
+            { type: 'image_url', image_url: { url: imageBase64 } }
+          ]
+        }],
+        max_tokens: 1500
+      }),
+      signal: ctrl.signal
+    });
+    if (!res.ok) { return null; }
+    const data = await res.json();
+    const text = data && data.choices && data.choices[0] && data.choices[0].message
+      ? String(data.choices[0].message.content || '') : '';
+    const m = text.indexOf('{') >= 0 ? text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1) : '';
+    const slots = JSON.parse(m);
+    const out = {};
+    for (const k of ['game_knowledge', 'subject_description', 'image_analysis', 'composition']) {
+      const v = slots[k];
+      if (typeof v !== 'string' || !v.trim()) { return null; }
+      out[k] = v.trim();
+    }
+    return out;
+  } catch (_) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* ---------- 任务生命周期 ---------- */
+
+function pruneTasks() {
+  const now = Date.now();
+  for (const [id, t] of tasks) {
+    if (now - t.startedAt > TASK_TTL_MS) { tasks.delete(id); }
+  }
+}
+
+function findOutputHtml(workDir) {
+  const outDir = path.join(workDir, 'output');
+  try {
+    const hit = fs.readdirSync(outDir).find((f) => f.endsWith('.html'));
+    return hit ? path.join(outDir, hit) : null;
+  } catch (_) { return null; }
+}
+
+function startTask(id, workDir, imagePath, promptPath, subject, styleId) {
+  const t = tasks.get(id);
+  const args = [imagePath, '--work-dir', workDir, '--prompt', promptPath,
+    '--subject', subject, '--task-name', '拼豆图纸'];
+  if (styleId && styleId !== 'original') { args.push('--art-style', styleId); }
+  if (styleId === 'pixel-big-head') { args.push('--boards', '36', '52', '78'); }
+  const cfg = readConfig();
+  const child = spawn(pythonExe(), ['val_perler.py', 'generate'].concat(args), {
+    cwd: PERLER_SCRIPTS,
+    env: Object.assign({}, process.env, cfg.accUserId ? { ACC_USER_ID: cfg.accUserId } : {}),
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  let stderrTail = '';
+  let stdoutTail = '';
+  t.pid = child.pid;
+  const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} }, GEN_TIMEOUT_MS);
+  child.stdout.on('data', (d) => { stdoutTail = (stdoutTail + d).slice(-4000); });
+  child.stderr.on('data', (d) => { stderrTail = (stderrTail + d).slice(-4000); });
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    t.finishedAt = Date.now();
+    const html = findOutputHtml(workDir);
+    if (code === 0 && html) {
+      t.status = 'done';
+      t.htmlPath = html;
+    } else {
+      t.status = 'failed';
+      t.error = ('退出码 ' + code + ' ' + stderrTail + ' ' + stdoutTail).slice(-600).trim();
+    }
+  });
+  child.on('error', (err) => {
+    clearTimeout(timer);
+    t.status = 'failed';
+    t.error = '启动失败：' + String(err.message || err).slice(0, 300);
+  });
+}
+
+/* ---------- 路由处理 ---------- */
+
+const MIME_RE = /^data:(image\/(png|jpeg|jpg|webp));base64,([A-Za-z0-9+/=]+)$/;
+
+/* POST /api/pixelart/generate { imageBase64, subject, styleId, notes } → { taskId } */
+async function handleGenerate(req, res, sendJson) {
+  let body;
+  try {
+    const chunks = [];
+    let size = 0;
+    for await (const c of req) {
+      size += c.length;
+      if (size > 12 * 1024 * 1024) { throw new Error('图片过大（上限 12MB）'); }
+      chunks.push(c);
+    }
+    body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+  } catch (err) {
+    return sendJson(res, 400, { error: { message: (err && err.message) || '请求解析失败' } });
+  }
+
+  const m = MIME_RE.exec(String(body.imageBase64 || ''));
+  if (!m) { return sendJson(res, 400, { error: { message: '缺少图片或格式不支持（png/jpeg/webp）' } }); }
+  const subject = body.subject === 'prop' ? 'prop' : 'character';
+  const styleId = String(body.styleId || 'original');
+  if (!findStyle(styleId)) { return sendJson(res, 400, { error: { message: '未知画风：' + styleId } }); }
+  if (subject === 'prop' && findStyle(styleId).scope === 'character') {
+    return sendJson(res, 400, { error: { message: '该画风只支持人像主体' } });
+  }
+
+  pruneTasks();
+  const id = crypto.randomBytes(8).toString('hex');
+  const workDir = path.join(TASK_ROOT, id);
+  const imgDir = path.join(workDir, '原图');
+  try {
+    fs.mkdirSync(imgDir, { recursive: true });
+    fs.writeFileSync(path.join(imgDir, '原图.png'), Buffer.from(m[3], 'base64'));
+  } catch (err) {
+    return sendJson(res, 500, { error: { message: '落盘失败：' + String(err.message || err).slice(0, 120) } });
+  }
+  tasks.set(id, { status: 'running', workDir, startedAt: Date.now() });
+
+  /* 槽位组装（LLM 失败自动回落模板）→ 写配置 → 后台跑链路；HTTP 立即返回 */
+  const slots = (await llmSlots(body.imageBase64, subject, body.notes))
+    || templateSlots(subject, findStyle(styleId).label, body.notes);
+  const promptPath = path.join(workDir, 'prompt.json');
+  fs.writeFileSync(promptPath, JSON.stringify(slots, null, 2));
+  startTask(id, workDir, path.join(imgDir, '原图.png'), promptPath, subject, styleId);
+  return sendJson(res, 200, { taskId: id });
+}
+
+/* GET /api/pixelart/task?id= → { status, error? }；重启后从磁盘恢复已完成的任务 */
+function handleTaskStatus(req, res, fullUrl, sendJson) {
+  const id = String(fullUrl.searchParams.get('id') || '');
+  let t = tasks.get(id);
+  if (!t) {
+    const workDir = path.join(TASK_ROOT, id);
+    const html = findOutputHtml(workDir);
+    if (id && /^[0-9a-f]{16}$/.test(id) && html) {
+      t = { status: 'done', htmlPath: html, workDir, startedAt: 0, recovered: true };
+      tasks.set(id, t);
+    }
+  }
+  if (!t) { return sendJson(res, 404, { error: { message: '任务不存在或已过期' } }); }
+  return sendJson(res, 200, { status: t.status, error: t.error || undefined });
+}
+
+/* GET /api/pixelart/task/html?id= → 单文件图纸 HTML */
+function handleTaskHtml(req, res, fullUrl, sendJson) {
+  const id = String(fullUrl.searchParams.get('id') || '');
+  const t = tasks.get(id);
+  if (!t || t.status !== 'done' || !t.htmlPath) {
+    return sendJson(res, 404, { error: { message: '任务未完成或不存在' } });
+  }
+  let stat;
+  try { stat = fs.statSync(t.htmlPath); } catch (_) {
+    return sendJson(res, 410, { error: { message: '图纸文件已清理' } });
+  }
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': stat.size,
+    'Cache-Control': 'no-store'
+  });
+  fs.createReadStream(t.htmlPath).pipe(res);
+}
+
+module.exports = { handleGenerate, handleTaskStatus, handleTaskHtml, loadStyleGuide };
