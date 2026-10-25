@@ -68,7 +68,58 @@ function templateSlots(subject, styleLabel, notes) {
   };
 }
 
-/* LLM 读图写槽位：返回 null 表示未配置/失败（调用方回落模板） */
+/* LLM 读图写槽位：返回 null 表示未配置/失败（调用方回落模板）。
+   图先压到 512px JPEG 再上传（出口链路对大上传不稳，压图 + 重试双保险）。 */
+function shrinkImage(pngPath, cb) {
+  const script = [
+    'import sys, base64, io',
+    'from PIL import Image',
+    'im = Image.open(sys.argv[1]).convert("RGB")',
+    'im.thumbnail((512, 512))',
+    'buf = io.BytesIO()',
+    'im.save(buf, "JPEG", quality=75)',
+    'print("data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode())'
+  ].join('\n');
+  execFile(pythonExe(), ['-c', script, pngPath], { timeout: 20000 }, (err, stdout) => {
+    cb(err ? null : String(stdout).trim() || null);
+  });
+}
+
+function llmAttempt(cfg, apiKey, imageBase64, system) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
+  return fetch(String(cfg.baseUrl).replace(/\/+$/, '') + '/chat/completions', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: cfg.model,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: system },
+          { type: 'image_url', image_url: { url: imageBase64 } }
+        ]
+      }],
+      max_tokens: 1500
+    }),
+    signal: ctrl.signal
+  }).then(async (res) => {
+    if (!res.ok) { return null; }
+    const data = await res.json();
+    const text = data && data.choices && data.choices[0] && data.choices[0].message
+      ? String(data.choices[0].message.content || '') : '';
+    const m = text.indexOf('{') >= 0 ? text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1) : '';
+    const slots = JSON.parse(m);
+    const out = {};
+    for (const k of ['game_knowledge', 'subject_description', 'image_analysis', 'composition']) {
+      const v = slots[k];
+      if (typeof v !== 'string' || !v.trim()) { return null; }
+      out[k] = v.trim();
+    }
+    return out;
+  }).catch(() => null).finally(() => clearTimeout(timer));
+}
+
 async function llmSlots(imageBase64, subject, notes) {
   const cfg = readConfig().promptLLM;
   if (!cfg || !cfg.baseUrl || !cfg.model) { return null; }
@@ -86,43 +137,13 @@ async function llmSlots(imageBase64, subject, notes) {
     (notes || '').trim() ? '玩家备注：' + notes.trim() : '',
     '只输出 JSON 对象本身，不要 markdown 代码块。'
   ].filter(Boolean).join('\n');
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 60000);
-  try {
-    const res = await fetch(String(cfg.baseUrl).replace(/\/+$/, '') + '/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: cfg.model,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'text', text: system },
-            { type: 'image_url', image_url: { url: imageBase64 } }
-          ]
-        }],
-        max_tokens: 1500
-      }),
-      signal: ctrl.signal
-    });
-    if (!res.ok) { return null; }
-    const data = await res.json();
-    const text = data && data.choices && data.choices[0] && data.choices[0].message
-      ? String(data.choices[0].message.content || '') : '';
-    const m = text.indexOf('{') >= 0 ? text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1) : '';
-    const slots = JSON.parse(m);
-    const out = {};
-    for (const k of ['game_knowledge', 'subject_description', 'image_analysis', 'composition']) {
-      const v = slots[k];
-      if (typeof v !== 'string' || !v.trim()) { return null; }
-      out[k] = v.trim();
-    }
-    return out;
-  } catch (_) {
-    return null;
-  } finally {
-    clearTimeout(timer);
+  /* 出口链路对较大上传不稳：3 次尝试 + 退避；单次超时 60s */
+  for (let i = 0; i < 3; i++) {
+    const r = await llmAttempt(cfg, apiKey, imageBase64, system);
+    if (r) { return r; }
+    await new Promise((resolve) => setTimeout(resolve, 1500 * (i + 1)));
   }
+  return null;
 }
 
 /* ---------- 任务生命周期 ---------- */
@@ -220,13 +241,19 @@ async function handleGenerate(req, res, sendJson) {
   }
   tasks.set(id, { status: 'running', workDir, startedAt: Date.now() });
 
-  /* 槽位组装（LLM 失败自动回落模板）→ 写配置 → 后台跑链路；HTTP 立即返回 */
-  const slots = (await llmSlots(body.imageBase64, subject, body.notes))
-    || templateSlots(subject, findStyle(styleId).label, body.notes);
-  const promptPath = path.join(workDir, 'prompt.json');
-  fs.writeFileSync(promptPath, JSON.stringify(slots, null, 2));
-  startTask(id, workDir, path.join(imgDir, '原图.png'), promptPath, subject, styleId);
-  return sendJson(res, 200, { taskId: id });
+  /* 压图（512px JPEG）→ LLM 槽位（失败回落模板）→ 写配置 → 后台跑链路；HTTP 立即返回 */
+  const imagePath = path.join(imgDir, '原图.png');
+  const sendResponse = (slots) => {
+    const promptPath = path.join(workDir, 'prompt.json');
+    fs.writeFileSync(promptPath, JSON.stringify(slots, null, 2));
+    startTask(id, workDir, imagePath, promptPath, subject, styleId);
+    sendJson(res, 200, { taskId: id });
+  };
+  shrinkImage(imagePath, (smallDataUrl) => {
+    const llmInput = smallDataUrl || body.imageBase64;
+    llmSlots(llmInput, subject, body.notes)
+      .then((slots) => sendResponse(slots || templateSlots(subject, findStyle(styleId).label, body.notes)));
+  });
 }
 
 /* GET /api/pixelart/task?id= → { status, error? }；重启后从磁盘恢复已完成的任务 */
