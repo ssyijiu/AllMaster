@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>头像制作大师 · 管理后台</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23FFD02F'/%3E%3Ccircle cx='14.5' cy='13.5' r='5' fill='%231C1C1E'/%3E%3Cpath d='M5.5 26a9 9 0 0 1 18 0Z' fill='%231C1C1E'/%3E%3Cpath d='M24 4.5l1.1 2.9 2.9 1.1-2.9 1.1L24 12.5l-1.1-2.9L20 8.5l2.9-1.1L24 4.5z' fill='%231C1C1E'/%3E%3C/svg%3E" data-page-node-id="CWEfNv9byZuou93P0EnGlw" />
+  <style>
+    :root {
+      --teal-50: #EEF2FF; --teal-100: #DFE6FF; --teal-200: #C5D1FF; --teal-300: #A3B5FF;
+      --teal-400: #7188FF; --teal-500: #4262FF;
+      --teal-600: #3550D9; --teal-700: #2A41B6; --teal-800: #233491;
+      --ink-900: #1C1C1E; --ink-700: #43485E; --ink-500: #5F6478; --ink-400: #8E91A0;
+      --ink-200: #E5E7EC; --ink-100: #F2F3F6; --ink-50: #F7F8FA;
+      --bg: #FFFFFF; --surface: #FFFFFF; --fg: var(--ink-900); --fg-2: var(--ink-700);
+      --muted: var(--ink-500); --meta: var(--ink-400); --border: var(--ink-200);
+      --danger: #DC2626; --success: #16A34A; --warning: #D97706; --warning-bg: #FFFBEB;
+      --grad-brand: linear-gradient(135deg, #1C1C1E 0%, #2C2C34 100%);
+      --font: "Inter", "Noto Sans SC", -apple-system, "PingFang SC", sans-serif;
+      --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      --radius: 12px; --radius-lg: 16px;
+      --shadow: 0 1px 2px rgba(5,0,56,0.05), 0 1px 3px rgba(5,0,56,0.04);
+      --shadow-lg: 0 8px 24px rgba(5,0,56,0.10), 0 2px 8px rgba(5,0,56,0.05);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    [hidden] { display: none !important; }
+    body { font-family: var(--font); background: var(--bg); color: var(--fg); font-size: 14px; line-height: 1.6; }
+    .topbar { position: sticky; top: 0; z-index: 10; background: var(--surface); border-bottom: 1px solid var(--ink-100); }
+    .topbar-inner { max-width: 1080px; margin: 0 auto; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .brand { display: flex; align-items: center; gap: 8px; font-weight: 590; font-size: 16px; }
+    .brand-logo { width: 28px; height: 28px; border-radius: 9px; background: #FFD02F; color: #1C1C1E; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; }
+    .topbar-actions { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+    .page { max-width: 1080px; margin: 0 auto; padding: 32px 24px 64px; }
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow); padding: 24px; margin-bottom: 24px; }
+    .panel-title { font-size: 16px; font-weight: 590; margin-bottom: 4px; }
+    .panel-desc { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+    .btn { height: 40px; padding: 0 16px; border-radius: var(--radius); border: 1px solid transparent; font-size: 14px; font-weight: 510; display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; font-family: inherit; background: none; color: var(--fg-2); transition: background-color 120ms ease, border-color 120ms ease; }
+    .btn.primary { background: var(--grad-brand); color: #fff; }
+    .btn.primary:hover { background: linear-gradient(135deg, #2C2C34 0%, #3A3A44 100%); }
+    .btn.secondary { background: var(--teal-50); border-color: var(--teal-200); color: var(--teal-700); }
+    .btn.secondary:hover { background: var(--teal-100); border-color: var(--teal-300); }
+    .btn.ghost:hover { background: var(--ink-50); }
+    .btn.danger { color: var(--danger); }
+    .btn.danger:hover { background: #FEF2F2; }
+    .btn.small { height: 32px; padding: 0 12px; font-size: 13px; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .field-label { display: block; font-size: 13px; font-weight: 510; color: var(--fg-2); margin: 14px 0 6px; }
+    .text-input, textarea.text-input, select.text-input { width: 100%; min-height: 40px; padding: 8px 12px; font-size: 14px; font-family: inherit; border: 1px solid var(--border); border-radius: var(--radius); background: #fff; color: var(--fg); outline: none; }
+    textarea.text-input { font-family: var(--mono); font-size: 13px; resize: vertical; }
+    .text-input.mono { font-family: var(--mono); font-size: 13px; }
+    .text-input:focus { border-color: var(--teal-500); box-shadow: 0 0 0 3px rgba(66,98,255,0.30); }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 16px; }
+    .entry-card { border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-bottom: 12px; background: #fff; }
+    .cover-row { display: flex; align-items: flex-start; gap: 12px; margin-top: 6px; }
+    .cover-preview {
+      width: 128px; height: 80px; flex: 0 0 auto;
+      border: 1px dashed var(--border); border-radius: 8px;
+      background-color: var(--ink-50); background-position: center; background-size: cover; background-repeat: no-repeat;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; color: var(--muted);
+    }
+    .cover-preview.has-img { border-style: solid; }
+    .cover-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .entry-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .entry-head h4 { font-size: 14px; font-weight: 590; }
+    .entry-head .entry-sub { font-size: 12px; color: var(--meta); font-family: var(--mono); }
+    .key-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 1px 8px; border-radius: 999px; }
+    .key-chip.ok { color: #166534; background: #F0FDF4; }
+    .key-chip.none { color: #9A3412; background: #FFF7ED; }
+    .hint { margin-top: 12px; font-size: 13px; color: var(--muted); min-height: 20px; }
+    .hint.warn { color: var(--warning); }
+    .hint.ok { color: var(--success); }
+    .hint.err { color: var(--danger); }
+    .gate { max-width: 420px; margin: 64px auto; }
+    .code-row { display: flex; gap: 8px; }
+    .code-row .text-input { flex: 1; }
+    .note-box { background: var(--teal-50); border: 1px solid var(--teal-100); border-radius: 10px; padding: 12px 14px; font-size: 13px; color: var(--teal-800); margin-top: 16px; line-height: 1.7; }
+    .link { color: var(--teal-700); }
+    .save-bar {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+      background: rgba(255,255,255,0.97);
+      -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+      border-top: 1px solid var(--border);
+      box-shadow: 0 -2px 12px rgba(5,0,56,0.06);
+    }
+    .save-bar-inner {
+      max-width: 1080px; margin: 0 auto; padding: 12px 24px;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    }
+    .save-bar-inner .hint { margin-top: 0; min-height: 0; flex: 1; }
+    .save-bar-actions { display: flex; gap: 8px; flex: none; }
+    body.has-save-bar { padding-bottom: 88px; }
+    @media (max-width: 720px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="brand-logo">管</span>
+        <span>头像制作大师 · 管理后台</span>
+      </div>
+      <div class="topbar-actions" id="topbarActions" hidden>
+        <span id="whoami"></span>
+        <button class="btn ghost small" id="btnSignOut" type="button">退出登录</button>
+        <a class="btn ghost small" href="/">← 返回前台</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <!-- 登录门禁（手机验证码，与前台同一套云服务账号） -->
+    <div class="panel gate" id="gatePanel">
+      <h2 class="panel-title">管理员登录</h2>
+      <p class="panel-desc">使用与前台相同的账号登录。只有站长绑定的管理员账号可以编辑配置；API Key 存放在独立的密钥表中，未登录的访客完全无法读取。</p>
+      <label class="field-label" for="gatePhone">手机号</label>
+      <input type="tel" id="gatePhone" class="text-input mono" inputmode="numeric" maxlength="11"
+             placeholder="11 位手机号" autocomplete="tel" />
+      <label class="field-label" for="gateCode">验证码</label>
+      <div class="code-row">
+        <input type="text" id="gateCode" class="text-input mono" inputmode="numeric" maxlength="6"
+               placeholder="4-6 位短信验证码" autocomplete="one-time-code" />
+        <button class="btn secondary" id="btnSendCode" type="button" style="white-space:nowrap;">获取验证码</button>
+      </div>
+      <p class="hint err" id="gateMsg" role="alert"></p>
+      <div style="margin-top:16px;">
+        <button class="btn primary" id="btnGateLogin" type="button" style="width:100%;">登录</button>
+      </div>
+      <div class="note-box">
+        说明：服务商 API Key 与风格配置分开存储——Key 只在登录后经加密通道读取，
+        且仅用于生成时调用对应服务商；匿名访客与未登录会话读不到任何 Key。
+      </div>
+    </div>
+
+    <!-- 非管理员提示 -->
+    <div class="panel gate" id="deniedPanel" hidden>
+      <h2 class="panel-title">无管理权限</h2>
+      <p class="panel-desc">当前登录账号不是本应用的管理员。如需管理权限，请联系站长在后台配置中更新管理员账号。</p>
+      <p class="hint" id="deniedUid" style="font-family:var(--mono);"></p>
+      <div style="margin-top:16px;">
+        <button class="btn ghost" id="btnDeniedBack" type="button">← 返回前台</button>
+      </div>
+    </div>
+
+    <!-- 管理主界面 -->
+    <div id="adminMain" hidden>
+      <div class="panel">
+        <h2 class="panel-title">AI 服务商</h2>
+        <p class="panel-desc">配置各家的接口地址、API Key 与图像模型。风格通过「绑定的服务商」决定用哪家的 Key 与模型生成。Key 保存后不再回显，留空表示保持不变。</p>
+        <div id="providerList"></div>
+        <button class="btn secondary small" id="btnAddProvider" type="button">+ 新增服务商</button>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel-title">风格列表</h2>
+        <p class="panel-desc">每种风格 = 名称 + 封面图（可上传）+ 提示词（可留空）+ 绑定的服务商。提示词留空时，前台会把用户填写的「补充描述」作为提示词发送给 AI。</p>
+        <div id="styleList"></div>
+        <button class="btn secondary small" id="btnAddStyle" type="button">+ 新增风格</button>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel-title">积分与订单</h2>
+        <p class="panel-desc">积分账本存于云端数据库，余额由全部流水派生、不可篡改。此处可手动充值、生成兑换码、同步线上支付订单（入账幂等，重复操作不会重复加）。</p>
+        <div class="grid-2">
+          <div class="entry-card">
+            <h4>给用户充积分</h4>
+            <label class="field-label">用户 ID（用户在前台点「积分」徽标即可查看复制）</label>
+            <input class="text-input mono" id="grantUid" placeholder="如 2113692518750093312"/>
+            <label class="field-label">积分数量</label>
+            <input class="text-input mono" id="grantCredits" type="number" min="1" value="10"/>
+            <label class="field-label">备注（可选）</label>
+            <input class="text-input" id="grantNote" placeholder="如 活动赠送"/>
+            <button class="btn primary small" id="btnGrant" type="button" style="margin-top:8px;">充值</button>
+            <p class="hint" id="grantMsg"></p>
+          </div>
+          <div class="entry-card">
+            <h4>生成兑换码</h4>
+            <label class="field-label">每张面值（积分）</label>
+            <input class="text-input mono" id="genCredits" type="number" min="1" value="10"/>
+            <label class="field-label">张数（1~500）</label>
+            <input class="text-input mono" id="genCount" type="number" min="1" max="500" value="10"/>
+            <button class="btn primary small" id="btnGenCodes" type="button" style="margin-top:8px;">生成</button>
+            <p class="hint" id="genMsg"></p>
+            <textarea class="text-input mono" id="genResult" rows="5" hidden readonly></textarea>
+            <button class="btn ghost small" id="btnCopyCodes" type="button" hidden>复制全部兑换码</button>
+          </div>
+        </div>
+        <div class="entry-card" style="margin-top:12px;">
+          <h4>线上支付订单同步（虎皮椒）</h4>
+          <p class="panel-desc">支付回调由服务器验签后暂存；点「同步」拉取已支付订单并入账（幂等）。用户支付回跳后通常已自动入账，此处用于兜底。</p>
+          <button class="btn secondary small" id="btnSyncPay" type="button">同步已支付订单</button>
+          <div id="payOrderList" style="margin-top:8px;"></div>
+        </div>
+      </div>
+
+      <div style="height:16px;"></div>
+    </div>
+  </main>
+
+  <!-- 吸底操作栏：保存始终可见 -->
+  <div class="save-bar" id="saveBar" hidden>
+    <div class="save-bar-inner">
+      <p class="hint" id="saveMsg" aria-live="polite"></p>
+      <div class="save-bar-actions">
+        <button class="btn ghost" id="btnReload" type="button">放弃修改并重新加载</button>
+        <button class="btn primary" id="btnSaveAll" type="button">保存全部配置</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js"></script>
+  <script>
+  (function () {
+    'use strict';
+    var PUBLIC_CONFIG = {
+      endpoint: 'https://ai-avatar-studio-50356.app.workbuddy.host',
+      oauthRelayBaseUrl: 'https://www.workbuddy.cn/v2/as/genie-baas/oauth',
+      publishableKey: 'wbpk_eoMql05K7PT2JgZUKFFOo9_9vLkFanCYcm67RRrIgxoEnsGnDS52YEM'
+    };
+    var CONFIG_TABLE = 'app_config';
+    var SECRETS_TABLE = 'app_secrets';
+    var CONFIG_ID = 'default';
+
+    function $(id) { return document.getElementById(id); }
+
+    var client = null;
+    var user = null;
+    var cfg = null;        /* app_config.data：{ styles, providers(不含apiKey), adminUserId } */
+    var providerKeys = {}; /* app_secrets.data.providerKeys（备份展示；生成用 Key 在服务器） */
+    var accessKey = '';    /* app_secrets.data.accessKey：服务器管理端点鉴权 */
+    var paySecret = '';    /* app_secrets.data.paySecret：wallet_pay_claim 验签密钥，保存时必须原样回写 */
+    var pendingOtp = null;
+    var countdownTimer = null;
+
+    function getClient() {
+      if (client) { return client; }
+      if (!window.WorkBuddyCloud || !window.WorkBuddyCloud.createWorkBuddyCloud) { return null; }
+      try {
+        client = window.WorkBuddyCloud.createWorkBuddyCloud(PUBLIC_CONFIG);
+        return client;
+      } catch (_) { return null; }
+    }
+
+    function db(table) {
+      var c = getClient();
+      if (!c || !c.database || !c.database.from) { return null; }
+      return c.database.from(table);
+    }
+
+    function esc(v) {
+      return String(v == null ? '' : v)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    /* ---------- 登录：手机验证码（发送与验证分离） ---------- */
+    function startCountdown() {
+      var remain = 60;
+      var btn = $('btnSendCode');
+      clearInterval(countdownTimer);
+      btn.disabled = true;
+      function tick() {
+        btn.textContent = remain > 0 ? '重新发送(' + remain + 's)' : '获取验证码';
+        if (remain <= 0) { btn.disabled = false; clearInterval(countdownTimer); return; }
+        remain--;
+      }
+      tick();
+      countdownTimer = setInterval(tick, 1000);
+    }
+
+    function sendCode() {
+      var phone = $('gatePhone').value.trim();
+      if (!/^1\d{10}$/.test(phone)) { showMsg('请输入 11 位手机号', 'err'); return; }
+      var c = getClient();
+      if (!c) { showMsg('云服务组件未就绪，请刷新页面', 'err'); return; }
+      $('btnSendCode').disabled = true;
+      c.auth.sendOtp({ phone: phone }).then(function (res) {
+        if (res && res.error) {
+          $('btnSendCode').disabled = false;
+          showMsg('验证码发送失败：' + ((res.error && res.error.message) || '请稍后重试'), 'err');
+          return;
+        }
+        pendingOtp = { phone: phone, verificationId: res.data.verificationId, isExistingUser: res.data.isExistingUser };
+        startCountdown();
+        showMsg('验证码已发送，请查收短信', 'ok');
+      }).catch(function () {
+        $('btnSendCode').disabled = false;
+        showMsg('验证码发送失败，请检查网络后重试', 'err');
+      });
+    }
+
+    function login() {
+      var phone = $('gatePhone').value.trim();
+      var code = $('gateCode').value.trim();
+      if (!pendingOtp || pendingOtp.phone !== phone) { showMsg('请先为当前手机号获取验证码', 'err'); return; }
+      if (!/^\d{4,6}$/.test(code)) { showMsg('请输入短信验证码', 'err'); return; }
+      var c = getClient();
+      if (!c) { showMsg('云服务组件未就绪，请刷新页面', 'err'); return; }
+      $('btnGateLogin').disabled = true;
+      c.auth.verifyOtp({
+        phone: pendingOtp.phone,
+        verificationId: pendingOtp.verificationId,
+        isExistingUser: pendingOtp.isExistingUser,
+        token: code
+      }).then(function (res) {
+        $('btnGateLogin').disabled = false;
+        if (res && res.error) {
+          showMsg('验证码错误或已过期，请重试', 'err');
+          return;
+        }
+        pendingOtp = null;
+        if (res && res.data && res.data.user) { boot(res.data.user); }
+        else { showMsg('登录成功但未返回用户信息，请刷新', 'err'); }
+      }).catch(function () {
+        $('btnGateLogin').disabled = false;
+        showMsg('登录失败，请稍后重试', 'err');
+      });
+    }
+
+    function showMsg(msg, cls) {
+      var el = $('gateMsg');
+      el.textContent = msg;
+      el.className = 'hint ' + (cls || '');
+    }
+
+    /* ---------- 加载配置与密钥 ---------- */
+    function fetchAdminData() {
+      var t1 = db(CONFIG_TABLE), t2 = db(SECRETS_TABLE);
+      if (!t1 || !t2) { return Promise.reject(new Error('云服务组件未就绪，请刷新页面')); }
+      var p1 = t1.select('data').eq('id', CONFIG_ID).limit(1).then(function (res) {
+        if (res && res.error) { throw new Error('读取配置失败：' + (res.error.message || '无权限')); }
+        var rows = (res && res.data) || [];
+        return rows[0] && rows[0].data;
+      });
+      var p2 = t2.select('data').eq('id', CONFIG_ID).limit(1).then(function (res) {
+        if (res && res.error) { throw new Error('读取密钥失败：' + (res.error.message || '无权限')); }
+        var rows = (res && res.data) || [];
+        return (rows[0] && rows[0].data) || { providerKeys: {} };
+      });
+      return Promise.all([p1, p2]).then(function (out) {
+        var data = out[0] || {};
+        var sec = out[1] || {};
+        return {
+          adminUserId: data.adminUserId || '',
+          providers: Array.isArray(data.providers) ? data.providers : [],
+          styles: Array.isArray(data.styles) ? data.styles : [],
+          providerKeys: sec.providerKeys || {},
+          accessKey: sec.accessKey || '',
+          paySecret: sec.paySecret || ''
+        };
+      });
+    }
+
+    function saveAdminData(payloadConfig, payloadSecrets) {
+      var t1 = db(CONFIG_TABLE);
+      if (!t1) { return Promise.reject(new Error('云服务组件未就绪')); }
+      return t1.update({ data: payloadConfig, updated_at: new Date().toISOString() })
+        .eq('id', CONFIG_ID)
+        .then(function (res) {
+          if (res && res.error) { throw new Error('保存配置失败：' + (res.error.message || '无权限')); }
+          /* 服务商 Key 走数据库端 RPC 合并：只更新 providerKeys，accessKey/paySecret
+             由数据库原样保留，前端任何旧页面/异常值都不可能再抹掉它们 */
+          var c = getClient();
+          if (!c || !c.database || !c.database.rpc) { throw new Error('云服务组件未就绪'); }
+          return c.database.rpc('admin_save_provider_keys', {
+            p_keys: JSON.parse(JSON.stringify(payloadSecrets.providerKeys || {}))
+          });
+        })
+        .then(function (res) {
+          if (res && res.error) { throw new Error('保存密钥失败：' + (res.error.message || '无权限')); }
+          return true;
+        });
+    }
+
+    /* ---------- 门禁分发 ---------- */
+    function boot(currentUser) {
+      user = currentUser || null;
+      if (!user) { return; }
+      fetchAdminData().then(function (data) {
+        /* adminUserId 兼容数组（多管理员）与旧版单字符串 */
+        var adminIds = Array.isArray(data.adminUserId)
+          ? data.adminUserId
+          : (data.adminUserId ? [data.adminUserId] : []);
+        if (!adminIds.length || adminIds.indexOf(user.id) === -1) {
+          $('gatePanel').hidden = true;
+          $('deniedPanel').hidden = false;
+          $('topbarActions').hidden = false;
+          $('whoami').textContent = '已登录：' + user.id;
+          $('deniedUid').textContent = '当前账号 ID：' + user.id;
+          return;
+        }
+        cfg = data;
+        providerKeys = data.providerKeys;
+        accessKey = data.accessKey || '';
+        paySecret = data.paySecret || '';
+        enterEditor();
+      }).catch(function (err) {
+        showMsg((err && err.message) || '加载失败，请刷新重试', 'err');
+      });
+    }
+
+    function enterEditor() {
+      $('gatePanel').hidden = true;
+      $('deniedPanel').hidden = true;
+      $('adminMain').hidden = false;
+      $('topbarActions').hidden = false;
+      $('saveBar').hidden = false;
+      document.body.classList.add('has-save-bar');
+      $('whoami').textContent = '已登录：' + user.id;
+      renderProviders();
+      renderStyles();
+    }
+
+    /* ---------- 渲染：服务商 ---------- */
+    function renderProviders() {
+      var wrap = $('providerList');
+      wrap.innerHTML = '';
+      cfg.providers.forEach(function (p, idx) {
+        var hasKey = !!(p.hasKey || (providerKeys[p.id] || ''));
+        var card = document.createElement('div');
+        card.className = 'entry-card';
+        card.innerHTML =
+          '<div class="entry-head"><h4>服务商 ' + (idx + 1) + '</h4>' +
+          '<span>' +
+          '<span class="key-chip ' + (hasKey ? 'ok' : 'none') + '">' + (hasKey ? 'Key 已配置' : '未配置 Key') + '</span>' +
+          ' <span class="entry-sub">id: ' + esc(p.id) + '</span></span></div>' +
+          '<div class="grid-3">' +
+          '<div><label class="field-label">名称</label><input class="text-input" data-f="name" value="' + esc(p.name) + '"/></div>' +
+          '<div><label class="field-label">标识 id（小写字母/数字）</label><input class="text-input mono" data-f="id" value="' + esc(p.id) + '"/></div>' +
+          '<div><label class="field-label">生成方式</label><select class="text-input" data-f="apiMode">' +
+            '<option value="edit"' + (p.apiMode !== 'generation' ? ' selected' : '') + '>基于照片（/images/edits）</option>' +
+            '<option value="generation"' + (p.apiMode === 'generation' ? ' selected' : '') + '>纯文字（/images/generations）</option>' +
+          '</select></div>' +
+          '</div>' +
+          '<label class="field-label">接口地址（Base URL，通常以 /v1 结尾）</label>' +
+          '<input class="text-input mono" data-f="baseUrl" value="' + esc(p.baseUrl) + '" placeholder="https://api.example.com/v1"/>' +
+          '<div class="grid-2">' +
+          '<div><label class="field-label">API Key' + (hasKey ? '（已配置，留空保持不变）' : '') + '</label>' +
+          '<input class="text-input mono" data-key="1" type="password" value="" placeholder="' + (hasKey ? '••••••••（留空保持不变）' : 'sk-...') + '" autocomplete="new-password"/></div>' +
+          '<div><label class="field-label">图像模型名称</label><input class="text-input mono" data-f="model" value="' + esc(p.model) + '" placeholder="gpt-image-1"/></div>' +
+          '</div>' +
+          '<div style="margin-top:8px;text-align:right;"><button class="btn danger small" data-del="1" type="button">删除该服务商</button></div>';
+        card.querySelectorAll('input[data-f], select[data-f]').forEach(function (input) {
+          var evt = input.tagName === 'SELECT' ? 'change' : 'input';
+          input.addEventListener(evt, function () {
+            var v = input.value.trim();
+            /* 服务商 id 改名：同步迁移已填写的 Key，并把所有绑定该服务商的风格一起改绑 */
+            if (input.dataset.f === 'id') {
+              var oldId = p.id;
+              if (oldId && oldId !== v && v !== '') {
+                if (providerKeys[oldId]) {
+                  providerKeys[v] = providerKeys[oldId];
+                  delete providerKeys[oldId];
+                }
+                cfg.styles.forEach(function (s) {
+                  if (s.providerId === oldId) { s.providerId = v; }
+                });
+              }
+              p.id = v;
+              renderStyles(); /* 风格卡「绑定服务商」下拉同步显示新 id */
+              return;
+            }
+            p[input.dataset.f] = v;
+          });
+        });
+        card.querySelector('input[data-key]').addEventListener('input', function () {
+          var v = this.value.trim();
+          if (v) { providerKeys[p.id] = v; p.hasKey = true; }
+        });
+        card.querySelector('[data-del]').addEventListener('click', function () {
+          if (!window.confirm('确定删除服务商「' + (p.name || p.id) + '」？绑定它的风格将被解绑（需重新绑定后才能生成）。')) { return; }
+          cfg.providers.splice(idx, 1);
+          delete providerKeys[p.id];
+          /* 解绑所有指向该服务商的风格，避免保存后前台无法生成 */
+          cfg.styles.forEach(function (s) {
+            if (s.providerId === p.id) { s.providerId = ''; }
+          });
+          renderProviders(); renderStyles();
+        });
+        wrap.appendChild(card);
+      });
+    }
+
+    /* ---------- 封面图：压缩为 data URL（直接存进配置，前台任何访客都能看到） ---------- */
+    function renderCover(el, style) {
+      if (!el) { return; }
+      if (style.imageUrl) {
+        el.style.backgroundImage = 'url("' + style.imageUrl + '")';
+        el.classList.add('has-img');
+        el.textContent = '';
+      } else {
+        el.style.backgroundImage = '';
+        el.classList.remove('has-img');
+        el.textContent = '未设置';
+      }
+    }
+    /* 居中裁切为 16:10，宽度压到 320px，JPEG 0.78 —— 单张约 20~35KB */
+    function compressCover(file) {
+      return new Promise(function (resolve, reject) {
+        var reader = new FileReader();
+        reader.onerror = function () { reject(new Error('read')); };
+        reader.onload = function () {
+          var img = new Image();
+          img.onerror = function () { reject(new Error('decode')); };
+          img.onload = function () {
+            try {
+              var targetW = 320, targetH = 200; /* 16:10 */
+              var scale = Math.max(targetW / img.width, targetH / img.height);
+              var sw = targetW / scale, sh = targetH / scale;
+              var sx = (img.width - sw) / 2, sy = (img.height - sh) / 2;
+              var canvas = document.createElement('canvas');
+              canvas.width = targetW; canvas.height = targetH;
+              canvas.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, targetW, targetH);
+              resolve(canvas.toDataURL('image/jpeg', 0.78));
+            } catch (e) { reject(e); }
+          };
+          img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    /* ---------- 渲染：风格 ---------- */
+    function renderStyles() {
+      var wrap = $('styleList');
+      wrap.innerHTML = '';
+      cfg.styles.forEach(function (s, idx) {
+        var card = document.createElement('div');
+        card.className = 'entry-card';
+        card.innerHTML =
+          '<div class="entry-head"><h4>风格 ' + (idx + 1) + '</h4>' +
+          '<span class="entry-sub">id: ' + esc(s.id) + '</span></div>' +
+          '<div class="grid-3">' +
+          '<div><label class="field-label">风格名称</label><input class="text-input" data-f="name" value="' + esc(s.name) + '"/></div>' +
+          '<div><label class="field-label">标识 id（小写字母/数字）</label><input class="text-input mono" data-f="id" value="' + esc(s.id) + '"/></div>' +
+          '<div><label class="field-label">绑定的服务商</label><select class="text-input" data-f="providerId"></select></div>' +
+          '</div>' +
+          '<div class="grid-3">' +
+          '<div><label class="field-label">封面图（前台风格卡展示）</label>' +
+          '<div class="cover-row">' +
+          '<div class="cover-preview" data-cover></div>' +
+          '<div class="cover-actions">' +
+          '<input type="file" accept="image/*" data-cover-input style="display:none"/>' +
+          '<button class="btn secondary small" type="button" data-cover-pick>上传图片</button>' +
+          '<button class="btn ghost small" type="button" data-cover-clear>移除</button>' +
+          '<p class="hint" style="margin:4px 0 0;">建议 16:10 横图，自动压缩到 320px 宽</p>' +
+          '</div></div></div>' +
+          '</div>' +
+          '<label class="field-label">提示词（可留空：留空时用前台的「补充描述」作为提示词）</label>' +
+          '<textarea class="text-input" data-f="prompt" rows="4" placeholder="留空则使用用户在「补充描述」中输入的内容作为提示词；两者都为空时使用通用人像提示词"></textarea>' +
+          '<div style="margin-top:8px;text-align:right;"><button class="btn danger small" data-del="1" type="button">删除该风格</button></div>';
+
+        var providerSel = card.querySelector('[data-f="providerId"]');
+        cfg.providers.forEach(function (p) {
+          var opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = p.name || p.id;
+          if (s.providerId === p.id) { opt.selected = true; }
+          providerSel.appendChild(opt);
+        });
+        var noneOpt = document.createElement('option');
+        noneOpt.value = '';
+        noneOpt.textContent = '（未绑定）';
+        if (!s.providerId) { noneOpt.selected = true; }
+        providerSel.insertBefore(noneOpt, providerSel.firstChild);
+
+        renderCover(card.querySelector('[data-cover]'), s);
+
+        card.querySelector('[data-f="prompt"]').value = s.prompt || '';
+
+        var coverInput = card.querySelector('[data-cover-input]');
+        card.querySelector('[data-cover-pick]').addEventListener('click', function () {
+          coverInput.click();
+        });
+        coverInput.addEventListener('change', function () {
+          var file = coverInput.files && coverInput.files[0];
+          coverInput.value = '';
+          if (!file) { return; }
+          if (String(file.type || '').indexOf('image/') !== 0) {
+            window.alert('请选择图片文件'); return;
+          }
+          compressCover(file).then(function (dataUrl) {
+            s.imageUrl = dataUrl;
+            renderCover(card.querySelector('[data-cover]'), s);
+          }).catch(function () {
+            window.alert('图片处理失败，请换一张试试');
+          });
+        });
+        card.querySelector('[data-cover-clear]').addEventListener('click', function () {
+          s.imageUrl = '';
+          renderCover(card.querySelector('[data-cover]'), s);
+        });
+
+        card.querySelectorAll('input[data-f], textarea[data-f]').forEach(function (input) {
+          input.addEventListener('input', function () {
+            s[input.dataset.f] = input.value;
+          });
+        });
+        card.querySelectorAll('select[data-f]').forEach(function (sel) {
+          sel.addEventListener('change', function () {
+            s[sel.dataset.f] = sel.value;
+          });
+        });
+        card.querySelector('[data-del]').addEventListener('click', function () {
+          if (!window.confirm('确定删除风格「' + (s.name || s.id) + '」？')) { return; }
+          cfg.styles.splice(idx, 1);
+          renderStyles();
+        });
+        wrap.appendChild(card);
+      });
+    }
+
+    /* ---------- 保存 ---------- */
+    $('btnSaveAll').addEventListener('click', function () {
+      if (!cfg) { return; }
+      var ids = {};
+      var missingKey = [];
+      var providerIds = {};
+      for (var i = 0; i < cfg.styles.length; i++) {
+        var s = cfg.styles[i];
+        if (!s.id || !s.name) { showSaveMsg('所有风格都需要名称与 id', 'err'); return; }
+        if (ids['s:' + s.id]) { showSaveMsg('风格 id 重复：' + s.id, 'err'); return; }
+        ids['s:' + s.id] = 1;
+      }
+      for (var j = 0; j < cfg.providers.length; j++) {
+        var p = cfg.providers[j];
+        if (!p.id || !p.name) { showSaveMsg('所有服务商都需要名称与 id', 'err'); return; }
+        if (ids['p:' + p.id]) { showSaveMsg('服务商 id 重复：' + p.id, 'err'); return; }
+        ids['p:' + p.id] = 1;
+        providerIds[p.id] = 1;
+        if (!providerKeys[p.id]) { missingKey.push(p.name || p.id); }
+      }
+      /* 服务商改名/删除后，风格可能仍指向失效 id —— 一次性列出所有问题风格 */
+      var brokenStyles = [];
+      for (var k = 0; k < cfg.styles.length; k++) {
+        var st2 = cfg.styles[k];
+        if (st2.providerId && !providerIds[st2.providerId]) { brokenStyles.push(st2.name); }
+      }
+      if (brokenStyles.length) {
+        showSaveMsg('以下风格绑定的服务商已不存在（可能改过 id 或已删除），请在风格卡片里重新选择绑定的服务商：' + brokenStyles.join('、'), 'err');
+        return;
+      }
+      var payloadConfig = {
+        adminUserId: cfg.adminUserId,
+        providers: cfg.providers.map(function (p) {
+          return {
+            id: p.id, name: p.name, baseUrl: p.baseUrl,
+            model: p.model, apiMode: p.apiMode,
+            hasKey: !!providerKeys[p.id]
+          };
+        }),
+        styles: cfg.styles.map(function (s) {
+          /* 只落库当前字段：历史遗留的 icon/art（旧内置图标与配色）不再写回 */
+          return {
+            id: s.id, name: s.name,
+            imageUrl: s.imageUrl || '',
+            prompt: s.prompt == null ? '' : String(s.prompt),
+            providerId: s.providerId || ''
+          };
+        })
+      };
+      /* 服务商 Key 经数据库端 RPC 合并写入；accessKey/paySecret 由数据库保留，不经前端 */
+      var payloadSecrets = { providerKeys: providerKeys };
+      $('btnSaveAll').disabled = true;
+      showSaveMsg('保存中…', '');
+      saveAdminData(payloadConfig, payloadSecrets).then(function () {
+        /* 生成用 Key 的权威来源是服务器（.ai-config.json）；保存后同步过去（失败不阻断保存） */
+        var syncs = Object.keys(providerKeys).map(function (pid) {
+          return fetch('/api/admin/sync-key', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-access-key': accessKey },
+            body: JSON.stringify({ providerId: pid, apiKey: providerKeys[pid] })
+          }).then(function (r) { return r && r.ok; }).catch(function () { return false; });
+        });
+        return Promise.all(syncs).then(function (results) {
+          var syncOk = results.length === 0 || results.every(function (ok) { return ok; });
+          $('btnSaveAll').disabled = false;
+          var extra = '';
+          if (missingKey.length) { extra = '注意：以下服务商尚未配置 Key，对应风格暂无法生成：' + missingKey.join('、'); }
+          else if (!syncOk) { extra = '注意：服务器 Key 同步失败（生成暂不可用），请检查网络后重新保存'; }
+          else { extra = '前台刷新即可看到最新配置'; }
+          showSaveMsg('已保存。' + extra, missingKey.length || !syncOk ? 'warn' : 'ok');
+        });
+      }).catch(function (err) {
+        $('btnSaveAll').disabled = false;
+        showSaveMsg((err && err.message) || '保存失败，请重试', 'err');
+      });
+    });
+
+    $('btnReload').addEventListener('click', function () {
+      if (!cfg) { return; }
+      fetchAdminData().then(function (data) {
+        cfg = data;
+        providerKeys = data.providerKeys;
+        accessKey = data.accessKey || '';
+        paySecret = data.paySecret || '';
+        renderProviders(); renderStyles();
+        showSaveMsg('已重新加载', 'ok');
+      }).catch(function (err) {
+        showSaveMsg((err && err.message) || '加载失败', 'err');
+      });
+    });
+
+    /* ---------- 积分与订单（云端 RPC，账本权威在数据库） ---------- */
+    function rpc(name, params) {
+      var c = getClient();
+      if (!c || !c.database || !c.database.rpc) { return Promise.reject(new Error('云服务组件未就绪')); }
+      return c.database.rpc(name, params || {}).then(function (res) {
+        if (res && res.error) {
+          var e = new Error(res.error.message || '操作失败');
+          e.rawMessage = e.message;
+          throw e;
+        }
+        return res ? res.data : null;
+      });
+    }
+    function walletErrText(err) {
+      var msg = String((err && err.rawMessage) || (err && err.message) || '操作失败');
+      var map = {
+        'NOT_ADMIN': '当前账号不是管理员',
+        'INVALID_CREDITS': '积分数量不合法',
+        'INVALID_PARAMS': '参数不合法',
+        'CODE_GEN_FAILED': '兑换码生成失败（冲突过多），请重试'
+      };
+      for (var k in map) { if (msg.indexOf(k) !== -1) { return map[k]; } }
+      return msg;
+    }
+    $('btnGrant').addEventListener('click', function () {
+      var uid = $('grantUid').value.trim();
+      var credits = parseInt($('grantCredits').value, 10);
+      if (!uid || !credits || credits <= 0) { $('grantMsg').textContent = '请填写用户 ID 与积分数量'; return; }
+      $('btnGrant').disabled = true;
+      rpc('wallet_grant', { p_user: uid, p_credits: credits, p_note: $('grantNote').value.trim() })
+        .then(function (balance) {
+          $('grantMsg').textContent = '充值成功，该用户当前余额 ' + balance + ' 积分';
+        })
+        .catch(function (err) { $('grantMsg').textContent = walletErrText(err); })
+        .then(function () { $('btnGrant').disabled = false; });
+    });
+    $('btnGenCodes').addEventListener('click', function () {
+      var credits = parseInt($('genCredits').value, 10);
+      var count = parseInt($('genCount').value, 10);
+      if (!credits || credits <= 0 || !count || count <= 0) { $('genMsg').textContent = '请填写面值与张数'; return; }
+      $('btnGenCodes').disabled = true;
+      var batch = 'B' + Date.now().toString(36).toUpperCase();
+      rpc('redeem_generate', { p_credits: credits, p_count: count, p_batch: batch })
+        .then(function (rows) {
+          var codes = (rows || []).map(function (r) { return r.code; });
+          $('genResult').value = codes.join('\n');
+          $('genResult').hidden = false;
+          $('btnCopyCodes').hidden = false;
+          $('genMsg').textContent = '已生成 ' + codes.length + ' 张面值 ' + credits + ' 积分的兑换码（批次 ' + batch + '）';
+        })
+        .catch(function (err) { $('genMsg').textContent = walletErrText(err); })
+        .then(function () { $('btnGenCodes').disabled = false; });
+    });
+    $('btnCopyCodes').addEventListener('click', function () {
+      $('genResult').select();
+      try { document.execCommand('copy'); $('genMsg').textContent = '已复制到剪贴板'; } catch (_) {}
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText($('genResult').value).then(function () {
+          $('genMsg').textContent = '已复制到剪贴板';
+        }).catch(function () {});
+      }
+    });
+    $('btnSyncPay').addEventListener('click', function () {
+      if (!accessKey) { $('payOrderList').innerHTML = '<p class="hint">服务器访问密钥未配置（app_secrets.accessKey）</p>'; return; }
+      $('btnSyncPay').disabled = true;
+      fetch('/api/pay/pending', { headers: { 'x-access-key': accessKey } })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          var list = (data && data.orders) || [];
+          var paid = list.filter(function (o) { return o.status === 'paid'; });
+          if (!paid.length) {
+            $('payOrderList').innerHTML = '<p class="hint">暂无待同步的已支付订单</p>';
+            return;
+          }
+          $('payOrderList').innerHTML = '';
+          paid.forEach(function (o) {
+            var row = document.createElement('div');
+            row.className = 'entry-card';
+            row.style.marginBottom = '8px';
+            var when = o.paidAt ? new Date(o.paidAt).toLocaleString() : '-';
+            row.innerHTML =
+              '<div class="entry-head"><h4>' + esc(o.orderNo) + '</h4>' +
+              '<span class="entry-sub">' + esc(o.credits) + ' 积分 · ' + esc((o.amountCents / 100).toFixed(2)) + ' 元 · ' + esc(when) + '</span></div>' +
+              '<p class="panel-desc">用户：' + esc(o.userId) + '</p>';
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn primary small';
+            btn.textContent = '入账';
+            btn.addEventListener('click', function () {
+              btn.disabled = true;
+              rpc('wallet_pay_credit', { p_order_no: o.orderNo, p_user: o.userId, p_credits: o.credits })
+                .then(function () {
+                  btn.textContent = '已入账';
+                  btn.className = 'btn ghost small';
+                })
+                .catch(function (err) {
+                  btn.textContent = '入账失败';
+                  btn.disabled = false;
+                  var p = document.createElement('p');
+                  p.className = 'hint';
+                  p.textContent = walletErrText(err);
+                  row.appendChild(p);
+                });
+            });
+            row.appendChild(btn);
+            $('payOrderList').appendChild(row);
+          });
+        })
+        .catch(function () {
+          $('payOrderList').innerHTML = '<p class="hint">同步失败：无法连接支付服务（服务器未就绪？）</p>';
+        })
+        .then(function () { $('btnSyncPay').disabled = false; });
+    });
+
+    function showSaveMsg(msg, cls) {
+      var el = $('saveMsg');
+      el.textContent = msg;
+      el.className = 'hint ' + (cls || '');
+    }
+
+    /* ---------- 事件绑定 ---------- */
+    $('btnSendCode').addEventListener('click', sendCode);
+    $('btnGateLogin').addEventListener('click', login);
+    $('btnAddProvider').addEventListener('click', function () {
+      if (!cfg) { return; }
+      var base = 'provider-' + Date.now().toString(36);
+      cfg.providers.push({ id: base, name: '新服务商', baseUrl: '', model: '', apiMode: 'edit', hasKey: false });
+      renderProviders();
+      renderStyles(); /* 让风格的「绑定服务商」下拉立即出现新选项 */
+      showSaveMsg('已新增服务商，填写后记得点右下角「保存全部配置」', '');
+    });
+    $('btnAddStyle').addEventListener('click', function () {
+      if (!cfg) { return; }
+      var base = 'style-' + Date.now().toString(36);
+      cfg.styles.push({
+        id: base, name: '新风格', imageUrl: '', prompt: '',
+        providerId: cfg.providers.length ? cfg.providers[0].id : ''
+      });
+      renderStyles();
+      showSaveMsg('已新增风格，填写后记得点右下角「保存全部配置」', '');
+    });
+    $('gateCode').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { login(); }
+    });
+    $('btnSignOut').addEventListener('click', function () {
+      var c = getClient();
+      user = null; cfg = null; providerKeys = {};
+      $('adminMain').hidden = true;
+      $('deniedPanel').hidden = true;
+      $('gatePanel').hidden = false;
+      $('topbarActions').hidden = true;
+      $('saveBar').hidden = true;
+      document.body.classList.remove('has-save-bar');
+      showMsg('已退出登录');
+      if (c && c.auth.signOut) { c.auth.signOut().catch(function () {}); }
+    });
+    $('btnDeniedBack').addEventListener('click', function () { location.href = '/'; });
+
+    /* ---------- 启动：恢复会话 → 分发门禁 ---------- */
+    (function startup() {
+      var c = getClient();
+      if (!c) {
+        showMsg('云服务组件加载失败（可能处于内置预览面板或网络受限），请刷新或在新标签页打开', 'err');
+        return;
+      }
+      c.auth.getSession().then(function (res) {
+        var session = res && res.data ? res.data : null;
+        if (session && session.user) { boot(session.user); }
+      }).catch(function () { /* 未登录，停留在登录页 */ });
+    })();
+  })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,536 @@
+/**
+ * AI 头像工坊 · 静态站点 + 同源 AI 代理 + 支付通道层
+ *
+ * 【AI 代理】/api/ai（SSE 心跳流）
+ * - 第三方 AI 网关 CORS 配置不全（Allow-Headers: * 不覆盖 Authorization），
+ *   浏览器直连会 Failed to fetch，因此由同源服务端转发。
+ * - 托管平台边缘网关对「空闲 30 秒」的请求直接 524（实测），而图片生成常需
+ *   60~120 秒；心跳流让连接持续有字节流动，实测 120s+ 正常返回。
+ * - **Key 下沉**：服务商 Key 存在服务器本地 .ai-config.json（点开头的隐藏文件，
+ *   静态服务会拒绝下发），前端请求只带 providerId，不再持有 Key。
+ *
+ * 【支付通道层】/api/pay/*
+ * - 统一适配层 payChannels：每个通道实现 createOrder / verifyNotify。
+ *   已实现：xunhupay（虎皮椒，个人可签约）；redeem（兑换码）走云端 RPC，不经本服务。
+ * - 通道凭据存 .pay-config.json（未配置的通道自动休眠）。
+ * - 支付回调 /api/pay/notify 验签后落盘；用户端 /api/pay/claim 领取带签名的
+ *   入账凭证，最终由云端 RPC wallet_pay_claim（HMAC 校验 + 幂等）加积分。
+ * - 管理端点（拉取订单 / 同步 Key）用 x-access-key（与云端 app_secrets 一致）。
+ *
+ * 安全边界：
+ * - 只允许 https 目标，禁止本机/内网地址（防 SSRF）
+ * - 请求体上限 25MB，上游超时 300s
+ * - 隐藏文件（. 开头）不可通过 HTTP 下载
+ */
+'use strict';
+
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const querystring = require('querystring');
+const { URL } = require('url');
+
+const PORT = process.env.PORT || 3000;
+const ROOT = __dirname;
+const MAX_BODY = 25 * 1024 * 1024;
+const UPSTREAM_TIMEOUT = 300000;
+const BEAT_INTERVAL = 2000;
+
+const AI_CONFIG_FILE = path.join(ROOT, '.ai-config.json');
+const PAY_CONFIG_FILE = path.join(ROOT, '.pay-config.json');
+const PAY_STATE_FILE = path.join(ROOT, '.pay-state.json');
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8'
+};
+
+/* 每次请求时读取配置文件（小文件，读取廉价），管理员更新后即时生效、无需重启 */
+function readDotJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { return null; }
+}
+
+function md5(s) { return crypto.createHash('md5').update(s, 'utf8').digest('hex'); }
+
+/* 固定长度比较，避免时序侧信道 */
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a || ''), 'utf8');
+  const bb = Buffer.from(String(b || ''), 'utf8');
+  if (ba.length !== bb.length) { return false; }
+  return crypto.timingSafeEqual(ba, bb);
+}
+
+/* ---------- 支付通道适配层 ---------- */
+
+/* 虎皮椒 V3 签名：除 hash 外的参数按 key ASCII 升序拼接 k=v&…（跳过空值），
+ * 末尾接 &key=商户密钥 后取 MD5 小写。以官方文档为准，开通后联调验证。 */
+function xunhuHash(params, secret) {
+  const keys = Object.keys(params)
+    .filter((k) => k !== 'hash' && params[k] !== undefined && params[k] !== null && String(params[k]) !== '')
+    .sort();
+  const src = keys.map((k) => k + '=' + params[k]).join('&') + '&key=' + secret;
+  return md5(src);
+}
+
+const payChannels = {
+  xunhupay: {
+    enabled(cfg) {
+      return !!(cfg && cfg.xunhupay && cfg.xunhupay.appid && cfg.xunhupay.secret);
+    },
+    /* 创建订单：调虎皮殿下单接口，返回支付跳转地址 */
+    async createOrder(cfg, order, req) {
+      const host = req.headers.host || '';
+      const share = cfg.siteSharecode ? ('?sharecode=' + cfg.siteSharecode) : '';
+      const params = {
+        version: '1.1',
+        lang: 'zh-cn',
+        plugins: 'web',
+        appid: cfg.xunhupay.appid,
+        trade_order_id: order.orderNo,
+        total_fee: (order.amountCents / 100).toFixed(2),
+        title: order.title || 'AI 头像工坊积分充值',
+        time: Math.floor(Date.now() / 1000),
+        notify_url: 'https://' + host + '/api/pay/notify' + share,
+        return_url: 'https://' + host + '/apps/avatar/?paid=' + order.orderNo + share.replace('?', '&'),
+        nonce_str: crypto.randomBytes(8).toString('hex')
+      };
+      params.hash = xunhuHash(params, cfg.xunhupay.secret);
+      const res = await fetch('https://api.xunhupay.com/payment/do.html', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: querystring.stringify(params)
+      });
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch (_) { data = { raw: text.slice(0, 300) }; }
+      if (!data || !data.url) {
+        const e = new Error('支付下单失败：' + ((data && (data.errmsg || data.errcode)) || '网关无响应'));
+        e.status = 502;
+        throw e;
+      }
+      return { payUrl: data.url };
+    },
+    /* 验证异步通知签名 */
+    verifyNotify(cfg, params) {
+      if (!cfg || !cfg.xunhupay || !cfg.xunhupay.secret) { return null; }
+      const expect = xunhuHash(params, cfg.xunhupay.secret);
+      if (!params.hash || !safeEqual(expect, String(params.hash).toLowerCase())) { return null; }
+      return {
+        orderNo: params.trade_order_id,
+        tradeNo: params.transaction_id || params.openorder_id || '',
+        status: params.status || params.pay_type || ''
+      };
+    }
+  }
+};
+
+function readPayState() {
+  const st = readDotJson(PAY_STATE_FILE);
+  return st && typeof st === 'object' && st.orders ? st : { orders: {} };
+}
+
+function writePayState(state) {
+  const tmp = PAY_STATE_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+  fs.renameSync(tmp, PAY_STATE_FILE);
+}
+
+/* ---------- AI 代理 ---------- */
+
+/* 只允许公网 https 地址，阻断本机与内网（SSRF 防护） */
+function assertSafeUrl(raw) {
+  let u;
+  try { u = new URL(raw); } catch (_) { throw new Error('接口地址格式不正确'); }
+  if (u.protocol !== 'https:') { throw new Error('接口地址必须是 https'); }
+  const host = u.hostname.toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost')) { throw new Error('不允许访问本机地址'); }
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+    const p = host.split('.').map(Number);
+    const isPrivate =
+      p[0] === 10 || p[0] === 127 || p[0] === 0 ||
+      (p[0] === 169 && p[1] === 254) ||
+      (p[0] === 172 && p[1] >= 16 && p[1] <= 31) ||
+      (p[0] === 192 && p[1] === 168);
+    if (isPrivate) { throw new Error('不允许访问内网地址'); }
+  }
+  if (host === 'metadata.google.internal') { throw new Error('不允许访问该地址'); }
+  return u;
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > MAX_BODY) { reject(new Error('请求体过大（上限 25MB）')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function sendJson(res, status, obj) {
+  const body = Buffer.from(JSON.stringify(obj), 'utf8');
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': body.length,
+    'Cache-Control': 'no-store'
+  });
+  res.end(body);
+}
+
+/* 校验入参；Key 由调用方解析后传入（服务器本地文件优先，payload.apiKey 仅作旧版兼容） */
+function preparePayload(payload, apiKey) {
+  const { baseUrl, model, path: apiPath, prompt, imageBase64 } = payload || {};
+  function bad(msg) { const e = new Error(msg); e.status = 400; return e; }
+  if (!baseUrl || !apiKey || !model || !prompt) {
+    throw bad('缺少必要参数（接口地址 / Key / 模型 / 提示词）');
+  }
+  if (apiPath !== '/images/edits' && apiPath !== '/images/generations') {
+    throw bad('不支持的接口路径');
+  }
+  const target = assertSafeUrl(String(baseUrl).replace(/\/+$/, '') + apiPath);
+  if (apiPath === '/images/edits' && !imageBase64) {
+    throw bad('该接口需要上传照片');
+  }
+  return { target: target.toString(), apiKey, model, apiPath, prompt, imageBase64 };
+}
+
+/* 真正调用上游，返回 { statusCode, data }；网络层失败抛出异常 */
+async function callUpstream(arg) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT);
+  try {
+    let upstreamRes;
+    if (arg.apiPath === '/images/edits') {
+      const match = /^data:(image\/[a-z+]+);base64,(.+)$/i.exec(arg.imageBase64);
+      if (!match) { const e = new Error('图片数据格式不正确'); e.status = 400; throw e; }
+      const mime = match[1];
+      const buf = Buffer.from(match[2], 'base64');
+      const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+      const form = new FormData();
+      form.append('model', arg.model);
+      form.append('prompt', arg.prompt);
+      form.append('n', '1');
+      form.append('size', '1024x1024');
+      form.append('image', new Blob([buf], { type: mime }), 'photo.' + ext);
+      upstreamRes = await fetch(arg.target, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + arg.apiKey },
+        body: form,
+        signal: controller.signal
+      });
+    } else {
+      upstreamRes = await fetch(arg.target, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + arg.apiKey,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ model: arg.model, prompt: arg.prompt, n: 1, size: '1024x1024' }),
+        signal: controller.signal
+      });
+    }
+    const text = await upstreamRes.text();
+    let data;
+    try { data = JSON.parse(text); } catch (_) { data = { raw: text.slice(0, 800) }; }
+    return { statusCode: upstreamRes.status, data: data };
+  } catch (err) {
+    if (err && err.status === 400) { throw err; }
+    const aborted = err && (err.name === 'AbortError');
+    const e = new Error(aborted
+      ? ('上游服务超时（' + Math.round(UPSTREAM_TIMEOUT / 1000) + ' 秒未返回），请稍后重试或换更快的模型')
+      : ('转发失败：' + ((err && err.message) || '网络错误')));
+    e.status = aborted ? 504 : 502;
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* POST /api/ai { providerId, baseUrl, model, path, prompt, imageBase64? }
+ * Key 按 providerId 从服务器本地 .ai-config.json 解析；响应为 SSE 心跳流。 */
+async function handleAi(req, res) {
+  let payload;
+  try {
+    const raw = await readBody(req);
+    payload = JSON.parse(raw.toString('utf8') || '{}');
+  } catch (err) {
+    return sendJson(res, 400, { error: { message: (err && err.message) || '请求解析失败' } });
+  }
+
+  const aiCfg = readDotJson(AI_CONFIG_FILE) || {};
+  const keys = aiCfg.providerKeys || {};
+  const apiKey = (payload.providerId && keys[payload.providerId]) || payload.apiKey || '';
+  if (!apiKey) {
+    return sendJson(res, 400, { error: { message: '该服务商的 Key 未在服务器配置，请管理员在后台同步' } });
+  }
+
+  let arg;
+  try {
+    arg = preparePayload(payload, apiKey);
+  } catch (err) {
+    return sendJson(res, err.status || 400, { error: { message: err.message } });
+  }
+
+  /* SSE 心跳流：边等上游边每 2 秒写心跳，最后一行 data: 携带真实结果 */
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Accel-Buffering': 'no',
+    Connection: 'keep-alive'
+  });
+  const startedAt = Date.now();
+  res.write(': start\n\n');
+
+  const beat = setInterval(() => {
+    if (res.writableEnded) { clearInterval(beat); return; }
+    try { res.write(': wait ' + Math.round((Date.now() - startedAt) / 1000) + '\n\n'); } catch (_) {}
+  }, BEAT_INTERVAL);
+
+  let out;
+  try {
+    const r = await callUpstream(arg);
+    out = { statusCode: r.statusCode, data: r.data };
+  } catch (err) {
+    out = { statusCode: err.status || 502, data: { error: { message: err.message } } };
+  }
+
+  clearInterval(beat);
+  if (!res.writableEnded) {
+    try { res.end('data: ' + JSON.stringify(out) + '\n\n'); } catch (_) {}
+  }
+}
+
+/* ---------- 支付端点 ---------- */
+
+/* POST /api/pay/order {channel, productId, credits, amountCents, userId, title} */
+async function handlePayOrder(req, res) {
+  let body;
+  try {
+    const raw = await readBody(req);
+    body = JSON.parse(raw.toString('utf8') || '{}');
+  } catch (err) {
+    return sendJson(res, 400, { error: { message: '请求解析失败' } });
+  }
+  const cfg = readDotJson(PAY_CONFIG_FILE) || {};
+  const channel = payChannels[body.channel];
+  if (!channel) { return sendJson(res, 400, { error: { message: '未知的支付通道' } }); }
+  if (!channel.enabled(cfg)) {
+    return sendJson(res, 501, { error: { code: 'PAY_NOT_CONFIGURED', message: '该支付通道尚未开通' } });
+  }
+  if (!body.userId || !body.credits || body.credits <= 0 || !body.amountCents || body.amountCents <= 0) {
+    return sendJson(res, 400, { error: { message: '订单参数不完整' } });
+  }
+  const orderNo = 'W' + Date.now().toString(36).toUpperCase() + crypto.randomBytes(3).toString('hex').toUpperCase();
+  const order = {
+    orderNo: orderNo,
+    userId: String(body.userId),
+    productId: body.productId || '',
+    credits: Math.floor(body.credits),
+    amountCents: Math.floor(body.amountCents),
+    title: body.title || '',
+    status: 'created',
+    tradeNo: '',
+    createdAt: Date.now(),
+    paidAt: 0
+  };
+  const state = readPayState();
+  state.orders[orderNo] = order;
+  writePayState(state);
+  try {
+    const r = await channel.createOrder(cfg, order, req);
+    return sendJson(res, 200, { orderNo: orderNo, payUrl: r.payUrl });
+  } catch (err) {
+    state.orders[orderNo].status = 'failed';
+    writePayState(state);
+    return sendJson(res, err.status || 502, { error: { message: err.message } });
+  }
+}
+
+/* POST /api/pay/notify：虎皮椒异步通知（form-urlencoded），验签后落盘并回 success */
+async function handlePayNotify(req, res) {
+  const raw = await readBody(req);
+  const ct = String(req.headers['content-type'] || '');
+  let params;
+  if (ct.indexOf('json') !== -1) {
+    try { params = JSON.parse(raw.toString('utf8') || '{}'); } catch (_) { params = {}; }
+  } else {
+    params = querystring.parse(raw.toString('utf8'));
+  }
+  const cfg = readDotJson(PAY_CONFIG_FILE) || {};
+  const verified = payChannels.xunhupay.verifyNotify(cfg, params);
+  if (!verified || !verified.orderNo) {
+    return res.end('fail');
+  }
+  const state = readPayState();
+  const order = state.orders[verified.orderNo];
+  if (order) {
+    order.status = 'paid';
+    order.tradeNo = verified.tradeNo;
+    order.paidAt = Date.now();
+    writePayState(state);
+  }
+  /* 按虎皮椒规范返回 success 表示已接收 */
+  return res.end('success');
+}
+
+/* GET /api/pay/claim?orderNo=xxx：用户支付回跳后领取入账凭证 */
+function handlePayClaim(req, res, url) {
+  const orderNo = String(url.searchParams.get('orderNo') || '');
+  const cfg = readDotJson(PAY_CONFIG_FILE) || {};
+  const paySecret = cfg.paySecret || '';
+  if (!paySecret) { return sendJson(res, 501, { error: { message: '支付未配置' } }); }
+  const state = readPayState();
+  const order = state.orders[orderNo];
+  if (!order || order.status !== 'paid') {
+    return sendJson(res, 404, { error: { code: 'ORDER_NOT_PAID', message: '订单尚未确认到账，请稍后再试' } });
+  }
+  const ts = Math.floor(Date.now() / 1000);
+  const sig = md5(orderNo + '|' + order.userId + '|' + order.credits + '|' + ts + '|' + paySecret);
+  return sendJson(res, 200, {
+    orderNo: orderNo, userId: order.userId, credits: order.credits, ts: ts, sig: sig
+  });
+}
+
+/* GET /api/pay/pending：管理员拉取已支付订单（header x-access-key） */
+function handlePayPending(req, res) {
+  const cfg = readDotJson(PAY_CONFIG_FILE) || {};
+  if (!cfg.accessKey || !safeEqual(req.headers['x-access-key'], cfg.accessKey)) {
+    return sendJson(res, 401, { error: { message: '无权访问' } });
+  }
+  const state = readPayState();
+  const list = Object.values(state.orders)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 100);
+  return sendJson(res, 200, { orders: list });
+}
+
+/* GET /api/pay/config：公开的通道可用性（前端据此决定展示支付按钮还是兑换引导） */
+function handlePayConfig(res) {
+  const cfg = readDotJson(PAY_CONFIG_FILE) || {};
+  return sendJson(res, 200, {
+    channels: {
+      xunhupay: payChannels.xunhupay.enabled(cfg)
+    }
+  });
+}
+
+/* POST /api/admin/sync-key {providerId, apiKey}（header x-access-key）：后台保存 Key 后同步到服务器 */
+async function handleAdminSyncKey(req, res) {
+  const cfg = readDotJson(PAY_CONFIG_FILE) || {};
+  if (!cfg.accessKey || !safeEqual(req.headers['x-access-key'], cfg.accessKey)) {
+    return sendJson(res, 401, { error: { message: '无权访问' } });
+  }
+  let body;
+  try {
+    const raw = await readBody(req);
+    body = JSON.parse(raw.toString('utf8') || '{}');
+  } catch (err) {
+    return sendJson(res, 400, { error: { message: '请求解析失败' } });
+  }
+  if (!body.providerId || !body.apiKey) {
+    return sendJson(res, 400, { error: { message: '缺少 providerId 或 apiKey' } });
+  }
+  const aiCfg = readDotJson(AI_CONFIG_FILE) || { providerKeys: {} };
+  if (!aiCfg.providerKeys) { aiCfg.providerKeys = {}; }
+  aiCfg.providerKeys[body.providerId] = String(body.apiKey);
+  const tmp = AI_CONFIG_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(aiCfg, null, 2));
+  fs.renameSync(tmp, AI_CONFIG_FILE);
+  try { fs.chmodSync(AI_CONFIG_FILE, 0o600); } catch (_) {}
+  return sendJson(res, 200, { ok: true });
+}
+
+function serveStatic(req, res) {
+  const url = new URL(req.url, 'http://localhost');
+  let pathname = decodeURIComponent(url.pathname);
+  if (pathname === '/' || pathname === '') { pathname = '/index.html'; }
+  /* 目录穿越与隐藏文件防护 */
+  const safePath = path.normalize(pathname).replace(/^(\.\.[/\\])+/, '');
+  if (safePath.split('/').some((seg) => seg.startsWith('.'))) {
+    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('403 Forbidden');
+  }
+  const filePath = path.join(ROOT, safePath);
+  if (!filePath.startsWith(ROOT)) {
+    res.writeHead(403); return res.end('403 Forbidden');
+  }
+  fs.stat(filePath, (err, stat) => {
+    let fp = filePath;
+    if (!err && stat.isDirectory()) {
+      /* 目录请求 → 该目录下的 index.html（如 /apps/avatar/） */
+      fp = path.join(filePath, 'index.html');
+      try { stat = fs.statSync(fp); } catch (_) { stat = null; }
+    }
+    if (err || !stat || !stat.isFile()) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('404 Not Found');
+    }
+    const ext = path.extname(fp).toLowerCase();
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Content-Length': stat.size,
+      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=3600'
+    });
+    fs.createReadStream(fp).pipe(res);
+  });
+}
+
+const server = http.createServer((req, res) => {
+  const pathOnly = req.url ? req.url.split('?')[0] : '';
+  const fullUrl = new URL(req.url || '/', 'http://localhost');
+
+  if (req.method === 'GET' && (pathOnly === '/' || pathOnly === '/index.html')) {
+    /* 站点根 → 默认产品页（保留 query：sharecode / ?paid= 等不能丢） */
+    const target = '/apps/avatar/' + (fullUrl.search || '');
+    res.writeHead(302, { Location: target });
+    return res.end();
+  }
+  if (pathOnly === '/api/ai') {
+    if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
+    return handleAi(req, res);
+  }
+  if (pathOnly === '/api/pay/order') {
+    if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
+    return handlePayOrder(req, res);
+  }
+  if (pathOnly === '/api/pay/notify') {
+    if (req.method !== 'POST') { return res.end('fail'); }
+    return handlePayNotify(req, res);
+  }
+  if (pathOnly === '/api/pay/claim') {
+    return handlePayClaim(req, res, fullUrl);
+  }
+  if (pathOnly === '/api/pay/pending') {
+    return handlePayPending(req, res);
+  }
+  if (pathOnly === '/api/pay/config') {
+    return handlePayConfig(res);
+  }
+  if (pathOnly === '/api/admin/sync-key') {
+    if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
+    return handleAdminSyncKey(req, res);
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405); return res.end('405 Method Not Allowed');
+  }
+  serveStatic(req, res);
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+  console.log('AI Avatar Studio server listening on port ' + PORT);
+});
