@@ -634,6 +634,10 @@ const server = http.createServer((req, res) => {
   if (pathOnly === '/api/pixelart/task') {
     return require('./apps/pixelart/generate').handleTaskStatus(req, res, fullUrl, sendJson);
   }
+  if (pathOnly === '/api/pixelart/task/stream') {
+    if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
+    return require('./apps/pixelart/generate').handleTaskStream(req, res, fullUrl);
+  }
   if (pathOnly === '/api/pixelart/task/html') {
     return require('./apps/pixelart/generate').handleTaskHtml(req, res, fullUrl, sendJson);
   }

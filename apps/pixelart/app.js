@@ -1,7 +1,7 @@
 /* =========================================================
  * 拼豆大师 · 产品层逻辑
  * - 平台层接入：登录 / 积分钱包 / 支付，全部复用 window.Platform
- * - 核心流程：上传图 → 选主体/画风 → 扣 1 积分 → 生成任务轮询 → 打开图纸
+ * - 核心流程：上传图 → 选主体/画风 → 扣 1 积分 → SSE 心跳流跟踪任务（降级轮询）→ 打开图纸
  * - 生成失败自动退回积分（平台层 wallet.refund）
  * ========================================================= */
 (function () {
@@ -62,6 +62,8 @@
     styleId: 'original',
     generating: false,
     pollTimer: null,
+    watchToken: 0,        /* SSE 观察轮次：每轮生成 +1，回调对不上号即视为已取消 */
+    watchAbort: null,     /* SSE 连接的 AbortController（浏览器不支持时为 null） */
     lastTaskId: null,
     lastTxnId: null
   };
@@ -225,6 +227,9 @@
     $('genStatus').hidden = !on;
     if (!on) {
       if (Store.pollTimer) { clearInterval(Store.pollTimer); Store.pollTimer = null; }
+      /* 关掉 SSE 观察连接（token 失配让 pump 循环自行退出，AbortController 直接断流） */
+      Store.watchToken += 1;
+      if (Store.watchAbort) { try { Store.watchAbort.abort(); } catch (_) {} Store.watchAbort = null; }
     }
   }
 
@@ -290,32 +295,11 @@
         });
       });
     }).then(function (taskId) {
-      /* 3. 轮询任务状态 */
-      var polls = 0;
-      Store.pollTimer = setInterval(function () {
-        polls += 1;
-        var sec = Math.floor(Date.now() / 1000) - startedAt;
-        $('genStatusText').textContent = stageText(sec);
-        if (polls > GEN_POLL_MAX) {
-          setGenerating(false);
-          studioMsg('生成超时，积分将在确认失败后自动退回；也可联系管理员处理', true);
-          wallet.refund(Store.lastTxnId);
-          return;
-        }
-        fetch('/api/pixelart/task?id=' + encodeURIComponent(taskId))
-          .then(function (r) { return r.json(); })
-          .then(function (st) {
-            if (st.status === 'done') {
-              setGenerating(false);
-              openTaskHtml(taskId);
-              showDone(taskId);
-            } else if (st.status === 'failed') {
-              setGenerating(false);
-              wallet.refund(Store.lastTxnId);
-              studioMsg('生成失败：' + (st.error || '未知错误').slice(0, 160) + '（1 积分已退回）', true);
-            }
-          }).catch(function () { /* 单次轮询失败忽略，下一轮再试 */ });
-      }, GEN_POLL_INTERVAL);
+      /* 3. SSE 心跳流跟踪任务（对齐 /api/ai 防 524 的成熟方案）：
+            服务端每 2s 写心跳注释，连接永不空闲，托管平台 30s 空闲 524 不会触发；
+            心跳顺便驱动「已等待 N 秒」提示，status 事件驱动完成/失败。
+            流不可用时自动降级为 4s 轮询。 */
+      watchTask(taskId, startedAt);
     }).catch(function (err) {
       setGenerating(false);
       if (err && err.insufficient) {
@@ -327,6 +311,92 @@
       if (Store.lastTxnId) { wallet.refund(Store.lastTxnId); }
       studioMsg((err && err.message) || '生成失败，请稍后重试（已扣积分将自动退回）', true);
     });
+  }
+
+  /* ---------- 任务观察：SSE 心跳流（首选） + 轮询（降级） ---------- */
+
+  function onTaskDone(taskId) {
+    setGenerating(false);
+    openTaskHtml(taskId);
+    showDone(taskId);
+  }
+
+  function onTaskFailed(st) {
+    setGenerating(false);
+    wallet.refund(Store.lastTxnId);
+    studioMsg('生成失败：' + (st.error || '未知错误').slice(0, 160) + '（1 积分已退回）', true);
+  }
+
+  /* SSE 流：每 2s 一行 ": wait Ns" 心跳（驱动阶段提示），状态变化推 event: status */
+  function watchTask(taskId, startedAt) {
+    var token = ++Store.watchToken;
+    var ac = (typeof window.AbortController === 'function') ? new window.AbortController() : null;
+    Store.watchAbort = ac;
+    var opts = ac ? { signal: ac.signal } : undefined;
+    fetch('/api/pixelart/task/stream?id=' + encodeURIComponent(taskId), opts)
+      .then(function (res) {
+        if (!res.ok || !res.body || !res.body.getReader) { throw new Error('stream unavailable'); }
+        var reader = res.body.getReader();
+        var decoder = (typeof TextDecoder === 'function') ? new TextDecoder('utf-8') : null;
+        var buf = '';
+        function pump() {
+          if (token !== Store.watchToken) { try { reader.cancel(); } catch (_) {} return; }
+          return reader.read().then(function (r) {
+            if (r.done) { return; }
+            if (decoder) { buf += decoder.decode(r.value, { stream: true }); }
+            else { for (var i = 0; i < r.value.length; i++) { buf += String.fromCharCode(r.value[i]); } }
+            var idx;
+            while ((idx = buf.indexOf('\n\n')) >= 0) {
+              var lines = buf.slice(0, idx).split('\n');
+              buf = buf.slice(idx + 2);
+              for (var j = 0; j < lines.length; j++) {
+                var line = lines[j];
+                if (line.charAt(0) === ':') {
+                  var m = line.match(/^:\s*wait\s+(\d+)/);
+                  if (m) { $('genStatusText').textContent = stageText(parseInt(m[1], 10)); }
+                } else if (line.indexOf('event:') === 0 && line.slice(6).trim() === 'status') {
+                  var dl = lines[j + 1];
+                  if (dl && dl.indexOf('data:') === 0) {
+                    var st;
+                    try { st = JSON.parse(dl.slice(5).trim()); } catch (_) { st = null; }
+                    if (!st) { continue; }
+                    if (st.status === 'done') { try { reader.cancel(); } catch (_) {} return onTaskDone(taskId); }
+                    if (st.status === 'failed') { try { reader.cancel(); } catch (_) {} return onTaskFailed(st); }
+                  }
+                }
+              }
+            }
+            return pump();
+          });
+        }
+        return pump();
+      })
+      .catch(function () {
+        if (token !== Store.watchToken) { return; } /* 已取消/已开新一轮 */
+        startPolling(taskId, startedAt);            /* 流不可用 → 降级轮询 */
+      });
+  }
+
+  /* 降级：4s 间隔轮询（旧行为，SSE 不可用时兜底） */
+  function startPolling(taskId, startedAt) {
+    var polls = 0;
+    Store.pollTimer = setInterval(function () {
+      polls += 1;
+      var sec = Math.floor(Date.now() / 1000) - startedAt;
+      $('genStatusText').textContent = stageText(sec);
+      if (polls > GEN_POLL_MAX) {
+        setGenerating(false);
+        studioMsg('生成超时，积分将在确认失败后自动退回；也可联系管理员处理', true);
+        wallet.refund(Store.lastTxnId);
+        return;
+      }
+      fetch('/api/pixelart/task?id=' + encodeURIComponent(taskId))
+        .then(function (r) { return r.json(); })
+        .then(function (st) {
+          if (st.status === 'done') { onTaskDone(taskId); }
+          else if (st.status === 'failed') { onTaskFailed(st); }
+        }).catch(function () { /* 单次轮询失败忽略，下一轮再试 */ });
+    }, GEN_POLL_INTERVAL);
   }
 
   function bindGenerate() {

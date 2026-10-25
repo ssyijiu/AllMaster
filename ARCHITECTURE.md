@@ -86,6 +86,12 @@ restoreAuth();                            // 最后才执行入口（→ continu
 | `GET /api/pay/return` | 支付同步回跳 → 302 产品页 `?paid=<base64>` |
 | 密钥下发 | `app_secrets` 表经 DB 端 RPC 管理，**密钥永不进前端**（admin 保存走 base64 参数化 + md5 校验） |
 
+**⚠️ 发布与密钥覆盖（重要教训，2026-10-26 手机 401 事故）**：deploy 工具全量上传本地目录，
+本地 `.ai-config.json` 会**覆盖**线上服务器文件——而后台保存 Key 时是先更新线上（sync-key）再写 DB，
+本地文件不会自动跟上。**每次发布前必须**：从云端 `app_secrets` 以 base64 读出 providerKeys、
+本地解码写入 `.ai-config.json`、md5 校验一致后再 deploy。DB `app_secrets` 是密钥唯一权威源，
+本地文件只是镜像。（未来可选的根治：server.js 启动时自愈同步，需引入服务端读密钥通道，暂缓。）
+
 ## 4. 云端数据模型（WorkBuddy 云服务）
 
 | 表 | 用途 |

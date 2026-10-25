@@ -85,6 +85,10 @@ function shrinkImage(pngPath, cb) {
   });
 }
 
+/* 单次 LLM 请求：返回 { slots } 成功 / { retryable } 可安全重试 / {} 终态失败。
+   重试纪律（对齐头像大师 /api/ai 的教训）：
+   - 可重试：连接层失败（请求未送达，必然未计费）、502/503（网关拒收，不会计费）
+   - 绝不重试：超时/504/524（上游可能已成功计费，自动重试会重复扣费）、其余状态码（确定性失败） */
 function llmAttempt(cfg, apiKey, imageBase64, system) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 60000);
@@ -104,20 +108,24 @@ function llmAttempt(cfg, apiKey, imageBase64, system) {
     }),
     signal: ctrl.signal
   }).then(async (res) => {
-    if (!res.ok) { return null; }
-    const data = await res.json();
+    if (res.status === 502 || res.status === 503) { return { retryable: true }; }
+    if (!res.ok) { return {}; }
+    let data;
+    try { data = await res.json(); } catch (_) { return {}; } /* 响应中途断流，可能已计费，不重试 */
     const text = data && data.choices && data.choices[0] && data.choices[0].message
       ? String(data.choices[0].message.content || '') : '';
     const m = text.indexOf('{') >= 0 ? text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1) : '';
-    const slots = JSON.parse(m);
+    let slots;
+    try { slots = JSON.parse(m); } catch (_) { return {}; }
     const out = {};
     for (const k of ['game_knowledge', 'subject_description', 'image_analysis', 'composition']) {
       const v = slots[k];
-      if (typeof v !== 'string' || !v.trim()) { return null; }
+      if (typeof v !== 'string' || !v.trim()) { return {}; }
       out[k] = v.trim();
     }
-    return out;
-  }).catch(() => null).finally(() => clearTimeout(timer));
+    return { slots: out };
+  }).catch((err) => ({ retryable: !!(err && err.name !== 'AbortError') }))
+    .finally(() => clearTimeout(timer));
 }
 
 async function llmSlots(imageBase64, subject, notes) {
@@ -137,11 +145,12 @@ async function llmSlots(imageBase64, subject, notes) {
     (notes || '').trim() ? '玩家备注：' + notes.trim() : '',
     '只输出 JSON 对象本身，不要 markdown 代码块。'
   ].filter(Boolean).join('\n');
-  /* 出口链路对较大上传不稳：3 次尝试 + 退避；单次超时 60s */
-  for (let i = 0; i < 3; i++) {
+  /* 只对「必然未计费」的失败重试：最多 2 次、间隔 1.5s；超时等不重试，直接回落模板 */
+  for (let i = 0; i <= 2; i++) {
     const r = await llmAttempt(cfg, apiKey, imageBase64, system);
-    if (r) { return r; }
-    await new Promise((resolve) => setTimeout(resolve, 1500 * (i + 1)));
+    if (r && r.slots) { return r.slots; }
+    if (!r || !r.retryable || i === 2) { return null; }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
   }
   return null;
 }
@@ -278,6 +287,49 @@ function handleTaskStatus(req, res, fullUrl, sendJson) {
   return sendJson(res, 200, { status: t.status, error: t.error || undefined });
 }
 
+/* GET /api/pixelart/task/stream?id= → SSE 心跳流（对齐 /api/ai 防 524 的成熟方案）：
+   每 2 秒写一行 ": wait Ns" 心跳注释，连接永不「空闲」，托管平台 30 秒空闲 524 永不触发；
+   任务状态变化推 event: status，done/failed 后关流；前端 getReader() 解析，心跳顺便驱动「已等待 N 秒」提示。 */
+function handleTaskStream(req, res, fullUrl) {
+  const id = String(fullUrl.searchParams.get('id') || '');
+  let t = tasks.get(id);
+  if (!t) {
+    const workDir = path.join(TASK_ROOT, id);
+    const html = findOutputHtml(workDir);
+    if (id && /^[0-9a-f]{16}$/.test(id) && html) {
+      t = { status: 'done', htmlPath: html, workDir, startedAt: 0, recovered: true };
+      tasks.set(id, t);
+    }
+  }
+  if (!t) {
+    res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+    return res.end(JSON.stringify({ error: { message: '任务不存在或已过期' } }));
+  }
+  const from = t.startedAt > 0 ? t.startedAt : Date.now();
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.write('retry: 3000\n\n');
+  let lastSent = '';
+  const sendStatus = () => {
+    if (t.status === lastSent) { return; }
+    lastSent = t.status;
+    res.write('event: status\ndata: ' + JSON.stringify({ status: t.status, error: t.error || undefined }) + '\n\n');
+  };
+  sendStatus();
+  const hb = setInterval(() => {
+    res.write(': wait ' + Math.max(0, Math.floor((Date.now() - from) / 1000)) + 's\n\n');
+    sendStatus();
+    if (t.status === 'done' || t.status === 'failed') { clearInterval(hb); clearTimeout(cap); res.end(); }
+  }, 2000);
+  const cap = setTimeout(() => { clearInterval(hb); try { res.end(); } catch (_) {} }, GEN_TIMEOUT_MS + 30000);
+  req.on('close', () => { clearInterval(hb); clearTimeout(cap); });
+  res.on('error', () => { clearInterval(hb); clearTimeout(cap); });
+}
+
 /* GET /api/pixelart/task/html?id= → 单文件图纸 HTML */
 function handleTaskHtml(req, res, fullUrl, sendJson) {
   const id = String(fullUrl.searchParams.get('id') || '');
@@ -310,4 +362,4 @@ function handleStyles(res, sendJson) {
   return sendJson(res, 200, { styles: styles, hint: guide.hint || '' });
 }
 
-module.exports = { handleGenerate, handleTaskStatus, handleTaskHtml, handleStyles, loadStyleGuide };
+module.exports = { handleGenerate, handleTaskStatus, handleTaskStream, handleTaskHtml, handleStyles, loadStyleGuide };
