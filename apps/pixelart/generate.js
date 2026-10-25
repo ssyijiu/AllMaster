@@ -333,7 +333,16 @@ function handleTaskStream(req, res, fullUrl) {
 /* GET /api/pixelart/task/html?id= → 单文件图纸 HTML */
 function handleTaskHtml(req, res, fullUrl, sendJson) {
   const id = String(fullUrl.searchParams.get('id') || '');
-  const t = tasks.get(id);
+  let t = tasks.get(id);
+  /* 与 task/task/stream 一致的磁盘兜底：重启/TTL 后内存表丢失，但图纸文件还在就照常下发 */
+  if (!t && id && /^[0-9a-f]{16}$/.test(id)) {
+    const workDir = path.join(TASK_ROOT, id);
+    const html = findOutputHtml(workDir);
+    if (html) {
+      t = { status: 'done', htmlPath: html, workDir, startedAt: 0, recovered: true };
+      tasks.set(id, t);
+    }
+  }
   if (!t || t.status !== 'done' || !t.htmlPath) {
     return sendJson(res, 404, { error: { message: '任务未完成或不存在' } });
   }
