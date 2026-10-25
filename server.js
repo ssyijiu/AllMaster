@@ -462,7 +462,7 @@ async function handleAdminSyncKey(req, res) {
    pythonExe（拼豆链路用的解释器，路径不存在时回落 python3——本机指向 venv，沙箱系统 python3 自带依赖）、
    promptLLM（写槽位的视觉 chat 模型，null=模板兜底） */
 const PIXELART_CONFIG_FILE = path.join(ROOT, '.pixelart-config.json');
-const PERLER_DIR = path.join(ROOT, 'apps/pixelart/assert/无畏契约拼豆源码/valorant-perler');
+const PERLER_DIR = path.join(ROOT, 'apps/pixelart/assert/valorant-perler-src/valorant-perler');
 
 function pixelartPython() {
   const cfg = readDotJson(PIXELART_CONFIG_FILE) || {};
