@@ -241,18 +241,24 @@ async function handleGenerate(req, res, sendJson) {
   }
   tasks.set(id, { status: 'running', workDir, startedAt: Date.now() });
 
-  /* 压图（512px JPEG）→ LLM 槽位（失败回落模板）→ 写配置 → 后台跑链路；HTTP 立即返回 */
+  /* 立即返回 taskId；压图 → LLM 槽位（失败回落模板）→ 写配置 → 起链路 全部在后台做。
+     LLM 含重试最长约 3 分钟，若阻塞 HTTP 响应会被平台网关 502；前端靠轮询任务状态推进。 */
   const imagePath = path.join(imgDir, '原图.png');
-  const sendResponse = (slots) => {
-    const promptPath = path.join(workDir, 'prompt.json');
-    fs.writeFileSync(promptPath, JSON.stringify(slots, null, 2));
-    startTask(id, workDir, imagePath, promptPath, subject, styleId);
-    sendJson(res, 200, { taskId: id });
-  };
+  sendJson(res, 200, { taskId: id });
   shrinkImage(imagePath, (smallDataUrl) => {
     const llmInput = smallDataUrl || body.imageBase64;
     llmSlots(llmInput, subject, body.notes)
-      .then((slots) => sendResponse(slots || templateSlots(subject, findStyle(styleId).label, body.notes)));
+      .then((slots) => slots || templateSlots(subject, findStyle(styleId).label, body.notes))
+      .then((slots) => {
+        try {
+          const promptPath = path.join(workDir, 'prompt.json');
+          fs.writeFileSync(promptPath, JSON.stringify(slots, null, 2));
+          startTask(id, workDir, imagePath, promptPath, subject, styleId);
+        } catch (err) {
+          const t = tasks.get(id);
+          if (t) { t.status = 'failed'; t.error = '启动失败：' + String(err.message || err).slice(0, 200); }
+        }
+      });
   });
 }
 
