@@ -1,5 +1,5 @@
 /* =========================================================
- * 拼豆大师 · 产品层样式（占位页）
+ * 拼豆大师 · 产品层样式（生成工作台）
  * 设计 token 一律来自 /shared/base.css，本文件只写产品专属布局
  * ========================================================= */
 
@@ -21,13 +21,200 @@
   -webkit-text-fill-color: transparent;
 }
 
-/* 占位面板 */
-.coming-panel {
+/* 工作台面板 */
+.studio { display: flex; flex-direction: column; gap: 14px; }
+
+/* ---------- 上传区 ---------- */
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--ink-50);
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.dropzone:hover, .dropzone.drag { border-color: var(--pa-green); background: var(--pa-green-bg); }
+.dropzone:focus-visible { outline: 2px solid var(--pa-green); outline-offset: 2px; }
+
+.dz-empty {
   text-align: center;
-  padding: 48px 24px;
+  color: var(--muted);
+  padding: 28px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.dz-empty .icon-28 { width: 28px; height: 28px; color: var(--pa-green); }
+.dz-empty b { color: var(--fg); }
+.dz-sub { font-size: 12px; color: var(--meta); margin: 0; }
+
+.dz-preview {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+}
+.dz-preview img {
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: var(--radius-md);
+  background-image: linear-gradient(45deg, var(--border-soft) 25%, transparent 25%, transparent 75%, var(--border-soft) 75%),
+                    linear-gradient(45deg, var(--border-soft) 25%, transparent 25%, transparent 75%, var(--border-soft) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+.dz-remove {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  width: 32px;
+  height: 32px;
+}
+.dz-remove:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
+
+/* ---------- 主体类型分段选择 ---------- */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  width: fit-content;
+}
+.seg-btn {
+  border: none;
+  background: var(--surface);
+  color: var(--muted);
+  padding: 8px 18px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+.seg-btn.cur { background: var(--pa-green-bg); color: var(--pa-green-dark); font-weight: 600; }
+
+/* ---------- 画风选择条 ---------- */
+.style-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.style-strip .hint { margin: 0; }
+.style-card {
+  flex: 0 0 auto;
+  width: 92px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: 6px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.style-card:hover { border-color: var(--pa-green); }
+.style-card.cur { border-color: var(--pa-green); background: var(--pa-green-bg); }
+.style-card img, .style-letter {
+  width: 76px;
+  height: 76px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.style-letter { background: var(--ink-100); color: var(--muted); font-size: 28px; font-weight: 700; }
+.style-card .nm { font-size: 12px; color: var(--fg-2); white-space: nowrap; }
+.style-card.cur .nm { color: var(--pa-green-dark); font-weight: 600; }
+
+/* ---------- 备注与生成 ---------- */
+.label-sub { font-size: 12px; color: var(--meta); font-weight: 400; margin-left: 6px; }
+textarea.text-input { resize: vertical; min-height: 56px; }
+
+.gen-row { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+.cost-tag {
+  font-size: 12px;
+  color: var(--pa-green-dark);
+  background: var(--pa-green-bg);
+  border: 1px solid var(--pa-green);
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
+  margin-left: 6px;
 }
 
-/* 弹窗关闭按钮（base.css 只有通用按钮，这里是圆形图标钮） */
+/* 生成中状态条 */
+.gen-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--amber-300);
+  background: #FFFBEB;
+  border-radius: var(--radius-md);
+  color: var(--fg-2);
+  font-size: 14px;
+}
+.gen-status .spin { animation: pa-spin 1s linear infinite; color: var(--warning); }
+@keyframes pa-spin { to { transform: rotate(360deg); } }
+.gen-status button { margin-left: auto; }
+
+/* 完成状态条 */
+.gen-done {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--success-border);
+  background: var(--success-bg);
+  border-radius: var(--radius-md);
+}
+.gen-done-msg { margin: 0; color: var(--fg-2); font-size: 14px; flex: 1; }
+
+/* ---------- 步骤说明 ---------- */
+.steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 6px;
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--ink-50);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+.step b {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  background: var(--pa-green);
+  color: #fff;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- 提示与弹窗关闭钮 ---------- */
+#studioMsg.warn { color: var(--danger); }
+.hint.warn { color: var(--danger); }
+
 .btn-close-modal {
   border: none;
   background: transparent;
@@ -40,21 +227,10 @@
 }
 .btn-close-modal:hover { background: var(--border-soft); color: var(--fg); }
 
-/* 拼豆装饰画：用 radial-gradient 画一片豆珠网格 */
-.bead-demo {
-  width: 168px;
-  height: 84px;
-  margin: 0 auto 20px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-soft);
-  background-image:
-    radial-gradient(circle 6px, var(--pa-green) 5.5px, transparent 6px),
-    radial-gradient(circle 6px, #F59E0B 5.5px, transparent 6px),
-    radial-gradient(circle 6px, #3B82F6 5.5px, transparent 6px),
-    radial-gradient(circle 6px, #EC4899 5.5px, transparent 6px),
-    radial-gradient(circle 6px, #8B5CF6 5.5px, transparent 6px);
-  background-size: 28px 28px;
-  background-position: 14px 14px, 0 0, 14px 0, 0 14px, 7px 7px;
-  background-repeat: repeat;
-  opacity: 0.9;
+/* ---------- 移动端适配 ---------- */
+@media (max-width: 640px) {
+  .steps { grid-template-columns: repeat(2, 1fr); }
+  .dropzone { min-height: 160px; }
+  .gen-row { flex-direction: column; align-items: stretch; }
+  .gen-row .btn { justify-content: center; }
 }

@@ -264,4 +264,17 @@ function handleTaskHtml(req, res, fullUrl, sendJson) {
   fs.createReadStream(t.htmlPath).pipe(res);
 }
 
-module.exports = { handleGenerate, handleTaskStatus, handleTaskHtml, loadStyleGuide };
+/* GET /api/pixelart/styles → 画风列表（缩略图服务端读 assert 资产转 base64，前端无需直访 assert 目录） */
+function handleStyles(res, sendJson) {
+  const guide = loadStyleGuide();
+  const styles = (guide.styles || []).map((s) => {
+    let thumb = null;
+    try {
+      thumb = 'data:image/png;base64,' + fs.readFileSync(path.join(PERLER_DIR, 'assets', 'style-picker', s.id + '.png')).toString('base64');
+    } catch (_) { /* 缩略图缺失时前端降级为首字母块 */ }
+    return { id: s.id, label: s.label, scope: s.scope || 'all', thumb: thumb };
+  });
+  return sendJson(res, 200, { styles: styles, hint: guide.hint || '' });
+}
+
+module.exports = { handleGenerate, handleTaskStatus, handleTaskHtml, handleStyles, loadStyleGuide };

@@ -637,6 +637,10 @@ const server = http.createServer((req, res) => {
   if (pathOnly === '/api/pixelart/task/html') {
     return require('./apps/pixelart/generate').handleTaskHtml(req, res, fullUrl, sendJson);
   }
+  if (pathOnly === '/api/pixelart/styles') {
+    if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
+    return require('./apps/pixelart/generate').handleStyles(res, sendJson);
+  }
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405); return res.end('405 Method Not Allowed');
   }
