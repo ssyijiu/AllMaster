@@ -490,8 +490,8 @@ function drawPoster(g) {
     txt(g, kind === 'source' ? '原图' : ironName(kind) + '效果模拟', bx + 10, fy + S + 21, { size: 13, weight: 300, color: C.mut, font: TS, spacing: kind === 'source' ? 3 : 1 });
   });
   const rowB = fy + (list.length ? 150 : 56);
-  /* 来源声明始终输出完整一句：随包 W7 就位时用腾讯体（@书若 三字不在子集内，逐字回落设备字体）；没就位时整句交给设备字体，不删字、不改写。 */
-  txt(g, '来自小红书 @书生若木 · 色号与用量仅供参考', PW - M, rowB - 12,
+  /* 来源声明只留账号署名一行：随包 W7 就位时用腾讯体（@书若 三字不在子集内，逐字回落设备字体）；没就位时整句交给设备字体，不删字、不改写。 */
+  txt(g, '来自小红书 @书生若木', PW - M, rowB - 12,
     { size: 12, weight: 700, color: C.mut, font: FACE_READY ? TS : FALLBACK_FONT, align: 'right', spacing: 2 });
   g.fillStyle = C.red;
   g.fillRect(PW - M - 150, rowB + 10, 150, 4);
