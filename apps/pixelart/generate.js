@@ -352,16 +352,34 @@ function handleTaskHtml(req, res, fullUrl, sendJson) {
   if (!t || t.status !== 'done' || !t.htmlPath) {
     return sendJson(res, 404, { error: { message: '任务未完成或不存在' } });
   }
-  let stat;
-  try { stat = fs.statSync(t.htmlPath); } catch (_) {
+  try { fs.statSync(t.htmlPath); } catch (_) {
+    return sendJson(res, 410, { error: { message: '图纸文件已清理' } });
+  }
+  /* 图纸页里「导出」的下载文件名要带任务 ID（标题_ID_规格_色数色.png）。
+     图纸是 build_html_blueprint 预先产出的静态单文件，构建时不知道我们的 taskId，
+     所以在下发时把它注入到页面里，模板从 window.PIXELART_TASK_ID 读取。 */
+  let body;
+  try {
+    let html = fs.readFileSync(t.htmlPath, 'utf8');
+    const inject = '<script>window.PIXELART_TASK_ID=' + JSON.stringify(id) + ';</script>';
+    /* 本次改动之前产出的图纸，下载命名是 `${state.title}_${PGW}x${PGH}_${PT.colors}色`，
+       里面没有任务 ID 的插槽。对这些旧文件在下发时补上插槽，避免老链接必须重新生成才能带上 ID；
+       新图纸自带 `const TASK_ID`，不进这段。命中不到就原样下发，不会破坏旧文件。 */
+    if (!html.includes('const TASK_ID =') && html.includes('_${PGW}x${PGH}_${PT.colors}色')) {
+      html = html.replace('_${PGW}x${PGH}_${PT.colors}色',
+        "${(window.PIXELART_TASK_ID ? '_' + window.PIXELART_TASK_ID : '')}_${PGW}x${PGH}_${PT.colors}色");
+    }
+    html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + inject) : inject + html;
+    body = Buffer.from(html, 'utf8');
+  } catch (err) {
     return sendJson(res, 410, { error: { message: '图纸文件已清理' } });
   }
   res.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',
-    'Content-Length': stat.size,
+    'Content-Length': body.length,
     'Cache-Control': 'no-store'
   });
-  fs.createReadStream(t.htmlPath).pipe(res);
+  return res.end(body);
 }
 
 /* POST /api/pixelart/regen { id } → { taskId }：对已完成任务做「一键重转」。

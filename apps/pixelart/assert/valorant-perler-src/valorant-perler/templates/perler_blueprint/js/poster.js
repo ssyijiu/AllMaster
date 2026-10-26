@@ -788,7 +788,10 @@ let FMT = 'png';
 const DL_LABEL = IS_TOUCH ? '保存' : '下载';
 const dlLbl = $('psDl').querySelector('.lbl');
 dlLbl.textContent = DL_LABEL;
-const fileName = (ext = 'png') => `${state.title.replace(/[\\/:*?"<>|]/g, '')}_${PGW}x${PGH}_${PT.colors}色.${ext}`;
+/* 下载文件名：标题_任务ID_规格_色数色.png。任务 ID 由产品服务端在对图纸页下发时注入
+ * window.PIXELART_TASK_ID（同一直链里的 task id），本地直接打开这份 HTML 时没有该变量，就退回「标题_规格_色数色」。 */
+const TASK_ID = (window.PIXELART_TASK_ID || '').toString().trim();
+const fileName = (ext = 'png') => `${state.title.replace(/[\\/:*?"<>|]/g, '')}${TASK_ID ? '_' + TASK_ID : ''}_${PGW}x${PGH}_${PT.colors}色.${ext}`;
 $('psFmt').addEventListener('click', e => {
   e.stopPropagation();
   FMT = FMT === 'png' ? 'pdf' : 'png';
