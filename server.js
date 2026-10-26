@@ -631,6 +631,10 @@ const server = http.createServer((req, res) => {
     if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
     return require('./apps/pixelart/generate').handleGenerate(req, res, sendJson);
   }
+  if (pathOnly === '/api/pixelart/regen') {
+    if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
+    return require('./apps/pixelart/generate').handleRegen(req, res, sendJson);
+  }
   if (pathOnly === '/api/pixelart/task') {
     return require('./apps/pixelart/generate').handleTaskStatus(req, res, fullUrl, sendJson);
   }

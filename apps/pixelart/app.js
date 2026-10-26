@@ -65,6 +65,7 @@
     watchToken: 0,        /* SSE 观察轮次：每轮生成 +1，回调对不上号即视为已取消 */
     watchAbort: null,     /* SSE 连接的 AbortController（浏览器不支持时为 null） */
     lastTaskId: null,
+    regenActive: false,   /* 本轮观察的是「一键重转」任务（不扣积分，文案不同） */
     lastTxnId: null
   };
 
@@ -249,8 +250,12 @@
     Store.lastTaskId = taskId;
     $('genStatus').hidden = true;
     $('genDone').hidden = false;
-    $('genDoneMsg').textContent = '图纸已生成！新标签页可能被拦截，也可以点这里打开。';
-    studioMsg('生成完成，消耗 1 积分。图纸页里可切规格、改色号、导出。', false);
+    var wasRegen = Store.regenActive;
+    Store.regenActive = false;
+    $('genDoneMsg').textContent = wasRegen
+      ? '重转完成！近色已合并，原图纸仍保留。'
+      : '图纸已生成！新标签页可能被拦截，也可以点这里打开。';
+    studioMsg(wasRegen ? '重转完成，未消耗积分。图纸页里可切规格、改色号、导出。' : '生成完成，消耗 1 积分。图纸页里可切规格、改色号、导出。', false);
   }
 
   function generateFlow() {
@@ -313,6 +318,41 @@
     });
   }
 
+  /* 一键重转：对上一次生成的图纸做「合并近色重新转图」，不重新生图、不扣积分 */
+  function regenFlow() {
+    if (Store.generating) { return; }
+    if (!Store.lastTaskId) {
+      studioMsg('还没有可重转的图纸，请先生成一张', true);
+      return;
+    }
+    studioMsg('');
+    setGenerating(true);
+    Store.lastTxnId = null;   /* 重转不扣积分，失败也无需退回 */
+    Store.regenActive = true;
+    $('genDone').hidden = true;
+    $('genStatusText').textContent = '正在重转图纸（合并近色，不重新生图）…';
+    var startedAt = Math.floor(Date.now() / 1000);
+    fetch('/api/pixelart/regen', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: Store.lastTaskId })
+    }).then(function (res) {
+      return res.json().then(function (data) {
+        if (!res.ok || !data.taskId) {
+          var e = new Error((data.error && data.error.message) || '重转提交失败，请稍后重试');
+          throw e;
+        }
+        return data.taskId;
+      });
+    }).then(function (taskId) {
+      watchTask(taskId, startedAt);
+    }).catch(function (err) {
+      setGenerating(false);
+      Store.regenActive = false;
+      studioMsg((err && err.message) || '重转失败，请稍后重试', true);
+    });
+  }
+
   /* ---------- 任务观察：SSE 心跳流（首选） + 轮询（降级） ---------- */
 
   function onTaskDone(taskId) {
@@ -323,6 +363,12 @@
 
   function onTaskFailed(st) {
     setGenerating(false);
+    var wasRegen = Store.regenActive;
+    Store.regenActive = false;
+    if (wasRegen) {
+      studioMsg('重转失败：' + (st.error || '未知错误').slice(0, 160) + '（未扣积分，原图纸不受影响）', true);
+      return;
+    }
     wallet.refund(Store.lastTxnId);
     studioMsg('生成失败：' + (st.error || '未知错误').slice(0, 160) + '（1 积分已退回）', true);
   }
@@ -408,6 +454,7 @@
     $('btnOpenResult').addEventListener('click', function () {
       if (Store.lastTaskId) { openTaskHtml(Store.lastTaskId); }
     });
+    $('btnRegen').addEventListener('click', regenFlow);
     $('btnDismissDone').addEventListener('click', function () {
       $('genDone').hidden = true;
     });
@@ -507,7 +554,7 @@
   var wallet = auth.walletService;
 
   /* 测试钩子：jsdom 测试直接驱动内部状态与流程（线上无依赖方，仅挂 window 属性） */
-  window.__pixelart = { store: Store, generateFlow: generateFlow, acceptFile: acceptFile, renderStyleStrip: renderStyleStrip };
+  window.__pixelart = { store: Store, generateFlow: generateFlow, regenFlow: regenFlow, acceptFile: acceptFile, renderStyleStrip: renderStyleStrip };
 
   restoreAuth();
 })();

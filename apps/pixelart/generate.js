@@ -173,11 +173,28 @@ function findOutputHtml(workDir) {
 }
 
 function startTask(id, workDir, imagePath, promptPath, subject, styleId) {
-  const t = tasks.get(id);
   const args = [imagePath, '--work-dir', workDir, '--prompt', promptPath,
     '--subject', subject, '--task-name', '拼豆图纸'];
   if (styleId && styleId !== 'original') { args.push('--art-style', styleId); }
   if (styleId === 'pixel-big-head') { args.push('--boards', '36', '52', '78'); }
+  launchPerler(id, args);
+}
+
+/* 一键重转：底稿不变（--skip-gen 复用原底稿），切格阶段合并近色后重建图纸。
+   不调生图服务、不重新组装提示词，秒级完成，不消耗积分；原图纸保留。
+   链路校验要求 --prompt 必传（仅修改模式可省），复用原任务的提示词即可。 */
+function startRegenTask(id, workDir, effectImage, promptPath, styleId) {
+  const args = ['--work-dir', workDir, '--prompt', promptPath,
+    '--skip-gen', '--effect-image', effectImage, '--merge-close-colors',
+    '--task-name', '拼豆图纸'];
+  if (styleId === 'pixel-big-head') { args.push('--boards', '36', '52', '78'); }
+  launchPerler(id, args);
+}
+
+/* 生成/重转共用的链路启动器：spawn val_perler.py，超时守护，收尾判定 done/failed */
+function launchPerler(id, args) {
+  const t = tasks.get(id);
+  const workDir = t.workDir;
   const cfg = readConfig();
   const child = spawn(pythonExe(), ['val_perler.py', 'generate'].concat(args), {
     cwd: PERLER_SCRIPTS,
@@ -248,7 +265,7 @@ async function handleGenerate(req, res, sendJson) {
   } catch (err) {
     return sendJson(res, 500, { error: { message: '落盘失败：' + String(err.message || err).slice(0, 120) } });
   }
-  tasks.set(id, { status: 'running', workDir, startedAt: Date.now() });
+  tasks.set(id, { status: 'running', workDir, startedAt: Date.now(), styleId, subject });
 
   /* 立即返回 taskId；压图 → LLM 槽位（失败回落模板）→ 写配置 → 起链路 全部在后台做。
      LLM 含重试最长约 3 分钟，若阻塞 HTTP 响应会被平台网关 502；前端靠轮询任务状态推进。 */
@@ -271,18 +288,24 @@ async function handleGenerate(req, res, sendJson) {
   });
 }
 
-/* GET /api/pixelart/task?id= → { status, error? }；重启后从磁盘恢复已完成的任务 */
-function handleTaskStatus(req, res, fullUrl, sendJson) {
-  const id = String(fullUrl.searchParams.get('id') || '');
+/* 内存查不到时从磁盘恢复已完成任务（重启/TTL 后兜底，四个任务接口共用） */
+function resolveTask(id) {
   let t = tasks.get(id);
-  if (!t) {
+  if (!t && id && /^[0-9a-f]{16}$/.test(id)) {
     const workDir = path.join(TASK_ROOT, id);
     const html = findOutputHtml(workDir);
-    if (id && /^[0-9a-f]{16}$/.test(id) && html) {
+    if (html) {
       t = { status: 'done', htmlPath: html, workDir, startedAt: 0, recovered: true };
       tasks.set(id, t);
     }
   }
+  return t || null;
+}
+
+/* GET /api/pixelart/task?id= → { status, error? }；重启后从磁盘恢复已完成的任务 */
+function handleTaskStatus(req, res, fullUrl, sendJson) {
+  const id = String(fullUrl.searchParams.get('id') || '');
+  const t = resolveTask(id);
   if (!t) { return sendJson(res, 404, { error: { message: '任务不存在或已过期' } }); }
   return sendJson(res, 200, { status: t.status, error: t.error || undefined });
 }
@@ -292,15 +315,7 @@ function handleTaskStatus(req, res, fullUrl, sendJson) {
    任务状态变化推 event: status，done/failed 后关流；前端 getReader() 解析，心跳顺便驱动「已等待 N 秒」提示。 */
 function handleTaskStream(req, res, fullUrl) {
   const id = String(fullUrl.searchParams.get('id') || '');
-  let t = tasks.get(id);
-  if (!t) {
-    const workDir = path.join(TASK_ROOT, id);
-    const html = findOutputHtml(workDir);
-    if (id && /^[0-9a-f]{16}$/.test(id) && html) {
-      t = { status: 'done', htmlPath: html, workDir, startedAt: 0, recovered: true };
-      tasks.set(id, t);
-    }
-  }
+  const t = resolveTask(id);
   if (!t) {
     res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
     return res.end(JSON.stringify({ error: { message: '任务不存在或已过期' } }));
@@ -333,16 +348,7 @@ function handleTaskStream(req, res, fullUrl) {
 /* GET /api/pixelart/task/html?id= → 单文件图纸 HTML */
 function handleTaskHtml(req, res, fullUrl, sendJson) {
   const id = String(fullUrl.searchParams.get('id') || '');
-  let t = tasks.get(id);
-  /* 与 task/task/stream 一致的磁盘兜底：重启/TTL 后内存表丢失，但图纸文件还在就照常下发 */
-  if (!t && id && /^[0-9a-f]{16}$/.test(id)) {
-    const workDir = path.join(TASK_ROOT, id);
-    const html = findOutputHtml(workDir);
-    if (html) {
-      t = { status: 'done', htmlPath: html, workDir, startedAt: 0, recovered: true };
-      tasks.set(id, t);
-    }
-  }
+  const t = resolveTask(id);
   if (!t || t.status !== 'done' || !t.htmlPath) {
     return sendJson(res, 404, { error: { message: '任务未完成或不存在' } });
   }
@@ -358,6 +364,47 @@ function handleTaskHtml(req, res, fullUrl, sendJson) {
   fs.createReadStream(t.htmlPath).pipe(res);
 }
 
+/* POST /api/pixelart/regen { id } → { taskId }：对已完成任务做「一键重转」。
+   复用原底稿（--skip-gen --effect-image）+ --merge-close-colors 在切格阶段合并近色后重建图纸；
+   不重新生图、不重新组装提示词、不扣积分，原图纸保留不受影响。 */
+async function handleRegen(req, res, sendJson) {
+  let body = {};
+  try {
+    const chunks = [];
+    for await (const c of req) { chunks.push(c); }
+    body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+  } catch (_) { /* 空/坏 body 按缺 id 处理 */ }
+
+  const id = String(body.id || '');
+  const t = resolveTask(id);
+  if (!t || t.status !== 'done') {
+    return sendJson(res, 404, { error: { message: '原任务未完成或不存在' } });
+  }
+  const effectImage = path.join(t.workDir, '.wip', '转换图', '转换图.png');
+  if (!fs.existsSync(effectImage)) {
+    return sendJson(res, 410, { error: { message: '原始底稿已清理，无法重转，请重新生成' } });
+  }
+
+  pruneTasks();
+  const newId = crypto.randomBytes(8).toString('hex');
+  const workDir = path.join(TASK_ROOT, newId);
+  try {
+    fs.mkdirSync(workDir, { recursive: true });
+  } catch (err) {
+    return sendJson(res, 500, { error: { message: '落盘失败：' + String(err.message || err).slice(0, 120) } });
+  }
+  /* 提示词优先复用原任务的 prompt.json；丢失时模板兜底写一份（切格阶段只用其中的基础段） */
+  let promptPath = path.join(t.workDir, 'prompt.json');
+  if (!fs.existsSync(promptPath)) {
+    promptPath = path.join(workDir, 'prompt.json');
+    const slots = templateSlots(t.subject === 'prop' ? 'prop' : 'character', '', '');
+    fs.writeFileSync(promptPath, JSON.stringify(slots, null, 2));
+  }
+  tasks.set(newId, { status: 'running', workDir, startedAt: Date.now(), styleId: t.styleId, subject: t.subject, regenFrom: id });
+  sendJson(res, 200, { taskId: newId });
+  startRegenTask(newId, workDir, effectImage, promptPath, t.styleId);
+}
+
 /* GET /api/pixelart/styles → 画风列表（缩略图服务端读 assert 资产转 base64，前端无需直访 assert 目录） */
 function handleStyles(res, sendJson) {
   const guide = loadStyleGuide();
@@ -371,4 +418,4 @@ function handleStyles(res, sendJson) {
   return sendJson(res, 200, { styles: styles, hint: guide.hint || '' });
 }
 
-module.exports = { handleGenerate, handleTaskStatus, handleTaskStream, handleTaskHtml, handleStyles, loadStyleGuide };
+module.exports = { handleGenerate, handleTaskStatus, handleTaskStream, handleTaskHtml, handleStyles, handleRegen, loadStyleGuide };
