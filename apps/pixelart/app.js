@@ -85,7 +85,7 @@
       if (!list.length) { $('styleStrip').innerHTML = '<p class="hint">画风加载失败，刷新重试</p>'; return; }
       Store.styles = list;
       var hintEl = $('styleHint');
-      if (hintEl && data.hint) { hintEl.textContent = ' · ' + data.hint; }
+      if (hintEl && data.hint) { hintEl.textContent = data.hint; }
       renderStyleStrip();
     }).catch(function () {
       $('styleStrip').innerHTML = '<p class="hint">画风加载失败，刷新重试</p>';
@@ -101,11 +101,13 @@
       Store.styleId = avail.length ? avail[0].id : 'original';
     }
     strip.innerHTML = avail.map(function (s) {
-      var thumb = s.thumb
+      var art = s.thumb
         ? '<img src="' + s.thumb + '" alt="' + s.label + '画风预览" />'
         : '<span class="style-letter">' + s.label.charAt(0) + '</span>';
       return '<button type="button" class="style-card' + (s.id === Store.styleId ? ' cur' : '') + '" data-sid="' + s.id + '" title="' + s.label + '">'
-        + thumb + '<span class="nm">' + s.label + '</span></button>';
+        + '<span class="card-art">' + art
+        + '<span class="card-check"><svg class="icon icon-12" aria-hidden="true"><use href="#i-check"/></svg></span></span>'
+        + '<span class="card-name">' + s.label + '</span></button>';
     }).join('');
     strip.querySelectorAll('.style-card[data-sid]').forEach(function (card) {
       card.onclick = function () {
@@ -136,6 +138,7 @@
         $('previewImg').src = dataUrl;
         $('dzEmpty').hidden = true;
         $('dzPreview').hidden = false;
+        updateSteps('style');
       });
     };
     reader.onerror = function () {
@@ -193,6 +196,7 @@
       $('previewImg').src = '';
       $('dzPreview').hidden = true;
       $('dzEmpty').hidden = false;
+      updateSteps('upload');
     });
   }
 
@@ -240,6 +244,18 @@
       if (sec >= STAGE_HINTS[i][0]) { text = STAGE_HINTS[i][1]; }
     }
     return text + '（已 ' + sec + ' 秒，页面可最小化）';
+  }
+
+  /* ---------- 步骤条状态联动（1 上传 → 2 选画风 → 3 生成 → 4 导出） ---------- */
+  function updateSteps(phase) {
+    /* phase: upload=1 高亮；style=1 完成 2 高亮；generating=1-2 完成 3 高亮；done=1-3 完成 4 高亮 */
+    var activeN = { upload: 1, style: 2, generating: 3, done: 4 }[phase] || 1;
+    for (var i = 1; i <= 4; i++) {
+      var el = $('step' + i);
+      if (!el) { continue; }
+      el.classList.toggle('done', i < activeN);
+      el.classList.toggle('active', i === activeN);
+    }
   }
 
   function openTaskHtml(taskId) {
@@ -305,6 +321,7 @@
             心跳顺便驱动「已等待 N 秒」提示，status 事件驱动完成/失败。
             流不可用时自动降级为 4s 轮询。 */
       watchTask(taskId, startedAt);
+      updateSteps('generating');
     }).catch(function (err) {
       setGenerating(false);
       if (err && err.insufficient) {
@@ -346,6 +363,7 @@
       });
     }).then(function (taskId) {
       watchTask(taskId, startedAt);
+      updateSteps('generating');
     }).catch(function (err) {
       setGenerating(false);
       Store.regenActive = false;
@@ -359,10 +377,12 @@
     setGenerating(false);
     openTaskHtml(taskId);
     showDone(taskId);
+    updateSteps('done');
   }
 
   function onTaskFailed(st) {
     setGenerating(false);
+    updateSteps(Store.imgDataUrl ? 'style' : 'upload');
     var wasRegen = Store.regenActive;
     Store.regenActive = false;
     if (wasRegen) {
