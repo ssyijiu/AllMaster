@@ -136,9 +136,11 @@
       downscale(String(reader.result), function (dataUrl) {
         Store.imgDataUrl = dataUrl;
         $('previewImg').src = dataUrl;
+        $('fileName').textContent = file.name || '未命名图片';
+        $('fileSize').textContent = formatSize(file.size) + '（上传前自动压缩到 1024px）';
         $('dzEmpty').hidden = true;
         $('dzPreview').hidden = false;
-        updateSteps('style');
+        updateSteps();
       });
     };
     reader.onerror = function () {
@@ -149,6 +151,13 @@
   }
 
   /* 长边压到 1024（链路底稿就是 1024，原图更大只是白传）；PNG 保留透明背景 */
+  function formatSize(bytes) {
+    if (!bytes && bytes !== 0) { return ''; }
+    if (bytes < 1024) { return bytes + ' B'; }
+    if (bytes < 1024 * 1024) { return (bytes / 1024).toFixed(0) + ' KB'; }
+    return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
   function downscale(dataUrl, cb) {
     var img = new Image();
     img.onload = function () {
@@ -194,9 +203,11 @@
       e.stopPropagation();
       Store.imgDataUrl = null;
       $('previewImg').src = '';
+      $('fileName').textContent = '';
+      $('fileSize').textContent = '';
       $('dzPreview').hidden = true;
       $('dzEmpty').hidden = false;
-      updateSteps('upload');
+      updateSteps();
     });
   }
 
@@ -229,7 +240,11 @@
   function setGenerating(on) {
     Store.generating = on;
     $('btnGenerate').disabled = on;
+    $('btnGenerate').setAttribute('aria-busy', String(on));
+    $('btnGenIdle').hidden = on;
+    $('btnGenBusy').hidden = !on;
     $('genStatus').hidden = !on;
+    updateSteps();
     if (!on) {
       if (Store.pollTimer) { clearInterval(Store.pollTimer); Store.pollTimer = null; }
       /* 关掉 SSE 观察连接（token 失配让 pump 循环自行退出，AbortController 直接断流） */
@@ -246,15 +261,22 @@
     return text + '（已 ' + sec + ' 秒，页面可最小化）';
   }
 
-  /* ---------- 步骤条状态联动（1 上传 → 2 选画风 → 3 生成 → 4 导出） ---------- */
-  function updateSteps(phase) {
-    /* phase: upload=1 高亮；style=1 完成 2 高亮；generating=1-2 完成 3 高亮；done=1-3 完成 4 高亮 */
-    var activeN = { upload: 1, style: 2, generating: 3, done: 4 }[phase] || 1;
-    for (var i = 1; i <= 4; i++) {
-      var el = $('step' + i);
+  /* ---------- 步骤条状态联动（对齐头像页：done 绿色 / active 深色） ---------- */
+  function updateSteps() {
+    var hasImg = !!Store.imgDataUrl;
+    var hasResult = !!Store.lastTaskId;
+    var gen = Store.generating;
+    /* 1 上传图片 / 2 选择画风（默认已选中，与头像页一致常绿）/ 3 生成图纸 */
+    var states = [
+      { done: hasImg, active: !hasImg && !gen },
+      { done: true, active: hasImg && !gen },
+      { done: hasResult && !gen, active: gen }
+    ];
+    for (var i = 0; i < states.length; i++) {
+      var el = $('step' + (i + 1));
       if (!el) { continue; }
-      el.classList.toggle('done', i < activeN);
-      el.classList.toggle('active', i === activeN);
+      el.classList.toggle('done', states[i].done);
+      el.classList.toggle('active', states[i].active);
     }
   }
 
@@ -321,7 +343,7 @@
             心跳顺便驱动「已等待 N 秒」提示，status 事件驱动完成/失败。
             流不可用时自动降级为 4s 轮询。 */
       watchTask(taskId, startedAt);
-      updateSteps('generating');
+      updateSteps();
     }).catch(function (err) {
       setGenerating(false);
       if (err && err.insufficient) {
@@ -363,7 +385,7 @@
       });
     }).then(function (taskId) {
       watchTask(taskId, startedAt);
-      updateSteps('generating');
+      updateSteps();
     }).catch(function (err) {
       setGenerating(false);
       Store.regenActive = false;
@@ -377,12 +399,12 @@
     setGenerating(false);
     openTaskHtml(taskId);
     showDone(taskId);
-    updateSteps('done');
+    updateSteps();
   }
 
   function onTaskFailed(st) {
     setGenerating(false);
-    updateSteps(Store.imgDataUrl ? 'style' : 'upload');
+    updateSteps();
     var wasRegen = Store.regenActive;
     Store.regenActive = false;
     if (wasRegen) {
