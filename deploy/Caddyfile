@@ -1,0 +1,32 @@
+# 全员大师 — Caddy 配置（自动 HTTPS）
+# 域名：allmaster.art（已解析到本服务器，且备案通过后才会放行 80/443）
+# 安装：cp deploy/Caddyfile /etc/caddy/Caddyfile && systemctl reload caddy
+
+allmaster.art, www.allmaster.art {
+	encode zstd gzip
+
+	# 反代到本地 Node 服务（server.js，systemd 守护）
+	reverse_proxy 127.0.0.1:3000 {
+		# 图片生成单次 20~90s，SSE 心跳保活；把超时放宽到 5 分钟
+		transport http {
+			read_timeout 300s
+			write_timeout 300s
+		}
+		# 流式响应（SSE）不缓冲
+		flush_interval -1
+	}
+
+	# 安全响应头
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/allmaster.log {
+			roll_size 20MiB
+			roll_keep 5
+		}
+	}
+}

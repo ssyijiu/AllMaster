@@ -16,7 +16,10 @@
     var CLOUD_HISTORY_MAX = 12;
 
     /* 线上地址：预览环境（127.0.0.1 / iframe）里用于引导用户跳转 */
-    var DEPLOYED_URL = 'https://ai-avatar-studio-50356.app.workbuddy.host/?sharecode=25HFTCUZ7J';
+    var PLATFORM_URL = 'https://ai-avatar-studio-50356.app.workbuddy.host/?sharecode=25HFTCUZ7J';
+    /* 独立域名上线后填 'https://allmaster.art'（留空则仍引导到平台域名） */
+    var CUSTOM_DOMAIN = '';
+    var DEPLOYED_URL = CUSTOM_DOMAIN ? (CUSTOM_DOMAIN + '/apps/avatar/') : PLATFORM_URL;
 
 
     /* 兜底风格库：数据库配置加载失败或为空时使用（封面图由后台配置，未配置则显示占位） */

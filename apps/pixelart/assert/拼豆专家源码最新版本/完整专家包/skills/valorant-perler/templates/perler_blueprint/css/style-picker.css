@@ -1,0 +1,88 @@
+/* ================= [STYLE-PICKER] 规格页画风选择条 ================= */
+/* 视觉语言与规格卡一致：panel2 底 + line 边框 + hover teal；缩略图方形，横向一排可滑动 */
+#styleStrip{
+  display:flex; gap:8px; overflow-x:auto; padding-bottom:4px;
+  scrollbar-width:thin; -webkit-overflow-scrolling:touch;
+}
+.style-card{
+  flex:0 0 auto; width:76px; border:1px solid var(--line); background:var(--panel2);
+  cursor:pointer; padding:6px 6px 4px; transition:border-color .15s; clip-path:var(--cut-tr); position:relative;
+}
+.style-card:hover{border-color:var(--teal)}
+/* 本图按这个预设画风生成：红框 + 左上角「本图」角标（右上角被 cut-tr 切掉） */
+.style-card.cur{border-color:var(--red)}
+.style-card .tag{
+  position:absolute; top:0; left:0; background:var(--red); color:#fff;
+  font-size:9px; line-height:1; padding:3px 4px; letter-spacing:.06em;
+}
+.style-card img{
+  width:100%; aspect-ratio:1; object-fit:contain; display:block; background:var(--paper);
+  image-rendering:pixelated;
+}
+.style-card .nm{
+  margin-top:4px; text-align:center; font-size:10px; color:var(--txt2);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.style-hint{font-size:10.5px; color:var(--txt2); margin-top:6px; line-height:1.5}
+
+/* 大图层：整页遮罩；效果图在屏幕正中放大，左侧一张小原图 + 箭头指向效果；底部画风名与「复制提示词」 */
+#styleViewer{
+  position:fixed; inset:0; z-index:70; display:none; flex-direction:column;
+  align-items:center; justify-content:center; gap:12px;
+  background:rgba(4,7,11,.94); padding:24px;
+}
+#styleViewer.show{display:flex}
+/* 三栏：左栏（原图 + 箭头）与右侧空栏等宽，效果图因此正好居中 */
+#styleViewer .sp-stage{
+  display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:start; gap:12px; width:100%;
+}
+#styleViewer .sp-src{justify-self:end; display:flex; flex-direction:column; align-items:center; gap:4px}
+#styleViewer .sp-src img{
+  max-width:13vw; max-height:21vh; object-fit:contain; background:var(--paper);
+  border:1px solid var(--line2); opacity:.9;
+}
+#styleViewer .sp-src-lb{color:var(--txt2); font-size:11px; letter-spacing:.06em}
+#styleViewer .sp-arrow{
+  color:var(--txt2); font-size:22px; font-family:var(--font-b); font-weight:700;
+}
+#styleViewer .sp-reference{
+  justify-self:end; display:flex; align-items:center; gap:12px;
+  height:calc(min(520px, 46vw, 66vh) + 2px);
+}
+#styleViewer .sp-eff{position:relative; display:flex; flex-direction:column; align-items:center; gap:12px}
+#styleViewer .sp-eff img{
+  display:block; width:min(520px, 46vw, 66vh); aspect-ratio:1; object-fit:contain;
+  background:var(--paper); border:1px solid var(--line2); image-rendering:pixelated;
+}
+/* 示意图是固定样例，不是本图；本图按这个预设画风生成时，在风格名旁标红底小签 */
+#styleViewerCapRow{display:flex; align-items:center; justify-content:center; gap:8px}
+#spEffectTag{
+  background:var(--red); color:#fff;
+  font-size:11px; line-height:1; padding:4px 6px; letter-spacing:.06em;
+}
+#styleViewerCap{color:var(--txt); font-size:15px; font-weight:700; letter-spacing:.06em; text-align:center}
+/* 窄屏：原图缩成一小条贴在效果图左边，效果图尽量大 */
+@media (max-width:560px){
+  #styleViewer{padding:16px 10px}
+  #styleViewer .sp-stage{grid-template-columns:auto 1fr; gap:6px}
+  #styleViewer .sp-reference{gap:6px; height:calc(min(68vw, 60vh) + 2px)}
+  #styleViewer .sp-pad{display:none}
+  #styleViewer .sp-src img{max-width:18vw; max-height:22vh}
+  #styleViewer .sp-arrow{font-size:16px}
+  #styleViewer .sp-eff img{width:min(68vw, 60vh)}
+}
+#styleCopyBtn{
+  border:1px solid var(--red); background:var(--red); color:#fff; cursor:pointer;
+  font-family:var(--font-b); font-size:13.5px; font-weight:700; letter-spacing:.08em;
+  padding:9px 22px; clip-path:var(--cut-sm);
+}
+#styleCopyBtn:hover{background:var(--red-dk); border-color:var(--red-dk)}
+#styleViewerClose{
+  position:absolute; top:14px; right:14px; width:34px; height:34px;
+  border:1px solid var(--line2); background:var(--panel2); color:var(--txt);
+  cursor:pointer; font-size:16px; clip-path:var(--cut-sm);
+}
+#styleViewerClose:hover{border-color:var(--teal); color:var(--teal)}
+/* Portrait selector */
+#portraitSelect{width:100%;min-height:44px;margin:0 0 10px;padding:8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);font:inherit}
+#portraitTemplates[hidden]{display:none}

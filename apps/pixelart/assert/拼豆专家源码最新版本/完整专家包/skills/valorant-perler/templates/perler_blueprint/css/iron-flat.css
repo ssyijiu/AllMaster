@@ -1,0 +1,37 @@
+/* ===== [IRON] 平面烫豆预览 ===== */
+/* 开关按钮「模拟烫豆」：画布右上「镜像」正下方，和镜像同属「换个看法看图纸」。
+ * 外观复用 .mirror-btn（同底色、同字号、同宽 = 两个按钮成一组，不抢画面）；只用一道暖色细边 + 暖色字区分出它是烫豆，
+ * 开启态整块填暖橙。宽度由 .canvas-tools 统一（见 stage.css）。平面与 3D视角 都可见（共用一条控制条）。 */
+#ironBtn{display:none; color:#ffb27a; border-color:rgba(255,138,61,.45)}
+#ironBtn.show{display:block}
+#ironBtn:hover{color:#ffc79e; border-color:#ff8a3d}
+#ironBtn.on, #ironBtn.on:hover{background:#ff8a3d; border-color:#ff8a3d; color:#fff} /* 开启：与「镜像」开启态同一套路，整块填色表示按下；用烫豆暖橙，与烫法选项的选中色一致 */
+#view-grid .zoomctl{top:92px}
+/* 控制条显示（基础样式共享 .meltbar，见 view-3d.css） */
+body.ironon #ironBar{display:flex}
+/* 编辑中也保留：烫后接着改，落笔即按当前熔化度显示新豆（见 iron-flat.js） */
+body.editing #ironBar{left:16px; right:16px; bottom:14px} /* 编辑态画布有 2px 红框，条收进框内 */
+/* 条在底部时，编辑落笔反馈角标上移，不被它盖住 */
+body.ironon .hud, body.ironon.editing .hud{bottom:40px}
+@media (max-width:820px){ /* 与 flow.css 窄屏断点一致：镜像按钮变小，烫豆与缩放组跟着上提；画布容器此时左右无外边距、无左右边框 */
+  #view-grid .zoomctl{top:80px}
+  #ironBar{left:0; right:0}
+  body.editing #ironBar{left:2px; right:2px}
+}
+@media (max-width:820px){ body.ironon .hud, body.ironon.editing .hud{bottom:38px} }
+@media (max-width:430px){ #view-grid .zoomctl{top:72px} } /* 小屏镜像 / 烫豆按钮再矮一档，缩放组跟着上提 */
+/* 烫法质感层：与图纸画布同位等大，不接收手势（平移、缩放仍由图纸画布处理）。垫在图纸画布下面（z-index:-1，靠 #view-grid 的 isolation 不沉到面板底色之下）：烫后图纸画布是透明的，标尺、编辑预览描边、落豆动画、选区都画在它上面，烫后照样能看见 */
+#view-grid{isolation:isolate}
+#ironGL{position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; display:none; z-index:-1}
+#ironGL.show{display:block}
+/* 烫法切换：控制条右端一组药丸按钮，选中项实心橙底；平面与 3D视角 都显示 */
+#ironStyles{display:flex; gap:5px; flex:none}
+#ironStyles button{
+  border:1px solid rgba(255,178,122,.4); background:rgba(255,138,61,.10); color:#ffd0a8; cursor:pointer;
+  border-radius:20px; padding:2px 10px; line-height:1.3; white-space:nowrap;
+  font-family:var(--font-d); font-weight:700; font-size:10.5px; letter-spacing:.1em;
+  transition:all .15s;
+}
+#ironStyles button:hover{background:rgba(255,138,61,.18); color:#ffc79e}
+#ironStyles button.on{background:#ff8a3d; border-color:#ff8a3d; color:#fff; box-shadow:0 0 8px rgba(255,138,61,.35)}
+

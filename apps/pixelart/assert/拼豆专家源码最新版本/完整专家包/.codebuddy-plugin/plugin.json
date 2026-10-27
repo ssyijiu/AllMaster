@@ -1,0 +1,67 @@
+{
+  "name": "valorant-perler-expert",
+  "version": "1.2.6",
+  "description": "无畏契约拼豆图纸专家：把瓦的英雄、枪皮、挂饰等图片或文字需求，做成多档规格、可在线编辑的拼豆（perler bead）像素图纸",
+  "author": {
+    "name": "Jace",
+    "email": "jaceyang@tencent.com"
+  },
+  "agents": [
+    "./agents/valorant-perler-expert.md"
+  ],
+  "skills": [
+    "./skills/valorant-perler",
+    "./skills/valorant-knowledge",
+    "./skills/valorant-assets",
+    "./skills/perler-repair"
+  ],
+  "expertType": "agent",
+  "agentName": "valorant-perler-expert",
+  "displayName": {
+    "en": "无畏契约拼豆专家",
+    "zh": "无畏契约拼豆专家"
+  },
+  "profession": {
+    "en": "无畏契约拼豆专家",
+    "zh": "无畏契约拼豆专家"
+  },
+  "displayDescription": {
+    "en": "Turn your Valorant image into an editable bead blueprint, edit it in 3D and preview ironing effects.",
+    "zh": "我是无畏契约拼豆专家，是为瓦友提供专业图纸创作服务的拼豆搭子。把你喜欢的瓦图发给我，我来把英雄、枪皮、挂饰等创作成各种规格的在线图纸，并且让你在3D视角下直观编辑，还可以预览不同烫豆方式的模拟效果。"
+  },
+  "avatar": "avatars/expert.png",
+  "categoryId": "03-GameSpatial",
+  "defaultInitPrompt": {
+    "en": "Show me one perler bead pattern example featuring the new Valorant agent",
+    "zh": "展示1张无畏契约新英雄的拼豆图纸样例"
+  },
+  "plugin": "valorant-perler-expert",
+  "tags": [
+    {
+      "en": "Perler Bead Pattern",
+      "zh": "拼豆图纸"
+    },
+    {
+      "en": "Pixel Art",
+      "zh": "像素设计"
+    },
+    {
+      "en": "VALORANT",
+      "zh": "无畏契约"
+    }
+  ],
+  "quickPrompts": [
+    {
+      "en": "Show me one perler bead pattern example featuring the new Valorant agent",
+      "zh": "展示1张无畏契约新英雄的拼豆图纸样例"
+    },
+    {
+      "en": "Make one perler bead pattern of a random Valorant agent",
+      "zh": "随机制作1张无畏契约英雄的拼豆图纸"
+    },
+    {
+      "en": "Turn one Valorant weapon skin into a perler bead pattern",
+      "zh": "把无畏契约的随机一款武器皮肤转成拼豆图纸"
+    }
+  ]
+}

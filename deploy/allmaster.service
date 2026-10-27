@@ -1,0 +1,25 @@
+[Unit]
+Description=AllMaster platform (server.js)
+Documentation=https://github.com/ssyijiu/AllMaster
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=allmaster
+Group=allmaster
+WorkingDirectory=/opt/allmaster
+Environment=NODE_ENV=production
+Environment=PORT=3000
+ExecStart=/usr/bin/node /opt/allmaster/server.js
+Restart=always
+RestartSec=3
+# 密钥文件在 WorkingDirectory 下，需 chmod 600 且属主为 allmaster
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
