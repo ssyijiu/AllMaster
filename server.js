@@ -596,6 +596,7 @@ function serveStatic(req, res) {
  * 已验证：云端不校验 Host（改 Host 仍 200），凭据走 x-wb-webapp-access-key。
  */
 const CLOUD_UPSTREAM = process.env.CLOUD_UPSTREAM || 'https://ai-avatar-studio-50356.app.workbuddy.host';
+const CLOUD_ORIGIN = new URL(CLOUD_UPSTREAM).origin;
 
 function proxyCloud(req, res) {
   let target;
@@ -609,6 +610,11 @@ function proxyCloud(req, res) {
   }
   const headers = Object.assign({}, req.headers);
   headers.host = target.host;
+  /* 云端按 Origin 白名单校验 client（publishableKey 绑定托管域名），
+     本站源会被拒（the request origin is not allowed for this client）。
+     反代改写为云站源：浏览器侧是同源请求，不校验 CORS 响应头，改写安全。 */
+  if (headers.origin) { headers.origin = CLOUD_ORIGIN; }
+  if (headers.referer) { headers.referer = CLOUD_ORIGIN + '/'; }
   delete headers.connection;
   delete headers['proxy-connection'];
   delete headers['keep-alive'];
