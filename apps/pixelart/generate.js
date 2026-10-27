@@ -6,9 +6,11 @@
  *   → 立即返回 taskId；GET /api/pixelart/task?id= 轮询；完成后 GET /api/pixelart/task/html?id= 取图纸
  *
  * 配置读服务器本地 .pixelart-config.json：
- *   accUserId  生图服务 WB ID（spawn 时注入 ACC_USER_ID 环境变量）
+ *   accUserId  （已废弃，不再下发）2026-10-28 起生图后端切 apinebula
  *   pythonExe  解释器路径（不存在回落 python3；自建服务器指向 venv：/opt/allmaster/.venv/bin/python）
- *   promptLLM  { baseUrl, model, apiKey?, providerId? } 视觉 chat 模型；null/缺 Key = 模板兜底
+ *   promptLLM  { baseUrl, model, apiKey?, providerId?, imageModel? } —— chat 写提示词槽位；
+ *              baseUrl/apiKey 同时作为生图后端（OpenAI Images 兼容）凭据注入环境变量；null/缺 Key = 模板兜底 + 生图失败
+ *   imageModel 生图模型（可选，默认 gpt-image-2.5）
  * 任务工作目录：$ROOT/.pixelart-tasks/<taskId>/（可用环境变量 PIXELART_TASK_ROOT 覆盖），72h 后自动清理
  */
 'use strict';
@@ -217,9 +219,18 @@ function launchPerler(id, args) {
   const t = tasks.get(id);
   const workDir = t.workDir;
   const cfg = readConfig();
+  /* 生图凭据经环境变量下发（密钥不进代码/命令行）：
+     后端 apinebula（OpenAI Images 兼容），复用 promptLLM 的 baseUrl/apiKey，imageModel 可单独指定 */
+  const pLLM = cfg.promptLLM || {};
+  const keys = readAiKeys();
+  const imgKey = (pLLM.providerId && keys[pLLM.providerId]) || pLLM.apiKey || '';
+  const imgEnv = {};
+  if (pLLM.baseUrl) { imgEnv.PERLER_IMAGE_BASE_URL = pLLM.baseUrl; }
+  if (imgKey) { imgEnv.PERLER_IMAGE_API_KEY = imgKey; }
+  if (cfg.imageModel || pLLM.imageModel) { imgEnv.PERLER_IMAGE_MODEL = cfg.imageModel || pLLM.imageModel; }
   const child = spawn(pythonExe(), ['val_perler.py', 'generate'].concat(args), {
     cwd: PERLER_SCRIPTS,
-    env: Object.assign({}, process.env, cfg.accUserId ? { ACC_USER_ID: cfg.accUserId } : {}),
+    env: Object.assign({}, process.env, imgEnv),
     stdio: ['ignore', 'pipe', 'pipe']
   });
   let stderrTail = '';

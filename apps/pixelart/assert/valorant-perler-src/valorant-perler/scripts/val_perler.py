@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""拼豆专家 CLI：查知识、生图出图纸、掌瓦登录都走这一个入口。
+"""拼豆专家 CLI：查知识、生图出图纸都走这一个入口。
 
   python3 scripts/val_perler.py search assets <search|list|get> ...   搜索与下载端游参考图
   python3 scripts/val_perler.py search <query|list|get|alias|guard> ...   查知识（参数见 valorant-knowledge）
   python3 scripts/val_perler.py generate <参考图> --work-dir ... --prompt ... --task-name ...   生图并出 HTML 图纸
-  python3 scripts/val_perler.py render --health | --check-id | --set-id <UUID>   生图服务连通性、WorkBuddy ID
-  python3 scripts/val_perler.py login [--force]            掌瓦扫码登录（已登录直接返回；--force 换号）
-  python3 scripts/val_perler.py login --set-auth-key <值>  扫码失败时手动写入登录凭据
-  python3 scripts/val_perler.py logout                      清除本机掌瓦登录
+  python3 scripts/val_perler.py render --health | --check-id   生图服务连通性、API Key 校验
 
-generate / render / login 的参数与同目录 gen_and_recover.py、image_render.py、login.py 相同。
+generate / render 的参数与同目录 gen_and_recover.py、image_render.py 相同。
+
+2026-10-28：生图后端由 val-perler.qq.com（活动服务）切换为 apinebula（OpenAI Images 兼容），
+凭据走环境变量（generate.js 注入），原掌瓦扫码 login/logout 命令随旧服务一并移除。
 """
 import pathlib
 import sys
@@ -45,10 +45,9 @@ def main(argv: list[str]) -> int:
         _forward("gen_and_recover", cmd, rest)
     elif cmd == "render":
         _forward("image_render", cmd, rest)
-    elif cmd == "login":
-        _forward("login", cmd, rest if "--set-auth-key" in rest else ["--login", *rest])
-    elif cmd == "logout":
-        _forward("login", cmd, ["--logout", *rest])
+    elif cmd in ("login", "logout"):
+        print("[ERROR] 掌瓦扫码登录已随 val-perler 后端一并下线（新后端用 API Key，无需登录）。", file=sys.stderr)
+        return 1
     else:
         print(f"val-perler: 未知命令 {cmd}\n\n{__doc__.strip()}", file=sys.stderr)
         return 1

@@ -475,11 +475,11 @@ function pixelartPython() {
 }
 
 /* GET /api/pixelart/env-check：探测沙箱能否跑拼豆 Python 链。
-   返回 python3 版本/路径、关键依赖导入结果、pip 可用性、val-perler 服务健康、WB ID（脱敏）。
-   传 ?chain=1 时额外用注入的 WB ID 真实执行一次 render --check-id（验证源码执行路径）。 */
+   返回 python3 版本/路径、关键依赖导入结果、pip 可用性、生图后端（apinebula）健康、WB ID（脱敏，已废弃）。
+   传 ?chain=1 时额外真实执行一次 render --check-id（验证 python 侧连通性与 API Key 鉴权）。 */
 function handlePixelartEnvCheck(res, deep) {
   const { execFile } = require('child_process');
-  const out = { python: null, pip: null, imports: {}, valPerler: null, wbId: null, home: os.homedir() };
+  const out = { python: null, pip: null, imports: {}, valPerler: null, imageApi: null, wbId: null, home: os.homedir() };
 
   /* WB ID 来源：.pixelart-config.json → env → ~/.workbuddy/user-*-personal */
   function maskId(id) { return id ? id.slice(0, 4) + '…' + id.slice(-4) : null; }
@@ -523,21 +523,36 @@ function handlePixelartEnvCheck(res, deep) {
         out.python = { ok: false, error: '解析失败: ' + String(stdout).slice(0, 120) };
       }
     }
-    /* val-perler 服务健康（Node 侧 fetch，不依赖 python） */
+    /* 生图后端健康（2026-10-28 起为 apinebula OpenAI Images 兼容；Node 侧 fetch，不依赖 python）。
+       out.valPerler 保留为旧字段别名（历史上无人消费，仅为日志连续性）。 */
     const finish = () => sendJson(res, 200, out);
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 8000);
-    fetch('https://val-perler.qq.com/health', { signal: ctrl.signal })
-      .then((r) => { out.valPerler = { ok: r.ok, status: r.status }; })
-      .catch((e3) => { out.valPerler = { ok: false, error: String(e3.message || e3).slice(0, 120) }; })
+    const pLLM = pxcfg.promptLLM || {};
+    const pxKeys = (readDotJson(AI_CONFIG_FILE) || {}).providerKeys || {};
+    const imgKey = (pLLM.providerId && pxKeys[pLLM.providerId]) || pLLM.apiKey || '';
+    const imgBase = String(pLLM.baseUrl || 'https://apinebula.ai/v1').replace(/\/+$/, '');
+    out.imageApi = { base: imgBase, model: pxcfg.imageModel || pLLM.imageModel || 'gpt-image-2.5', hasKey: !!imgKey };
+    const healthHeaders = imgKey ? { Authorization: 'Bearer ' + imgKey } : {};
+    fetch(imgBase + '/models', { signal: ctrl.signal, headers: healthHeaders })
+      .then((r) => {
+        out.imageApi.ok = r.ok; out.imageApi.status = r.status;
+        out.valPerler = { ok: r.ok, status: r.status };
+      })
+      .catch((e3) => {
+        out.imageApi.ok = false; out.imageApi.error = String(e3.message || e3).slice(0, 120);
+        out.valPerler = { ok: false, error: out.imageApi.error };
+      })
       .finally(() => {
         clearTimeout(timer);
-        /* 深度自检：用注入的 WB ID 真实执行 render --check-id（源码执行路径 + ID 鉴权） */
-        if (!deep || !wbId) { return finish(); }
+        /* 深度自检：真实执行 render --check-id（python 侧连通性 + API Key 鉴权全链路） */
+        if (!deep) { return finish(); }
         execFile(pyExe, ['val_perler.py', 'render', '--check-id'], {
           cwd: path.join(PERLER_DIR, 'scripts'),
           timeout: 30000,
-          env: Object.assign({}, process.env, { ACC_USER_ID: wbId })
+          env: Object.assign({}, process.env,
+            imgKey ? { PERLER_IMAGE_API_KEY: imgKey } : {},
+            pLLM.baseUrl ? { PERLER_IMAGE_BASE_URL: pLLM.baseUrl } : {})
         }, (err2, stdout2, stderr2) => {
           out.chain = err2
             ? { ok: false, error: String(stderr2 || err2.message).slice(-300) }

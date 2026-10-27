@@ -1,62 +1,63 @@
 #!/usr/bin/env python3
-"""image_render.py — 渲染服务生图 CLI（图生图 / 文生图，无需凭据）
+"""image_render.py — 生图 CLI（图生图 / 文生图，OpenAI Images API 兼容后端）
 
-调用团队渲染服务的异步三步接口：
+后端：apinebula（https://apinebula.ai/v1），模型 gpt-image-2 / gpt-image-2.5。
+2026-10-28 起替换原 val-perler.qq.com 活动后端（接口不公开、无 SLA，不适合收费产品）。
 
-    POST /render/submit              图生图：multipart image prompt [size] [quality] [background] [output_format]
-                                     文生图：不传 image，同样字段以 JSON 提交
-    GET  /render/query?task_id=...   每 poll_interval_seconds 秒轮询，succeeded / failed 为终态
-    GET  /render/result/{task_id}    PNG 二进制（透明背景 RGBA）
+接口（同步返回，无轮询）：
 
-服务地址固定为 DEFAULT_BASE（https://val-perler.qq.com）。
-取图地址按配置的服务地址拼接，不使用查询结果里的 result_url。
-任务在服务端只保留 2 小时，拿到结果立即落盘。
+    POST {base}/images/edits        图生图：multipart image + prompt [size] [quality] [background] [output_format]
+    POST {base}/images/generations  文生图：JSON 同上（无 image）
+    响应 data[0].b64_json 优先，其次 data[0].url（自动下载）
 
-每个生图请求（提交、查询、取图）的请求头都带玩家的 WorkBuddy ID。取值顺序：
-环境变量 ACC_USER_ID → 个人配置目录名 ~/.workbuddy/user-<ID>-personal → 本地缓存
-~/.config/valorant-perler/credentials.json（PERLER_CONFIG_DIR 可改目录）。读到前两者就刷新缓存；
-三者都没有时不发请求，非零退出并说明下一步。
+凭据（由 generate.js spawn 时注入环境变量，密钥不进代码）：
 
-若 credentials.json 里存了掌瓦 auth_key（通过 `python3 scripts/val_perler.py login` 写入），
-每次请求会自动带 `Authorization: Bearer <auth_key>`，ADP 走登录池额度；无 auth_key 则走匿名池。
-掌瓦登录在同目录的 login.py，本脚本不处理登录。
+    PERLER_IMAGE_BASE_URL  默认 https://apinebula.ai/v1
+    PERLER_IMAGE_API_KEY   必填，缺失时报错退出
+    PERLER_IMAGE_MODEL     默认 gpt-image-2.5
 
 用法（统一入口 val_perler.py 转发到本脚本）：
     python3 scripts/val_perler.py render -p prompt.md -i ref.png -o out.png
-    python3 scripts/val_perler.py render --health
-    python3 scripts/val_perler.py render --check-id         # 只检查 WorkBuddy ID，不生图
-    python3 scripts/val_perler.py render --set-id <UUID>    # 校验后写入本地缓存
+    python3 scripts/val_perler.py render --health      # 连通性 + 鉴权检查
+    python3 scripts/val_perler.py render --check-id    # 校验 API Key（兼容旧 env-check 调用）
+    python3 scripts/val_perler.py render --set-id <值>  # 已废弃，仅保留兼容
+
+与 GPT Image 参数对齐说明：
+    quality  支持 auto/low/medium/high；旧档位 xhigh/max 就近映射为 high（打 WARN）。
+    size     支持 1024x1024 / 1536x1024 / 1024x1536 / auto；其他 WxH 就近映射为 1024x1024（打 WARN）。
+    background 支持 auto/opaque/transparent（与 GPT Image 一致）。
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import mimetypes
 import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
 
-DEFAULT_BASE = "https://val-perler.qq.com"
-ID_HEADER = "X-WB-Id"
-ID_ENV = "ACC_USER_ID"
-CONFIG_DIR_ENV = "PERLER_CONFIG_DIR"
-CRED_FILE = "credentials.json"
-CRED_KEY = "workbuddy_id"
-ID_DIR_PATTERN = "user-*-personal"
-UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+DEFAULT_BASE = "https://apinebula.ai/v1"
+BASE_ENV = "PERLER_IMAGE_BASE_URL"
+KEY_ENV = "PERLER_IMAGE_API_KEY"
+MODEL_ENV = "PERLER_IMAGE_MODEL"
+DEFAULT_MODEL = "gpt-image-2.5"
+# 兼容 gen_and_recover.py 对本模块常量与 render_base() 的引用（词汇表与 GPT Image 原生对齐）
 DEFAULT_SIZE = "1024x1024"
 DEFAULT_QUALITY = "low"
 DEFAULT_BACKGROUND = "transparent"
 DEFAULT_OUTPUT_FORMAT = "png"
-POLL_INTERVAL = 5
-POLL_TIMEOUT = 600
-POLL_MAX_MISSES = 5   # 轮询连续失败（连不上 / 5xx）多少次才放弃；查询是幂等的，单次抖动不整单失败
+VALID_SIZES = {"auto", "1024x1024", "1536x1024", "1024x1536"}
+VALID_QUALITIES = {"auto", "low", "medium", "high"}
+RETRY_ATTEMPTS = 2          # 仅连接层错误与 502/503 重试（项目重试纪律）
+RETRY_BACKOFF = 2.0
+HTTP_TIMEOUT = 300          # gpt-image 同步出图实测 30~120s，放宽到 5 分钟
+KEY_MASK_RE = re.compile(r"^(.{4}).*(.{4})$")
 
 
 def fail(message: str) -> None:
@@ -65,220 +66,138 @@ def fail(message: str) -> None:
 
 
 def render_base() -> str:
-    """服务地址：固定为 DEFAULT_BASE。"""
-    return DEFAULT_BASE.rstrip("/")
+    """服务地址：env 覆盖 → 默认 apinebula。"""
+    return (os.environ.get(BASE_ENV, "").strip() or DEFAULT_BASE).rstrip("/")
 
 
-def normalize_id(value: str | None) -> str | None:
-    """标准 UUID 返回小写形式，其余返回 None。"""
-    value = (value or "").strip()
-    return value.lower() if UUID_RE.fullmatch(value) else None
-
-
-def mask_id(value: str) -> str:
-    return f"{value[:4]}…{value[-4:]}"
-
-
-def config_dir() -> Path:
-    override = os.environ.get(CONFIG_DIR_ENV, "").strip()
-    return Path(override) if override else Path.home() / ".config" / "valorant-perler"
-
-
-def credentials_path() -> Path:
-    return config_dir() / CRED_FILE
-
-
-def read_id_from_env() -> str | None:
-    return normalize_id(os.environ.get(ID_ENV))
-
-
-def read_id_from_dir() -> str | None:
-    """个人配置目录名 user-<ID>-personal 里的 ID；多个目录取修改时间最新的。"""
-    config = os.environ.get("WORKBUDDY_CONFIG_DIR", "").strip()
-    root = Path(config) if config else Path.home() / ".workbuddy"
-    found = []
-    for path in root.glob(ID_DIR_PATTERN):
-        value = normalize_id(path.name[len("user-"):-len("-personal")])
-        if value and path.is_dir():
-            found.append((path.stat().st_mtime, value))
-    return max(found)[1] if found else None
-
-
-def read_id_cache() -> str | None:
-    path = credentials_path()
-    if not path.is_file():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        entry = data.get(CRED_KEY) if isinstance(data, dict) else None
-        return normalize_id(entry.get("id") if isinstance(entry, dict) else None)
-    except (OSError, ValueError, AttributeError):
-        return None
-
-
-def write_id_cache(value: str, source: str) -> None:
-    path = credentials_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    data = {}
-    if path.is_file():
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                data = loaded
-        except (OSError, ValueError):
-            pass
-    data[CRED_KEY] = {"id": value, "source": source,
-                      "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def resolve_workbuddy_id() -> tuple[str, str]:
-    """返回 (ID, 来源)。实时来源（环境变量、个人配置目录）优先并刷新缓存，其次本地缓存；都没有则退出。"""
-    for source, reader in (("env", read_id_from_env), ("dir", read_id_from_dir)):
-        value = reader()
-        if value:
-            try:
-                write_id_cache(value, source)
-            except OSError as exc:
-                print(f"[WARN] WorkBuddy ID 缓存写入失败（{exc.__class__.__name__}: {exc}），本次照常使用", file=sys.stderr)
-            return value, source
-    value = read_id_cache()
+def resolve_key() -> tuple[str, str]:
+    """返回 (api_key, 来源)。只认 env（generate.js 从 .pixelart-config.json 读好注入）。"""
+    value = (os.environ.get(KEY_ENV) or "").strip()
     if value:
-        return value, "cache"
-    fail("没有找到玩家的 WorkBuddy ID，本次没有发起生图。"
-         "请按 skills/valorant-perler/SKILL.md「WorkBuddy ID」一节查找；"
-         "找到后运行 `python3 scripts/val_perler.py render --set-id <ID>` 保存，再重新生图。")
+        return value, "env"
+    fail("没有找到生图 API Key（环境变量 PERLER_IMAGE_API_KEY 为空）。"
+         "请在服务器 .pixelart-config.json 的 promptLLM.apiKey 配好 Key，并重启 allmaster 服务。")
 
 
-def check_id() -> None:
-    value, source = resolve_workbuddy_id()
-    print(f"[SUCCESS] WorkBuddy ID {mask_id(value)}，来源：{source}")
+def resolve_model() -> str:
+    return (os.environ.get(MODEL_ENV, "").strip() or DEFAULT_MODEL)
 
 
-def set_id(raw: str) -> None:
-    value = normalize_id(raw)
-    if not value:
-        fail("--set-id 需要标准 UUID（形如 xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）；不要用昵称、手机号或其他字符串代替。")
-    try:
-        write_id_cache(value, "agent")
-    except OSError as exc:
-        fail(f"WorkBuddy ID 缓存写入失败（{exc.__class__.__name__}: {exc}）；缓存位置 {credentials_path()}，"
-             f"可用环境变量 {CONFIG_DIR_ENV} 改到可写的位置后重试。")
-    print(f"[SUCCESS] 已保存 WorkBuddy ID {mask_id(value)}")
+def mask_key(value: str) -> str:
+    m = KEY_MASK_RE.match(value)
+    return f"{m.group(1)}…{m.group(2)}" if m else "***"
 
+
+def headers_with_auth() -> dict:
+    key, _ = resolve_key()
+    return {"Authorization": f"Bearer {key}"}
 
 
 def service_error(resp: requests.Response) -> str:
-    """服务返回的错误原文（优先取 JSON 里的说明字段）。"""
     try:
         body = resp.json()
     except ValueError:
         return resp.text[:2000]
     if isinstance(body, dict):
-        if body.get("error_code"):
-            return service_error_from_body(body)
+        err = body.get("error")
+        if isinstance(err, dict) and err.get("message"):
+            return str(err["message"])[:2000]
+        if isinstance(err, str) and err:
+            return err[:2000]
         for key in ("detail", "error", "message"):
             if body.get(key):
                 value = body[key]
-                return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+                return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)[:2000]
     return json.dumps(body, ensure_ascii=False)[:2000]
 
 
-def request(method: str, url: str, step: str, **kwargs) -> requests.Response:
-    try:
-        return requests.request(method, url, **kwargs)
-    except requests.RequestException as exc:
-        fail(f"{step}：连不上渲染服务 {url}（{exc.__class__.__name__}: {exc}）")
+def request_with_retry(method: str, url: str, step: str, **kwargs) -> requests.Response:
+    """只对连接层错误与 502/503 重试（重试纪律：不确定是否计费的失败不重试）。"""
+    last_err = None
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            resp = requests.request(method, url, **kwargs)
+        except requests.RequestException as exc:
+            last_err = f"{exc.__class__.__name__}: {exc}"
+        else:
+            if resp.status_code in (502, 503) and attempt < RETRY_ATTEMPTS:
+                last_err = f"HTTP {resp.status_code}"
+                print(f"[WARN] {step}：{last_err}，{RETRY_BACKOFF}s 后重试 {attempt}/{RETRY_ATTEMPTS - 1}", flush=True)
+                time.sleep(RETRY_BACKOFF)
+                continue
+            return resp
+        if attempt < RETRY_ATTEMPTS:
+            print(f"[WARN] {step}：{last_err}，{RETRY_BACKOFF}s 后重试 {attempt}/{RETRY_ATTEMPTS - 1}", flush=True)
+            time.sleep(RETRY_BACKOFF)
+    fail(f"{step}：连不上生图服务 {url}（{last_err}）")
 
 
 def health() -> None:
-    """检查服务连通性，不提交生图任务。"""
-    url = f"{render_base()}/health"
+    """连通性 + 鉴权一次验掉：GET /models 需要 Bearer，401/403 即 Key 无效。"""
+    base = render_base()
+    url = f"{base}/models"
     print(f"[INFO] 连通性测试: {url}", flush=True)
-    resp = request("GET", url, "连通性测试", timeout=15, allow_redirects=False)
+    resp = request_with_retry("GET", url, "连通性测试",
+                              headers=headers_with_auth(), timeout=20)
+    if resp.status_code in (401, 403):
+        fail(f"连通性测试：HTTP {resp.status_code}（API Key 无效或无权限），{service_error(resp)}")
     if resp.status_code != 200:
         fail(f"连通性测试：HTTP {resp.status_code}，{service_error(resp)}")
-    print(f"[SUCCESS] 服务连通：HTTP 200，{resp.text[:2000]}")
+    key, source = resolve_key()
+    print(f"[SUCCESS] 服务连通：HTTP 200，模型 {resolve_model()}，API Key {mask_key(key)}（来源 {source}）")
 
 
-def build_form(prompt: str, size: str, quality: str,
-               background: str, output_format: str) -> dict:
-    return {
-        "prompt": prompt,
-        "size": size,
-        "quality": quality,
-        "background": background,
-        "output_format": output_format,
-    }
-
-
-def submit(base: str, image: Path | None, form: dict, headers: dict) -> dict:
-    if image is None:
-        resp = request("POST", f"{base}/render/submit", "提交", headers=headers, json=form, timeout=180)
-    else:
-        mime = mimetypes.guess_type(image.name)[0] or "application/octet-stream"
-        with image.open("rb") as fh:
-            resp = request("POST", f"{base}/render/submit", "提交", headers=headers,
-                           data=form, files={"image": (image.name, fh, mime)}, timeout=180)
+def check_id() -> None:
+    """兼容旧 env-check 的深度自检入口：实际校验 API Key 可用性。"""
+    key, source = resolve_key()
+    base = render_base()
+    resp = request_with_retry("GET", f"{base}/models", "Key 校验",
+                              headers={"Authorization": f"Bearer {key}"}, timeout=20)
+    if resp.status_code in (401, 403):
+        fail(f"Key 校验失败：HTTP {resp.status_code}（Key 无效或无权限）")
     if resp.status_code != 200:
-        fail(f"提交：HTTP {resp.status_code}，{service_error(resp)}")
-    body = resp.json()
-    if not body.get("task_id"):
-        fail(f"提交：服务未返回 task_id，{json.dumps(body, ensure_ascii=False)}")
-    return body
+        fail(f"Key 校验失败：HTTP {resp.status_code}，{service_error(resp)}")
+    print(f"[SUCCESS] 生图 API 可用，模型 {resolve_model()}，Key {mask_key(key)}，来源：{source}")
 
 
-def wait(base: str, task_id: str, interval: int, headers: dict) -> dict:
-    deadline = time.time() + POLL_TIMEOUT
-    last = None
-    misses = 0
-    while time.time() < deadline:
-        time.sleep(interval)
-        try:
-            resp = requests.request("GET", f"{base}/render/query", params={"task_id": task_id},
-                                    headers=headers, timeout=60)
-            error = None if resp.status_code < 500 else f"HTTP {resp.status_code}，{service_error(resp)}"
-        except requests.RequestException as exc:
-            error = f"{exc.__class__.__name__}: {exc}"
-        if error:
-            misses += 1
-            if misses >= POLL_MAX_MISSES:
-                fail(f"轮询：连续 {misses} 次失败（task_id={task_id}），最后一次 {error}")
-            print(f"[WARN] 轮询失败 {misses}/{POLL_MAX_MISSES}，继续等待：{error}", flush=True)
-            continue
-        misses = 0
+def set_id(raw: str) -> None:
+    print("[WARN] --set-id 已废弃（apinebula 后端不需要 WB ID）；凭据请在 .pixelart-config.json 配置。", flush=True)
+
+
+def normalize_size(size: str) -> str:
+    value = (size or "").strip().lower()
+    if value in VALID_SIZES:
+        return value
+    print(f"[WARN] 生图尺寸 {size} 不被 GPT Image 支持，回落 1024x1024", flush=True)
+    return "1024x1024"
+
+
+def normalize_quality(quality: str) -> str:
+    value = (quality or "").strip().lower()
+    if value in VALID_QUALITIES:
+        return value
+    if value in ("xhigh", "max"):
+        print(f"[WARN] 画质档位 {quality} 映射为 high", flush=True)
+        return "high"
+    print(f"[WARN] 画质档位 {quality} 不识别，回落 auto", flush=True)
+    return "auto"
+
+
+def extract_image_bytes(body: dict, headers: dict) -> bytes:
+    """从响应取图：b64_json 优先；url 兜底（部分网关只回链接）。"""
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, list) or not data:
+        fail(f"生图响应缺少 data 数组：{json.dumps(body, ensure_ascii=False)[:500]}")
+    item = data[0] if isinstance(data[0], dict) else {}
+    if item.get("b64_json"):
+        return base64.b64decode(item["b64_json"])
+    url = item.get("url")
+    if url:
+        resp = request_with_retry("GET", url, "取图", headers=headers, timeout=HTTP_TIMEOUT)
         if resp.status_code != 200:
-            fail(f"轮询：HTTP {resp.status_code}，{service_error(resp)}")
-        body = resp.json()
-        status = body.get("status")
-        if status != last:
-            print(f"[INFO] 任务状态: {status}", flush=True)
-            last = status
-        if status == "succeeded":
-            return body
-        if status == "failed":
-            fail(f"生图任务失败（task_id={task_id}）：{service_error_from_body(body)}")
-    fail(f"轮询：{POLL_TIMEOUT}s 内未完成（task_id={task_id}）")
-
-
-def service_error_from_body(body: dict) -> str:
-    """失败原因：带上服务的 error_code（如 rate_limited），再接说明原文。"""
-    code = body.get("error_code")
-    prefix = f"error_code={code}，" if code else ""
-    for key in ("error", "detail", "message"):
-        if body.get(key):
-            value = body[key]
-            return prefix + (value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
-    return prefix + json.dumps(body, ensure_ascii=False)
-
-
-def download(base: str, task_id: str, output: Path, headers: dict) -> int:
-    resp = request("GET", f"{base}/render/result/{task_id}", "取图", headers=headers, timeout=180)
-    if resp.status_code != 200:
-        fail(f"取图：HTTP {resp.status_code}，{service_error(resp)}")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(resp.content)
-    return len(resp.content)
+            fail(f"取图：HTTP {resp.status_code}，{service_error(resp)}")
+        return resp.content
+    fail(f"生图响应既无 b64_json 也无 url：{json.dumps(body, ensure_ascii=False)[:500]}")
 
 
 def render(prompt_path: Path, image: Path | None, output: Path,
@@ -293,47 +212,65 @@ def render(prompt_path: Path, image: Path | None, output: Path,
     if image is not None and not image.is_file():
         fail(f"参考图不存在：{image}")
 
-    wb_id, id_source = resolve_workbuddy_id()
-    headers = {ID_HEADER: wb_id}
+    key, key_source = resolve_key()
+    model = resolve_model()
     base = render_base()
-    # 延迟 import login，避免循环依赖（login.py 也 import 本模块）。
-    # 读到 auth_key 先校验合法性：授权被取消时主动重新扫码授权，而不是带失效 key 撞 401 或降级匿名。
-    from login import read_auth_key_cache, mask_token, ensure_valid_auth_key  # noqa: E402  延迟 import 规避循环
-    auth_key = read_auth_key_cache()
-    if auth_key:
-        auth_key = ensure_valid_auth_key(base, wb_id, auth_key)
-        headers["Authorization"] = f"Bearer {auth_key}"
-    form = build_form(prompt, size, quality, background, output_format)
-    print(f"[INFO] 渲染服务: {base}")
-    print(f"[INFO] WorkBuddy ID: {mask_id(wb_id)}（来源 {id_source}）"
-          + (f"，掌瓦登录态 auth_key {mask_token(auth_key)}" if auth_key else "，匿名模式"))
+    size_n = normalize_size(size)
+    quality_n = normalize_quality(quality)
+    auth = {"Authorization": f"Bearer {key}"}
+
+    print(f"[INFO] 生图服务: {base}（OpenAI Images 兼容）")
+    print(f"[INFO] 模型: {model}，API Key {mask_key(key)}（来源 {key_source}）")
     print(f"[INFO] 参考图: {image}（{image.stat().st_size:,} bytes），prompt {len(prompt)} 字符" if image
           else f"[INFO] 文生图（无参考图），prompt {len(prompt)} 字符")
-    print(f"[INFO] size={size} quality={quality} "
+    print(f"[INFO] size={size_n} quality={quality_n} "
           f"background={background} output_format={output_format}", flush=True)
 
-    body = submit(base, image, form, headers)
-    task_id = body["task_id"]
-    interval = int(body.get("poll_interval_seconds") or POLL_INTERVAL)
-    print(f"[INFO] task_id={task_id}，每 {interval}s 轮询", flush=True)
-    if body.get("status") != "succeeded":
-        wait(base, task_id, interval, headers)
+    form = {
+        "model": model,
+        "prompt": prompt,
+        "size": size_n,
+        "quality": quality_n,
+        "background": background,
+        "output_format": output_format,
+        "n": 1,
+    }
+    if image is None:
+        resp = request_with_retry("POST", f"{base}/images/generations", "提交",
+                                  headers=dict(auth, **{"Content-Type": "application/json"}),
+                                  json=form, timeout=HTTP_TIMEOUT)
+    else:
+        mime = mimetypes.guess_type(image.name)[0] or "application/octet-stream"
+        with image.open("rb") as fh:
+            resp = request_with_retry("POST", f"{base}/images/edits", "提交",
+                                      headers=auth, data=form,
+                                      files={"image": (image.name, fh, mime)}, timeout=HTTP_TIMEOUT)
+    if resp.status_code in (401, 403):
+        fail(f"提交：HTTP {resp.status_code}（API Key 无效或无权限），{service_error(resp)}")
+    if resp.status_code != 200:
+        fail(f"提交：HTTP {resp.status_code}，{service_error(resp)}")
+    try:
+        body = resp.json()
+    except ValueError:
+        fail(f"提交：响应不是 JSON：{resp.text[:300]}")
 
-    size_bytes = download(base, task_id, output, headers)
-    print(f"[SUCCESS] 已保存: {output}（{size_bytes:,} bytes）")
+    image_bytes = extract_image_bytes(body, auth)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(image_bytes)
+    print(f"[SUCCESS] 已保存: {output}（{len(image_bytes):,} bytes）")
     return output
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--health", action="store_true", help="请求 /health 测试连通性，不生图")
-    parser.add_argument("--check-id", action="store_true", help="检查能否取得 WorkBuddy ID，打印来源与脱敏值，不生图")
-    parser.add_argument("--set-id", metavar="UUID", help="校验 WorkBuddy ID 并写入本地缓存，不生图")
+    parser.add_argument("--health", action="store_true", help="请求 /models 测试连通性与鉴权，不生图")
+    parser.add_argument("--check-id", action="store_true", help="校验生图 API Key（兼容旧调用方），不生图")
+    parser.add_argument("--set-id", metavar="UUID", help="已废弃，仅保留参数兼容")
     parser.add_argument("--prompt", "-p", type=Path, help="prompt 文件（全文作为提示词）")
-    parser.add_argument("--image", "-i", type=Path, help="参考图；不传即文生图（须玩家同意，见 SKILL.md）")
+    parser.add_argument("--image", "-i", type=Path, help="参考图；不传即文生图")
     parser.add_argument("--output", "-o", type=Path, help="输出 PNG 路径")
-    parser.add_argument("--size", "-s", default=DEFAULT_SIZE, help=f"WxH，宽高为 16 的倍数，默认 {DEFAULT_SIZE}")
+    parser.add_argument("--size", "-s", default=DEFAULT_SIZE, help=f"默认 {DEFAULT_SIZE}")
     parser.add_argument("--quality", "-q", default=DEFAULT_QUALITY, help=f"默认 {DEFAULT_QUALITY}")
     parser.add_argument("--background", default=DEFAULT_BACKGROUND, help=f"默认 {DEFAULT_BACKGROUND}")
     parser.add_argument("--output-format", default=DEFAULT_OUTPUT_FORMAT, help=f"默认 {DEFAULT_OUTPUT_FORMAT}")
@@ -348,8 +285,7 @@ def main() -> None:
         set_id(args.set_id)
         return
     if not all((args.prompt, args.output)):
-        parser.error("生图需要 --prompt 和 --output（--image 不传即文生图）；仅测试连通性请用 --health，检查 ID 请用 --check-id；"
-                     "掌瓦登录请用 `python3 scripts/val_perler.py login`")
+        parser.error("生图需要 --prompt 和 --output（--image 不传即文生图）；仅测试连通性请用 --health")
     render(args.prompt, args.image, args.output, args.size,
            args.quality, args.background, args.output_format)
 
