@@ -120,7 +120,32 @@ restoreAuth();                            // 最后才执行入口（→ continu
 
 拆分后页面为外置脚本，测试用 `requestInterceptor` 从磁盘喂 `platform.js`/`app.js`（见各测试文件 `localResources()`）。
 
-## 6. 新增产品的 6 步清单
+## 6. 多 agent 协作约定
+
+多个 agent 会话可能并行开发不同产品，共享同一仓库与工作空间：
+
+- **提交署名**：多个会话共享同一个 `.git/config`，仓库级 `user.name` 会被最后设置的会话覆盖。
+  **每次提交都用单次指定**，不要依赖持久配置：
+  ```bash
+  git -c user.name="platform-dev" -c user.email="platform-dev@users.noreply.github.com" commit -m "..."
+  ```
+  命名：平台层 `platform-dev`、产品 `<slug>-dev`（如 `pixelart-dev`）。推送认证共用用户 SSH key，作者名区分 agent。
+- **改动边界**：产品 agent 只动 `apps/<slug>/`；动 `shared/` 或 `server.js` 前在回复里说明影响面并跑全量测试。
+- **冲突处理**：`git pull --rebase` 优先；如果发现提交作者写错（未推送），用
+  `git commit --amend --author="<名> <邮箱>" --no-edit` 修正。
+- **发布**：多 agent 交替执行 deploy 时，**每次发布前先从 `app_secrets` 同步密钥到本地**（见第 3 节发布与密钥覆盖）。
+
+## 7. 自建服务器部署（独立域名 allmaster.art）
+
+详见 `deploy/README.md`。要点：
+
+- 服务器常驻 Node（systemd）+ Caddy 自动 HTTPS，反代 `127.0.0.1:3000`
+- 初始化：`bash deploy/install.sh`；更新：`bash deploy/update.sh`
+- 独立域名上线后，把 `apps/avatar/app.js` 的 `CUSTOM_DOMAIN` 填成 `https://allmaster.art`
+- `PUBLIC_CONFIG.endpoint`（云服务域名）保持不变；支付回调由 host 自动跟随
+- 需要 ICP 备案（境内服务器），DNS A 记录指向服务器 IP
+
+## 8. 新增产品的 6 步清单
 
 假设要新增产品 `poster`（AI 海报）：
 
