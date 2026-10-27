@@ -21,9 +21,13 @@
     var CONFIG_ID = 'default';
 
 
-    /* WorkBuddy 云服务 publicConfig（仅含可公开的前端配置，密钥在服务端） */
+    /* WorkBuddy 云服务 publicConfig（仅含可公开的前端配置，密钥在服务端）
+       endpoint 用「本站源」：server.js 的 /.cloud/* 同源反代到 WorkBuddy 云，
+       浏览器不触发 CORS 预检（云端对 OPTIONS 返回 403）。file:// 场景回退到云站。*/
+    var CLOUD_FALLBACK_ENDPOINT = 'https://ai-avatar-studio-50356.app.workbuddy.host';
     var PUBLIC_CONFIG = {
-      endpoint: 'https://ai-avatar-studio-50356.app.workbuddy.host',
+      endpoint: (window.location && window.location.origin && window.location.origin !== 'null')
+        ? window.location.origin : CLOUD_FALLBACK_ENDPOINT,
       oauthRelayBaseUrl: 'https://www.workbuddy.cn/v2/as/genie-baas/oauth',
       publishableKey: 'wbpk_eoMql05K7PT2JgZUKFFOo9_9vLkFanCYcm67RRrIgxoEnsGnDS52YEM'
     };

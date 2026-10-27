@@ -25,6 +25,7 @@
 'use strict';
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -588,9 +589,62 @@ function serveStatic(req, res) {
   });
 }
 
+/* ---------- 云服务同源反代：/.cloud/* → WorkBuddy 云 ----------
+ * 为什么需要：云 API 对跨域预检（OPTIONS）返回 403（实测），浏览器跨域调
+ * 登录/钱包/数据库会被 CORS 拦死。改为本站同源反代后浏览器认为同源，
+ * 不触发预检，前端登录/积分/云历史代码零改动。
+ * 已验证：云端不校验 Host（改 Host 仍 200），凭据走 x-wb-webapp-access-key。
+ */
+const CLOUD_UPSTREAM = process.env.CLOUD_UPSTREAM || 'https://ai-avatar-studio-50356.app.workbuddy.host';
+
+function proxyCloud(req, res) {
+  let target;
+  try {
+    target = new URL(req.url, CLOUD_UPSTREAM);
+  } catch (_) {
+    return sendJson(res, 400, { error: { message: '非法路径' } });
+  }
+  if (target.protocol !== 'https:') {
+    return sendJson(res, 400, { error: { message: '仅允许 https 上游' } });
+  }
+  const headers = Object.assign({}, req.headers);
+  headers.host = target.host;
+  delete headers.connection;
+  delete headers['proxy-connection'];
+  delete headers['keep-alive'];
+  delete headers['transfer-encoding'];
+  delete headers.upgrade;
+  delete headers['accept-encoding'];
+
+  const up = https.request({
+    protocol: 'https:',
+    hostname: target.hostname,
+    port: target.port || 443,
+    path: target.pathname + target.search,
+    method: req.method,
+    headers: headers,
+    timeout: 60000
+  }, (upRes) => {
+    res.writeHead(upRes.statusCode || 502, upRes.headers);
+    upRes.pipe(res);
+  });
+  up.on('timeout', () => up.destroy(new Error('cloud upstream timeout')));
+  up.on('error', (e) => {
+    if (!res.headersSent) { sendJson(res, 502, { error: { message: 'cloud upstream error: ' + e.message } }); }
+    else { try { res.end(); } catch (_) {} }
+  });
+  req.on('aborted', () => up.destroy());
+  req.pipe(up);
+}
+
 const server = http.createServer((req, res) => {
   const pathOnly = req.url ? req.url.split('?')[0] : '';
   const fullUrl = new URL(req.url || '/', 'http://localhost');
+
+  /* 云服务（登录 / 钱包 / 数据库 / 存储）同源反代 */
+  if (pathOnly === '/.cloud' || pathOnly.indexOf('/.cloud/') === 0) {
+    return proxyCloud(req, res);
+  }
 
   if (req.method === 'GET' && (pathOnly === '/' || pathOnly === '/index.html')) {
     /* 站点根 → 默认产品页（保留 query：sharecode / ?paid= 等不能丢） */
