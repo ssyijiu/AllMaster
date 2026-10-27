@@ -45,6 +45,7 @@ CHARACTER_ONLY_STYLES = {s["id"] for s in json.loads(
 DEFAULT_ART_STYLE = "original"
 PALETTE_CSV = SCRIPTS / "palette_mard221.csv"
 IMAGE_RENDER = SCRIPTS / "image_render.py"
+BLOCK_CLEANUP = SCRIPTS / "block_cleanup.py"
 ALIGNMENT_SEARCH = SCRIPTS / "alignment_search.py"
 MAKE_OVERVIEW = SCRIPTS / "make_overview.py"
 BUILD_HTML = SCRIPTS / "build_html_blueprint.py"
@@ -451,6 +452,12 @@ def main() -> None:
             ], "按修改要求改写已有底稿" if edit_request is not None else "生成单张平面像素底稿",
                 "照你说的改一改，这步最慢，稍等一会儿～" if edit_request is not None
                 else "先画一张像素小图，这步最慢，稍等一会儿～")
+
+        # 色块规整：通用生图后端（gpt-image 系）的底稿带纹理噪点与边缘混色（平坦度 ~25%），
+        # 洗成硬边平涂（~95%+）再切格，豆色更准、杂色更少。PERLER_BLOCK_CLEANUP=0 关闭。
+        if os.environ.get("PERLER_BLOCK_CLEANUP", "") != "0":
+            run_command([sys.executable, str(BLOCK_CLEANUP), str(pixel_art)],
+                        "色块规整", "把底稿色块熨平整，豆子颜色更准～")
 
         draft = pixel_art
         if args.keep_sticker_border:
