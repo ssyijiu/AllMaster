@@ -10,8 +10,9 @@ User=allmaster
 Group=allmaster
 WorkingDirectory=/opt/allmaster
 Environment=NODE_ENV=production
-Environment=PORT=3000
-ExecStart=/usr/bin/node /opt/allmaster/server.js
+# 内部端口 8080：未备案前直接用 IP:8080 访问；域名备案后由 Caddy 反代到本端口
+Environment=PORT=8080
+ExecStart=/usr/local/bin/node /opt/allmaster/server.js
 Restart=always
 RestartSec=3
 # 密钥文件在 WorkingDirectory 下，需 chmod 600 且属主为 allmaster

@@ -5,8 +5,8 @@
 allmaster.art, www.allmaster.art {
 	encode zstd gzip
 
-	# 反代到本地 Node 服务（server.js，systemd 守护）
-	reverse_proxy 127.0.0.1:3000 {
+	# 反代到本地 Node 服务（server.js，systemd 守护，PORT=8080）
+	reverse_proxy 127.0.0.1:8080 {
 		# 图片生成单次 20~90s，SSE 心跳保活；把超时放宽到 5 分钟
 		transport http {
 			read_timeout 300s
