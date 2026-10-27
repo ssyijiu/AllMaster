@@ -223,8 +223,8 @@
     </div>
   </div>
 
-  <!-- ===== script 顺序固定：云 SDK CDN → 平台层 → 产品层 ===== -->
-  <script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js"></script>
+  <!-- ===== script 顺序固定：云 SDK（本地副本，国内不走 jsDelivr）→ 平台层 → 产品层 ===== -->
+  <script src="/shared/workbuddy-cloud.global.js?v=20261027"></script>
   <script src="/shared/platform.js"></script>
   <script src="/apps/pixelart/app.js?v=20261026b"></script>
 </body>

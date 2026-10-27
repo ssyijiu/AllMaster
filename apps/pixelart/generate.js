@@ -7,12 +7,12 @@
  *
  * 配置读服务器本地 .pixelart-config.json：
  *   accUserId  生图服务 WB ID（spawn 时注入 ACC_USER_ID 环境变量）
- *   pythonExe  解释器路径（不存在回落 python3）
+ *   pythonExe  解释器路径（不存在回落 python3；自建服务器指向 venv：/opt/allmaster/.venv/bin/python）
  *   promptLLM  { baseUrl, model, apiKey?, providerId? } 视觉 chat 模型；null/缺 Key = 模板兜底
+ * 任务工作目录：$ROOT/.pixelart-tasks/<taskId>/（可用环境变量 PIXELART_TASK_ROOT 覆盖），72h 后自动清理
  */
 'use strict';
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
@@ -23,9 +23,15 @@ const AI_CONFIG_FILE = path.join(ROOT, '.ai-config.json');
 const PERLER_DIR = path.join(ROOT, 'apps/pixelart/assert/valorant-perler-src/valorant-perler');
 const PERLER_SCRIPTS = path.join(PERLER_DIR, 'scripts');
 const STYLE_GUIDE_JSON = path.join(PERLER_DIR, 'assets', 'style_guide.json');
-const TASK_ROOT = path.join(os.tmpdir(), 'pixelart-tasks');
+/* 任务目录：不用 os.tmpdir() —— 自建服务器 systemd 开了 PrivateTmp=true（排查时找不到文件），
+   且 /tmp 可能被定期清理导致图纸丢失。默认落仓库根 /opt/allmaster/.pixelart-tasks（属主 allmaster 可写），
+   可用环境变量 PIXELART_TASK_ROOT 覆盖。 */
+const TASK_ROOT = process.env.PIXELART_TASK_ROOT || path.join(ROOT, '.pixelart-tasks');
 const GEN_TIMEOUT_MS = 8 * 60 * 1000;   // 生图+切格上限（实测约 1 分钟）
 const TASK_TTL_MS = 2 * 60 * 60 * 1000; // 渲染服务只保留 2 小时，任务记录同步过期
+/* 磁盘任务目录保留时长：过期后 pruneTasks 连盘一起删（tmpdir 时代由系统清理兜底，落仓库后必须自己 GC，
+   否则每单 5~10MB 图纸会慢慢吃满 40G 盘）。已完成图纸的分享链接在此窗口内仍可访问。 */
+const TASK_DISK_TTL_MS = (parseInt(process.env.PIXELART_TASK_RETENTION_HOURS, 10) || 72) * 60 * 60 * 1000;
 
 /* 内存任务表：{ id: { status, error?, htmlPath?, workDir, startedAt } } */
 const tasks = new Map();
@@ -162,6 +168,21 @@ function pruneTasks() {
   for (const [id, t] of tasks) {
     if (now - t.startedAt > TASK_TTL_MS) { tasks.delete(id); }
   }
+  /* 磁盘 GC：删掉超过保留期的任务目录（正在跑的不动）。每次 generate 触发一次，量小无压力。 */
+  try {
+    for (const name of fs.readdirSync(TASK_ROOT)) {
+      if (!/^[0-9a-f]{16}$/.test(name)) { continue; }
+      let live = false;
+      for (const t of tasks.values()) {
+        if (t.workDir === path.join(TASK_ROOT, name) && t.status === 'running') { live = true; break; }
+      }
+      if (live) { continue; }
+      try {
+        const st = fs.statSync(path.join(TASK_ROOT, name));
+        if (now - st.mtimeMs > TASK_DISK_TTL_MS) { fs.rmSync(path.join(TASK_ROOT, name), { recursive: true, force: true }); }
+      } catch (_) {}
+    }
+  } catch (_) {} // TASK_ROOT 尚不存在等场景静默跳过
 }
 
 function findOutputHtml(workDir) {
