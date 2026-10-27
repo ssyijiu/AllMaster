@@ -210,12 +210,15 @@
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js"></script>
+  <script src="/shared/workbuddy-cloud.global.js"></script>
   <script>
   (function () {
     'use strict';
+    /* endpoint 用本站源：server.js 把 /.cloud/* 同源反代到 WorkBuddy 云（并改写 Origin 过白名单） */
+    var CLOUD_FALLBACK_ENDPOINT = 'https://ai-avatar-studio-50356.app.workbuddy.host';
     var PUBLIC_CONFIG = {
-      endpoint: 'https://ai-avatar-studio-50356.app.workbuddy.host',
+      endpoint: (window.location && window.location.origin && window.location.origin !== 'null')
+        ? window.location.origin : CLOUD_FALLBACK_ENDPOINT,
       oauthRelayBaseUrl: 'https://www.workbuddy.cn/v2/as/genie-baas/oauth',
       publishableKey: 'wbpk_eoMql05K7PT2JgZUKFFOo9_9vLkFanCYcm67RRrIgxoEnsGnDS52YEM'
     };
