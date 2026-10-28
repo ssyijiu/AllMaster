@@ -465,6 +465,16 @@ async function handleAdminSyncKey(req, res) {
 const PIXELART_CONFIG_FILE = path.join(ROOT, '.pixelart-config.json');
 const PERLER_DIR = path.join(ROOT, 'apps/pixelart/assert/valorant-perler-src/valorant-perler');
 
+/* 拼豆生成引擎（双后端并存，2026-10-28）：
+   - 主实例（/ 与 /apps/pixelart/）：apinebula 生图后端
+   - 经典实例（/pixelart）：val-perler.qq.com 经典后端，独立任务目录 .pixelart-tasks-vp */
+const pixelartGen = require('./apps/pixelart/generate');
+const pixelartMain = pixelartGen.createEngine({ backend: 'apinebula' });
+const pixelartVp = pixelartGen.createEngine({
+  backend: 'valperler',
+  taskRoot: path.join(ROOT, '.pixelart-tasks-vp')
+});
+
 function pixelartPython() {
   const cfg = readDotJson(PIXELART_CONFIG_FILE) || {};
   const wanted = (cfg.pythonExe || '').trim();
@@ -474,12 +484,14 @@ function pixelartPython() {
   return 'python3';
 }
 
-/* GET /api/pixelart/env-check：探测沙箱能否跑拼豆 Python 链。
-   返回 python3 版本/路径、关键依赖导入结果、pip 可用性、生图后端（apinebula）健康、WB ID（脱敏，已废弃）。
-   传 ?chain=1 时额外真实执行一次 render --check-id（验证 python 侧连通性与 API Key 鉴权）。 */
-function handlePixelartEnvCheck(res, deep) {
+/* GET /api/pixelart/env-check：探测能否跑拼豆 Python 链。
+   variant 'apinebula'（默认）：健康探测 apinebula /models（带 Bearer），深检校验 API Key；
+   variant 'valperler'（/pixelart 经典版）：健康探测 val-perler.qq.com /health，深检校验 WB ID。
+   传 ?chain=1 时额外真实执行一次 render --check-id（验证 python 侧连通性）。 */
+function handlePixelartEnvCheck(res, deep, variant) {
   const { execFile } = require('child_process');
-  const out = { python: null, pip: null, imports: {}, valPerler: null, imageApi: null, wbId: null, home: os.homedir() };
+  const isVp = variant === 'valperler';
+  const out = { python: null, pip: null, imports: {}, valPerler: null, imageApi: null, wbId: null, home: os.homedir(), backend: isVp ? 'valperler' : 'apinebula' };
 
   /* WB ID 来源：.pixelart-config.json → env → ~/.workbuddy/user-*-personal */
   function maskId(id) { return id ? id.slice(0, 4) + '…' + id.slice(-4) : null; }
@@ -523,7 +535,7 @@ function handlePixelartEnvCheck(res, deep) {
         out.python = { ok: false, error: '解析失败: ' + String(stdout).slice(0, 120) };
       }
     }
-    /* 生图后端健康（2026-10-28 起为 apinebula OpenAI Images 兼容；Node 侧 fetch，不依赖 python）。
+    /* 生图后端健康（Node 侧 fetch，不依赖 python）。
        out.valPerler 保留为旧字段别名（历史上无人消费，仅为日志连续性）。 */
     const finish = () => sendJson(res, 200, out);
     const ctrl = new AbortController();
@@ -532,9 +544,12 @@ function handlePixelartEnvCheck(res, deep) {
     const pxKeys = (readDotJson(AI_CONFIG_FILE) || {}).providerKeys || {};
     const imgKey = (pLLM.providerId && pxKeys[pLLM.providerId]) || pLLM.apiKey || '';
     const imgBase = String(pLLM.baseUrl || 'https://apinebula.ai/v1').replace(/\/+$/, '');
-    out.imageApi = { base: imgBase, model: pxcfg.imageModel || pLLM.imageModel || 'gpt-image-2.5', hasKey: !!imgKey };
-    const healthHeaders = imgKey ? { Authorization: 'Bearer ' + imgKey } : {};
-    fetch(imgBase + '/models', { signal: ctrl.signal, headers: healthHeaders })
+    const healthUrl = isVp ? 'https://val-perler.qq.com/health' : (imgBase + '/models');
+    const healthHeaders = (!isVp && imgKey) ? { Authorization: 'Bearer ' + imgKey } : {};
+    out.imageApi = isVp
+      ? { base: 'https://val-perler.qq.com', backend: 'valperler' }
+      : { base: imgBase, model: pxcfg.imageModel || pLLM.imageModel || 'gpt-image-2.5', hasKey: !!imgKey };
+    fetch(healthUrl, { signal: ctrl.signal, headers: healthHeaders })
       .then((r) => {
         out.imageApi.ok = r.ok; out.imageApi.status = r.status;
         out.valPerler = { ok: r.ok, status: r.status };
@@ -545,14 +560,21 @@ function handlePixelartEnvCheck(res, deep) {
       })
       .finally(() => {
         clearTimeout(timer);
-        /* 深度自检：真实执行 render --check-id（python 侧连通性 + API Key 鉴权全链路） */
+        /* 深度自检：真实执行 render --check-id（python 侧连通性全链路）。
+           经典版校验 WB ID（注入 ACC_USER_ID + 选 vp 客户端）；主版校验 API Key。 */
         if (!deep) { return finish(); }
+        const deepEnv = Object.assign({}, process.env);
+        if (isVp) {
+          deepEnv.PERLER_IMAGE_SCRIPT = 'image_render_vp.py';
+          if (wbId) { deepEnv.ACC_USER_ID = wbId; }
+        } else {
+          if (imgKey) { deepEnv.PERLER_IMAGE_API_KEY = imgKey; }
+          if (pLLM.baseUrl) { deepEnv.PERLER_IMAGE_BASE_URL = pLLM.baseUrl; }
+        }
         execFile(pyExe, ['val_perler.py', 'render', '--check-id'], {
           cwd: path.join(PERLER_DIR, 'scripts'),
           timeout: 30000,
-          env: Object.assign({}, process.env,
-            imgKey ? { PERLER_IMAGE_API_KEY: imgKey } : {},
-            pLLM.baseUrl ? { PERLER_IMAGE_BASE_URL: pLLM.baseUrl } : {})
+          env: deepEnv
         }, (err2, stdout2, stderr2) => {
           out.chain = err2
             ? { ok: false, error: String(stderr2 || err2.message).slice(-300) }
@@ -674,6 +696,25 @@ const server = http.createServer((req, res) => {
     req.url = '/apps/pixelart/index.html' + (fullUrl.search || '');
     return serveStatic(req, res);
   }
+  if (req.method === 'GET' && (pathOnly === '/pixelart' || pathOnly === '/pixelart/')) {
+    /* 拼豆大师·经典版（/pixelart）：与主页完全同一套页面与功能，唯一差异是生图后端
+       （val-perler.qq.com 经典模型）。页面复用 apps/pixelart/index.html，在此注入
+       API base，让 app.js 全部请求打到 /api/pixelart-vp/*（第二引擎实例）。 */
+    let html;
+    try { html = fs.readFileSync(path.join(ROOT, 'apps/pixelart/index.html'), 'utf8'); } catch (_) {
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('pixelart page missing');
+    }
+    const inject = '<script>window.PIXELART_API_BASE="/api/pixelart-vp";</script>';
+    html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + inject) : inject + html;
+    const body = Buffer.from(html, 'utf8');
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Length': body.length,
+      'Cache-Control': 'no-store'
+    });
+    return res.end(body);
+  }
   if (pathOnly === '/api/ai') {
     if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
     return handleAi(req, res);
@@ -705,25 +746,52 @@ const server = http.createServer((req, res) => {
   }
   if (pathOnly === '/api/pixelart/generate') {
     if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
-    return require('./apps/pixelart/generate').handleGenerate(req, res, sendJson);
+    return pixelartMain.handleGenerate(req, res, sendJson);
   }
   if (pathOnly === '/api/pixelart/regen') {
     if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
-    return require('./apps/pixelart/generate').handleRegen(req, res, sendJson);
+    return pixelartMain.handleRegen(req, res, sendJson);
   }
   if (pathOnly === '/api/pixelart/task') {
-    return require('./apps/pixelart/generate').handleTaskStatus(req, res, fullUrl, sendJson);
+    return pixelartMain.handleTaskStatus(req, res, fullUrl, sendJson);
   }
   if (pathOnly === '/api/pixelart/task/stream') {
     if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
-    return require('./apps/pixelart/generate').handleTaskStream(req, res, fullUrl);
+    return pixelartMain.handleTaskStream(req, res, fullUrl);
   }
   if (pathOnly === '/api/pixelart/task/html') {
-    return require('./apps/pixelart/generate').handleTaskHtml(req, res, fullUrl, sendJson);
+    return pixelartMain.handleTaskHtml(req, res, fullUrl, sendJson);
   }
   if (pathOnly === '/api/pixelart/styles') {
     if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
-    return require('./apps/pixelart/generate').handleStyles(res, sendJson);
+    return pixelartMain.handleStyles(res, sendJson);
+  }
+  /* ---- 经典版（val-perler 后端）：/pixelart 页面的 API，与主版一一对应、互不共享任务 ---- */
+  if (pathOnly === '/api/pixelart-vp/env-check') {
+    if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
+    return handlePixelartEnvCheck(res, fullUrl.searchParams.get('chain') === '1', 'valperler');
+  }
+  if (pathOnly === '/api/pixelart-vp/generate') {
+    if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
+    return pixelartVp.handleGenerate(req, res, sendJson);
+  }
+  if (pathOnly === '/api/pixelart-vp/regen') {
+    if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
+    return pixelartVp.handleRegen(req, res, sendJson);
+  }
+  if (pathOnly === '/api/pixelart-vp/task') {
+    return pixelartVp.handleTaskStatus(req, res, fullUrl, sendJson);
+  }
+  if (pathOnly === '/api/pixelart-vp/task/stream') {
+    if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
+    return pixelartVp.handleTaskStream(req, res, fullUrl);
+  }
+  if (pathOnly === '/api/pixelart-vp/task/html') {
+    return pixelartVp.handleTaskHtml(req, res, fullUrl, sendJson);
+  }
+  if (pathOnly === '/api/pixelart-vp/styles') {
+    if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
+    return pixelartVp.handleStyles(res, sendJson);
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405); return res.end('405 Method Not Allowed');

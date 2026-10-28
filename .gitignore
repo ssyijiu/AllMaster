@@ -22,3 +22,4 @@ node_modules/
 
 # ===== Python =====
 __pycache__/
+.pixelart-tasks-vp/

@@ -6,6 +6,8 @@
  * ========================================================= */
 (function () {
   'use strict';
+/* API base：主页默认 /api/pixelart；经典版页面由服务端注入 window.PIXELART_API_BASE 切到 /api/pixelart-vp */
+var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) || '/api/pixelart';
 
   var Platform = window.Platform;
   if (!Platform || typeof Platform.setup !== 'function') {
@@ -80,7 +82,7 @@
 
   /* ---------- 画风列表 ---------- */
   function loadStyles() {
-    fetch('/api/pixelart/styles').then(function (r) { return r.json(); }).then(function (data) {
+    fetch(PIXELART_API + '/styles').then(function (r) { return r.json(); }).then(function (data) {
       var list = (data && data.styles) || [];
       if (!list.length) { $('styleStrip').innerHTML = '<p class="hint">画风加载失败，刷新重试</p>'; return; }
       Store.styles = list;
@@ -281,7 +283,7 @@
   }
 
   function openTaskHtml(taskId) {
-    window.open('/api/pixelart/task/html?id=' + encodeURIComponent(taskId), '_blank');
+    window.open(PIXELART_API + '/task/html?id=' + encodeURIComponent(taskId), '_blank');
   }
 
   function showDone(taskId) {
@@ -319,7 +321,7 @@
       Store.lastTxnId = r && r.txnId;
       $('genStatusText').textContent = '正在提交任务…';
       /* 2. 提交生成任务 */
-      return fetch('/api/pixelart/generate', {
+      return fetch(PIXELART_API + '/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -371,7 +373,7 @@
     $('genDone').hidden = true;
     $('genStatusText').textContent = '正在重转图纸（合并近色，不重新生图）…';
     var startedAt = Math.floor(Date.now() / 1000);
-    fetch('/api/pixelart/regen', {
+    fetch(PIXELART_API + '/regen', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: Store.lastTaskId })
@@ -421,7 +423,7 @@
     var ac = (typeof window.AbortController === 'function') ? new window.AbortController() : null;
     Store.watchAbort = ac;
     var opts = ac ? { signal: ac.signal } : undefined;
-    fetch('/api/pixelart/task/stream?id=' + encodeURIComponent(taskId), opts)
+    fetch(PIXELART_API + '/task/stream?id=' + encodeURIComponent(taskId), opts)
       .then(function (res) {
         if (!res.ok || !res.body || !res.body.getReader) { throw new Error('stream unavailable'); }
         var reader = res.body.getReader();
@@ -478,7 +480,7 @@
         wallet.refund(Store.lastTxnId);
         return;
       }
-      fetch('/api/pixelart/task?id=' + encodeURIComponent(taskId))
+      fetch(PIXELART_API + '/task?id=' + encodeURIComponent(taskId))
         .then(function (r) { return r.json(); })
         .then(function (st) {
           if (st.status === 'done') { onTaskDone(taskId); }

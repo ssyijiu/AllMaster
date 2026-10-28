@@ -20,7 +20,17 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 
-import image_render
+# 生图客户端可由环境变量 PERLER_IMAGE_SCRIPT 指定（如 image_render_vp.py = val-perler 经典后端），
+# 默认 image_render.py（apinebula）。两个实现共享同一套默认参数与 CLI。
+IMAGE_SCRIPT_NAME = os.environ.get("PERLER_IMAGE_SCRIPT", "image_render.py")
+if IMAGE_SCRIPT_NAME == "image_render.py":
+    import image_render
+else:
+    import importlib.util
+    _ir_spec = importlib.util.spec_from_file_location(
+        "_image_render_alt", SCRIPTS / IMAGE_SCRIPT_NAME)
+    image_render = importlib.util.module_from_spec(_ir_spec)
+    _ir_spec.loader.exec_module(image_render)
 from alignment_search import parse_board, board_name, strip_sticker_border
 from build_html_blueprint import html_file_name, HTML_TIMEZONE
 
@@ -44,7 +54,7 @@ CHARACTER_ONLY_STYLES = {s["id"] for s in json.loads(
     if s.get("scope") == "character" and s["id"] != "original"}
 DEFAULT_ART_STYLE = "original"
 PALETTE_CSV = SCRIPTS / "palette_mard221.csv"
-IMAGE_RENDER = SCRIPTS / "image_render.py"
+IMAGE_RENDER = SCRIPTS / IMAGE_SCRIPT_NAME
 BLOCK_CLEANUP = SCRIPTS / "block_cleanup.py"
 ALIGNMENT_SEARCH = SCRIPTS / "alignment_search.py"
 MAKE_OVERVIEW = SCRIPTS / "make_overview.py"
