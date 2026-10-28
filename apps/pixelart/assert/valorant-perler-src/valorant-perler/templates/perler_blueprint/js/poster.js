@@ -67,6 +67,7 @@ function snapshot() {
   });
   PGW = GW; PGH = GH;
   cells = grid.map(row => row.map(code => code ? idx[code] : -1));
+  if (state.mirror) cells = cells.map(row => row.slice().reverse());   // 镜像跟图纸页画布同一语义（canvas.js：列 i → GW-1-i），导出与所见一致
   PT = { board: PALS[state.palette].label, colors: palette.length, beads: sp.beads, palette };
   glowCache = null; glowKey = ''; ironCache = null; ironStyledCache = {}; ironThumbCache = {};
 }
