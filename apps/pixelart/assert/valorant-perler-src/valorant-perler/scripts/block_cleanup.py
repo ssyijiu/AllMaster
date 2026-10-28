@@ -5,7 +5,7 @@
 边缘光晕，平坦度只有 ~25%（旧专用后端 ~68%），下游切格量化会出现杂色和条纹。
 本脚本把底稿「洗」成硬边平涂：平坦度可达 ~95%，颜色数收敛到 20 左右。
 
-处理步骤（v6，基于 30 组线上对比数据的三个系统性缺陷逐项修复）：
+处理步骤（v7 = v6 + 影调按参照带校准；2026-10-29 用 8 组同源真实数据标定）：
   0. 背景兜底透明化：模型应输出透明底但偶尔画成不透明均匀背景（线上 G9/G29：
      背景整片变豆子）。全图不透明且四边颜色均匀时，把与边界连通的均匀色块
      （颜色贴近边界中位色）置为透明；背景有结构的（海报/场景）不动，已有
@@ -13,10 +13,11 @@
   0.5 孤立噪点岛清除：生图偶尔在背景区残留小片不透明噪块（飞点）。与主体
      不相连且面积小于约两颗豆的岛直接置透明；迷你贴纸画风的小贴纸远大于
      阈值，不受影响。
-  1. 影调增强：通用模型输出普遍偏灰（线上 G18/G19 面部发淡、G28 白狗
-     变灰）。对不透明区做保守的饱和度提升（×1.12）与 0.5%/99.5% 分位
-     拉伸（动态范围本就够宽时自动跳过），只提神不改色。先于聚类执行，
-     后续所有阶段基于增强后的颜色。
+  1. 影调校准（v7）：不再无条件提亮，而是把动态范围与饱和度补齐到
+     「参照后端 val-perler 的实测带」（8 组同源真实数据标定：我方原始输出
+     饱和度 0.327 与参照 0.332 持平，动态范围 62.5 却窄于参照 73.3）。
+     所以：饱和度只在偏灰时补（上限 1.25），拉伸倍数 = 73 / 实测范围（封顶
+     1.6）；两项都达标就整段跳过。先于聚类执行，后续阶段基于校准后的颜色。
   2. 不透明区向内腐蚀 erode px，用纯内部像素 KMeans 拟合 k 色调色板
      （边缘混色不进训练集，避免光晕自成颜色簇）；
   3. 光晕簇抑制：生图模型爱在主体外圈画一圈彩色光晕/描边（线上 G20 深色
@@ -72,11 +73,13 @@ HALO_LUM_MIN = 6.0    # 光晕须比相邻内部亮这么多（Lab L）；更暗
 HALO_SAT_MIN = 0.15   # 或饱和度比相邻内部高这么多（粉/橙荧光晕）
 # —— 孤立噪点岛参数 ——
 ISLAND_MAX_FRAC = 0.0004   # 岛面积上限（占全图比例；1024² 时约 420px ≈ 2 颗豆）
-# —— 影调增强参数 ——
-SAT_BOOST = 1.12      # 饱和度提升倍数
-STRETCH_LO, STRETCH_HI = 0.5, 99.5   # 分位拉伸百分位
-STRETCH_MAX = 1.6         # 拉伸倍数上限（防压碎暗部/亮部）
-STRETCH_MIN_RANGE = 235   # 原图动态范围已≥此值时跳过拉伸
+# —— 影调校准参数（v7：目标值来自 2026-10-29 的 8 组同源真实标定） ——
+REF_SAT = 0.33        # 参照后端（val-perler）交付图的平均饱和度实测值
+REF_L_RANGE = 73.0    # 参照后端交付图的动态范围（L* p5~p95）实测值
+TONE_TRIGGER = 0.95   # 实测值低于目标这么多比例才动手（留一点余量，防来回抖）
+SAT_MAX_BOOST = 1.25  # 饱和度补齐倍数上限（v6 的无条件 1.12 会让比参照更艳）
+STRETCH_LO, STRETCH_HI = 5.0, 95.0   # 动态范围测量百分位（与标定时用的 p5~p95 同口径）
+STRETCH_MAX = 1.15        # 拉伸倍数上限：实测 1.25 起会把合成用例里的深色描边判成光晕（见 tools/block_cleanup_合成用例.py）
 
 
 def flatness_of(rgb: np.ndarray, opaque: np.ndarray) -> float:
@@ -221,35 +224,63 @@ def suppress_halo(lab: np.ndarray, inner: np.ndarray, opaque: np.ndarray,
     return fixed, info
 
 
-def enhance_tone(rgb: np.ndarray, opaque: np.ndarray) -> tuple[np.ndarray, dict]:
-    """影调增强：饱和度 ×SAT_BOOST + 分位拉伸，仅不透明区，在聚类之前执行
-    （后续 KMeans/众数滤波全部基于增强后的颜色，硬边结构不受影响）。
+def _lab_lightness(rgb01: np.ndarray) -> np.ndarray:
+    """sRGB(0~1) → CIE L*（只要 L，用来判断动态范围）。"""
+    c = np.where(rgb01 <= 0.04045, rgb01 / 12.92, ((rgb01 + 0.055) / 1.055) ** 2.4)
+    y = c[..., 0] * 0.2126 + c[..., 1] * 0.7152 + c[..., 2] * 0.0722
+    eps, kappa = 216 / 24389, 24389 / 27
+    f = np.where(y > eps, np.cbrt(y), (kappa * y + 16) / 116)
+    return 116 * f - 16
 
-    rgb 为 float32 [0,255]；返回（可能新建的）数组与诊断。保守：拉伸仅在
-    动态范围明显偏窄时生效。
+
+def enhance_tone(rgb: np.ndarray, opaque: np.ndarray) -> tuple[np.ndarray, dict]:
+    """影调校准（v7）：把动态范围与饱和度补齐到「参照后端的实测带」，不再无条件提亮。
+
+    v6 是无条件 ×SAT_BOOST(1.12) + 分位拉伸。2026-10-29 用 8 组同源真实数据
+    （同一张原图分别过我方链路与参照后端 val-perler）标定：
+      · 我方生图原始输出饱和度均值 0.327，参照后端 0.332 —— 本就持平，
+        再乘 1.12 会跑到 0.406（比参照更艳），且生成图主色偏离原图约 29%；
+      · 我方原始输出动态范围（L* p5~p95）62.5，参照后端 73.3 —— 确实偏窄，
+        这部分该补。
+    于是改成「按目标补齐」：拉伸倍数 = 目标范围 / 实测范围（封顶 STRETCH_MAX），
+    饱和度只在低于目标时补（封顶 SAT_MAX_BOOST）；两项都达标就整段跳过。
+
+    rgb 为 float32 [0,255]；返回（可能新建的）数组与诊断。
     """
     info: dict = {"enhanced": False}
     px = rgb[opaque]
-    # 饱和度（HSV 的 S = (max-min)/max）
     mx = px.max(axis=1)
     mn = px.min(axis=1)
     sat = np.divide(mx - mn, np.maximum(mx, 1.0),
                     out=np.zeros_like(mx), where=mx > 0)
-    lo, hi = np.percentile(px, STRETCH_LO), np.percentile(px, STRETCH_HI)
-    if sat.mean() < 0.02 and float(hi - lo) >= STRETCH_MIN_RANGE:
-        return rgb, info   # 已经是高对比中性图：不动
-    out = rgb.copy()
-    scale = 255.0 / max(float(hi - lo), 1.0) if float(hi - lo) < STRETCH_MIN_RANGE else 1.0
-    scale = min(scale, STRETCH_MAX)
-    off = lo if scale > 1.0 else 0.0
-    sel = opaque
-    out[sel] = np.clip((out[sel] - off) * scale, 0, 255)
-    # 饱和度：围绕亮度中心放大色度
-    lum = out[sel].mean(axis=1, keepdims=True)
-    out[sel] = np.clip(lum + (out[sel] - lum) * SAT_BOOST, 0, 255)
-    info.update(enhanced=True, stretch=round(float(scale), 3), sat_before=round(float(sat.mean()), 3))
-    return out, info
+    cur_sat = float(sat.mean())
+    lum = _lab_lightness(px / 255.0)
+    cur_range = float(np.percentile(lum, STRETCH_HI) - np.percentile(lum, STRETCH_LO))
 
+    scale = 1.0
+    if cur_range < REF_L_RANGE * TONE_TRIGGER:
+        scale = min(REF_L_RANGE / max(cur_range, 1.0), STRETCH_MAX)
+    boost = 1.0
+    if cur_sat < REF_SAT * TONE_TRIGGER:
+        boost = min(REF_SAT / max(cur_sat, 1e-3), SAT_MAX_BOOST)
+    if scale <= 1.0 + 1e-3 and boost <= 1.0 + 1e-3:
+        info.update(stretch=1.0, sat_boost=1.0, sat_before=round(cur_sat, 3),
+                    l_range_before=round(cur_range, 1))
+        return rgb, info
+
+    out = rgb.copy()
+    if scale > 1.0:
+        # 围绕分区均值做线性对比扩张（不用分位做偏移，避免暗部一片压到 0）
+        center = px.mean(axis=0).astype(np.float32)
+        out[opaque] = np.clip(center + (out[opaque] - center) * scale, 0, 255)
+    if boost > 1.0:
+        sel = out[opaque]
+        mid = sel.mean(axis=1, keepdims=True)
+        out[opaque] = np.clip(mid + (sel - mid) * boost, 0, 255)
+    info.update(enhanced=True, stretch=round(float(scale), 3),
+                sat_boost=round(float(boost), 3), sat_before=round(cur_sat, 3),
+                l_range_before=round(cur_range, 1))
+    return out, info
 
 def clean_image(src: Path, dst: Path, k: int = K_DEFAULT, erode: int = ERODE_DEFAULT) -> dict:
     """清洗一张底稿，返回统计信息（供运行记录）。"""
