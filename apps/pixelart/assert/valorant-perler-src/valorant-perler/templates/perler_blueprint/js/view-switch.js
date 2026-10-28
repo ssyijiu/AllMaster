@@ -26,15 +26,21 @@ if (NO_DOWNLOAD) {
     ? '导出需要用默认浏览器打开：点右上角「···」→「在外部浏览器打开」，进去后再点「⤓ 导出」'
     : '长按转换图图片，可直接保存到相册', 8000, true);
 } else {
-  pixelDlBtn.onclick = async () => {
+  /* 全同步：data URI → atob → Blob → a.click()。不能用 fetch/await——Safari 在异步之后
+   * 用户手势（transient activation）已失效，a.click() 的下载会被静默拦掉（控制台也不报错） */
+  pixelDlBtn.onclick = () => {
     const img = document.querySelector('#view-pixel .frame img');
     if (!img || !img.src) { toast('没有可导出的转换图', 4000, true); return; }
     try {
-      const blob = await (await fetch(img.src)).blob();   // data URI → Blob，走对象 URL 下载（data: 直下会被部分浏览器拦）
+      const parts = img.src.split(',');
+      const mime = (parts[0].match(/data:([^;]+)/) || [0, 'image/png'])[1];
+      const bin = atob(parts[1]);
+      const u8 = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
+      a.href = URL.createObjectURL(new Blob([u8], { type: mime }));
       a.download = `${state.title.replace(/[\\/:*?"<>|]/g, '')}_转换图.png`;
-      a.click();
+      document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 4000);
       toast('转换图已保存');
     } catch (e) { toast('导出失败，可长按图片直接保存', 4000, true); }
