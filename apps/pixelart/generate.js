@@ -405,19 +405,36 @@ function createEngine(options) {
     try { fs.statSync(t.htmlPath); } catch (_) {
       return sendJson(res, 410, { error: { message: '图纸文件已清理' } });
     }
-    /* 图纸页里「导出」的下载文件名要带任务 ID（标题_ID_规格_色数色.png）。
-       图纸是 build_html_blueprint 预先产出的静态单文件，构建时不知道我们的 taskId，
-       所以在下发时把它注入到页面里，模板从 window.PIXELART_TASK_ID 读取。 */
+    /* 图纸页里「导出」的下载文件名要带任务 ID 与后端标识（A_标题_ID_规格_色数色.png）。
+       图纸是 build_html_blueprint 预先产出的静态单文件，构建时不知道我们的 taskId / 用哪个后端，
+       所以在下发时注入到页面里，模板从 window.PIXELART_TASK_ID / window.PIXELART_BACKEND 读取。
+       后端标识：A = 经典版（val-perler.qq.com，/pixelart）  B = 自研（apinebula，主页 /）。 */
+    const BACKEND_TAG = backend === 'valperler' ? 'A' : 'B';
     let body;
     try {
       let html = fs.readFileSync(t.htmlPath, 'utf8');
-      const inject = '<script>window.PIXELART_TASK_ID=' + JSON.stringify(id) + ';</script>';
+      const inject = '<script>window.PIXELART_TASK_ID=' + JSON.stringify(id) +
+        ';window.PIXELART_BACKEND=' + JSON.stringify(BACKEND_TAG) + ';</script>';
       /* 本次改动之前产出的图纸，下载命名是 `${state.title}_${PGW}x${PGH}_${PT.colors}色`，
          里面没有任务 ID 的插槽。对这些旧文件在下发时补上插槽，避免老链接必须重新生成才能带上 ID；
          新图纸自带 `const TASK_ID`，不进这段。命中不到就原样下发，不会破坏旧文件。 */
       if (!html.includes('const TASK_ID =') && html.includes('_${PGW}x${PGH}_${PT.colors}色')) {
         html = html.replace('_${PGW}x${PGH}_${PT.colors}色',
           "${(window.PIXELART_TASK_ID ? '_' + window.PIXELART_TASK_ID : '')}_${PGW}x${PGH}_${PT.colors}色");
+      }
+      /* 旧图纸的文件名模板没有「A/B 后端」前缀插槽（本代改动之前构建的），下发时按三代形态各打一个
+         补丁兜底；新图纸自带 const BACKEND_TAG / BE_TAG 插槽，整段跳过。命中不到就原样跳过。 */
+      if (!html.includes('BACKEND_TAG') && !html.includes('BE_TAG')) {
+        const HEAD = "${state.title.replace(/[\\\\/:*?\"<>|]/g, '')}";
+        const TAGX = "${(window.PIXELART_BACKEND ? window.PIXELART_BACKEND + '_' : '')}";
+        /* 转换图导出名（曾用 `标题_转换图.png`）→ `A_转换图_任务ID.png` */
+        html = html.replace(HEAD + '_转换图.png',
+          TAGX + "转换图${(window.PIXELART_TASK_ID ? '_' + window.PIXELART_TASK_ID : '')}.png");
+        /* 成品图纸导出名（带 const TASK_ID 的一代模板）：前缀插槽 */
+        html = html.replace(HEAD + '${TASK_ID', TAGX + HEAD + '${TASK_ID');
+        /* 更早一代（上面旧文件补丁刚注入 window.PIXELART_TASK_ID 插槽的）同理 */
+        html = html.replace(HEAD + '${(window.PIXELART_TASK_ID',
+          TAGX + HEAD + '${(window.PIXELART_TASK_ID');
       }
       html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + inject) : inject + html;
       body = Buffer.from(html, 'utf8');

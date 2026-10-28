@@ -21,6 +21,11 @@ document.getElementById('mirrorBtn').onclick = e => {
 /* [EXPORT] 转换图导出：图纸页内联的转换图 PNG 原样存盘（格式不变，供对比 / 二次加工）。
  * 沙箱预览（WorkBuddy 产物区 srcdoc）会静默拦掉页面发起的下载，与导出海报同一处理：引导去外部浏览器；手机 WorkBuddy 浏览器则引导长按保存 */
 const pixelDlBtn = document.getElementById('pixelDl');
+/* 文件名：[A/B_]转换图_任务ID.png。后端标识（A=经典版 val-perler / B=自研 apinebula）与任务 ID
+ * 由服务端下发时注入 window.PIXELART_BACKEND / window.PIXELART_TASK_ID；本地直接打开静态文件时
+ * 没有注入，退回「转换图.png」 */
+const BE_TAG = (window.PIXELART_BACKEND || '').toString().trim();
+const TASK_TAG = (window.PIXELART_TASK_ID || '').toString().trim();
 if (NO_DOWNLOAD) {
   pixelDlBtn.onclick = () => toast(PC_SANDBOX
     ? '导出需要用默认浏览器打开：点右上角「···」→「在外部浏览器打开」，进去后再点「⤓ 导出」'
@@ -39,7 +44,7 @@ if (NO_DOWNLOAD) {
       for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([u8], { type: mime }));
-      a.download = `${state.title.replace(/[\\/:*?"<>|]/g, '')}_转换图.png`;
+      a.download = `${BE_TAG ? BE_TAG + '_' : ''}转换图${TASK_TAG ? '_' + TASK_TAG : ''}.png`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 4000);
       toast('转换图已保存');
