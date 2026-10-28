@@ -1,8 +1,8 @@
 # 全员大师 — Caddy 配置（自动 HTTPS）
-# 域名：allmaster.art（已解析到本服务器，且备案通过后才会放行 80/443）
+# 域名：dotbeads.com（需已解析到本服务器，且备案通过后才会放行 80/443）
 # 安装：cp deploy/Caddyfile /etc/caddy/Caddyfile && systemctl reload caddy
 
-allmaster.art, www.allmaster.art {
+dotbeads.com, www.dotbeads.com {
 	encode zstd gzip
 
 	# 反代到本地 Node 服务（server.js，systemd 守护，PORT=8080）
@@ -24,7 +24,7 @@ allmaster.art, www.allmaster.art {
 	}
 
 	log {
-		output file /var/log/caddy/allmaster.log {
+		output file /var/log/caddy/dotbeads.log {
 			roll_size 20MiB
 			roll_keep 5
 		}

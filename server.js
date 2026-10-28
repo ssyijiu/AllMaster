@@ -668,10 +668,11 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === 'GET' && (pathOnly === '/' || pathOnly === '/index.html')) {
-    /* 站点根 → 默认产品页（保留 query：sharecode / ?paid= 等不能丢） */
-    const target = '/apps/avatar/' + (fullUrl.search || '');
-    res.writeHead(302, { Location: target });
-    return res.end();
+    /* 站点根 → 拼豆大师（dotbeads.com 根目录即拼豆首页）。
+       内部重写而非 302：地址栏保持 /，拼豆页资产均为绝对路径（/apps/pixelart/*、/shared/*）不受影响。
+       头像制作大师仍在 /apps/avatar/。 */
+    req.url = '/apps/pixelart/index.html' + (fullUrl.search || '');
+    return serveStatic(req, res);
   }
   if (pathOnly === '/api/ai') {
     if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
