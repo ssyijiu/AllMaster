@@ -46,8 +46,10 @@ function zvInit(view) {
   }, { passive: false });
   /* 拖拽 + 双指捏合：pointer 事件统一处理鼠标与手指 */
   const pts = new Map(); let pan = null, pinch = null;
+  /* 控件层不参与拖拽：pointerdown 里 preventDefault 会吃掉后续 click（按钮点了没反应），
+   * 所以 .zoomctl 与 .canvas-tools 里的按钮必须放行 */
   wrap.addEventListener('pointerdown', e => {
-    if (e.target.closest('.zoomctl')) return;
+    if (e.target.closest('.zoomctl, .canvas-tools')) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     wrap.setPointerCapture(e.pointerId); e.preventDefault();
     pts.set(e.pointerId, [e.clientX, e.clientY]);
@@ -77,7 +79,7 @@ function zvInit(view) {
     if (!pts.size) { pan = null; wrap.classList.remove('panning'); }
   };
   wrap.addEventListener('pointerup', up); wrap.addEventListener('pointercancel', up);
-  wrap.addEventListener('dblclick', e => { if (!e.target.closest('.zoomctl')) zvReset(z); }); // 与图纸双击回到适配一致
+  wrap.addEventListener('dblclick', e => { if (!e.target.closest('.zoomctl, .canvas-tools')) zvReset(z); }); // 与图纸双击回到适配一致
   zvApply(z);
 }
 zvInit('source'); zvInit('pixel');
