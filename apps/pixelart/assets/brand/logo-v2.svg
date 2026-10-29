@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <!-- 点豆 DotBeads Logo v2 · 概念①迭代：豆黄圆角方 + 一笔写成的艺术化 D + 右下角离位的「点」 -->
+  <rect width="96" height="96" rx="22" fill="#FFD02F"/>
+  <path d="M32 26 H44 C 60 26 70 35 70 48 C 70 61 60 70 44 70 H32"
+        fill="none" stroke="#1F1D1A" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="80" cy="76" r="7" fill="#1F1D1A"/>
+</svg>

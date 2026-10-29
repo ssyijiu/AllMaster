@@ -1,8 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
-  <!-- 点豆 DotBeads 主 logo：豆黄底 + 2×2 拼豆阵（饱满实心豆，左上小豆 = 「点」） -->
+  <!-- 点豆 DotBeads Logo v2：豆黄圆角方 + 一笔写成的艺术化 D + 右下角离位的「点」（用户定稿 2026-10-29） -->
   <rect width="96" height="96" rx="22" fill="#FFD02F"/>
-  <circle cx="31" cy="31" r="11" fill="#1F1D1A"/>
-  <circle cx="65" cy="31" r="17" fill="#1F1D1A"/>
-  <circle cx="31" cy="65" r="17" fill="#1F1D1A"/>
-  <circle cx="65" cy="65" r="17" fill="#1F1D1A"/>
+  <path d="M32 26 H44 C 60 26 70 35 70 48 C 70 61 60 70 44 70 H32" fill="none" stroke="#1F1D1A" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="80" cy="76" r="7" fill="#1F1D1A"/>
 </svg>
