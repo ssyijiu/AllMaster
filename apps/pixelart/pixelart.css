@@ -375,6 +375,29 @@
     }
     .done-actions .btn { flex: 1 1 132px; }
 
+    /* ===== 最近生成（本地缩略图回看入口；图纸仅保存 72 小时） ===== */
+    .recent { margin-top: var(--space-5); }
+    .recent-title {
+      margin: 0 0 var(--space-2);
+      font-size: var(--text-sm); font-weight: var(--weight-emphasis); color: var(--meta);
+    }
+    .recent-strip { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+    .recent-item {
+      width: 64px; height: 64px; padding: 0;
+      border: 1px solid var(--border); border-radius: var(--radius-md);
+      overflow: hidden; cursor: pointer; background: var(--bg);
+      transition:
+        transform var(--motion-fast) var(--ease-standard),
+        box-shadow var(--motion-fast) var(--ease-standard),
+        border-color var(--motion-fast) var(--ease-standard);
+    }
+    .recent-item:hover {
+      transform: translateY(-2px);
+      border-color: var(--amber-300);
+      box-shadow: var(--card-hover-shadow);
+    }
+    .recent-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
     /* ===== 提示与弹窗关闭钮 ===== */
     #studioMsg.warn, .hint.warn { color: var(--danger); }
     .btn-close-modal {

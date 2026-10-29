@@ -68,6 +68,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     watchAbort: null,     /* SSE 连接的 AbortController（浏览器不支持时为 null） */
     lastTaskId: null,
     regenActive: false,   /* 本轮观察的是「一键重转」任务（不扣积分，文案不同） */
+    recent: [],           /* 最近生成：[{ id, thumb, style, time }]，最多 RECENT_MAX 条 */
     lastTxnId: null
   };
 
@@ -298,6 +299,110 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     studioMsg(wasRegen ? '重转完成，未消耗积分。图纸页里可切规格、改色号、导出。' : '生成完成，消耗 1 积分。图纸页里可切规格、改色号、导出。', false);
   }
 
+  /* ---------- 最近生成（本地回看入口，最多 6 条） ----------
+   * 缩略图取自本次上传图（canvas 压到 200px JPEG），任务 ID 指向图纸页；
+   * 服务端图纸只保留 72 小时，渲染时过滤过期条目（与 TASK_DISK_TTL_MS 对齐）。 */
+  var RECENT_MAX = 6;
+  var RECENT_TTL_MS = 72 * 60 * 60 * 1000;
+  var RECENT_LS_KEY = 'pixelart-recent-v1';
+
+  function makeThumb(dataUrl, cb) {
+    try {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var side = Math.min(img.width, img.height);
+          var cv = document.createElement('canvas');
+          cv.width = 200; cv.height = 200;
+          var ctx = cv.getContext('2d');
+          /* 居中方形裁剪，避免缩略图变形 */
+          ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, 200, 200);
+          cb(cv.toDataURL('image/jpeg', 0.8));
+        } catch (_) { cb(null); }
+      };
+      img.onerror = function () { cb(null); };
+      img.src = dataUrl;
+    } catch (_) { cb(null); }
+  }
+
+  function styleLabel() {
+    for (var i = 0; i < Store.styles.length; i++) {
+      if (Store.styles[i].id === Store.styleId) { return Store.styles[i].label; }
+    }
+    return '';
+  }
+
+  function addRecent(taskId) {
+    var entry = { id: taskId, thumb: null, style: styleLabel(), time: Date.now() };
+    Store.recent.unshift(entry);
+    if (Store.recent.length > RECENT_MAX) { Store.recent.length = RECENT_MAX; }
+    renderRecent();
+    makeThumb(Store.imgDataUrl, function (small) {
+      if (!small) { return; }
+      entry.thumb = small;
+      persistRecent();
+      renderRecent();
+    });
+  }
+
+  function persistRecent() {
+    try {
+      var now = Date.now();
+      localStorage.setItem(RECENT_LS_KEY, JSON.stringify(
+        Store.recent.filter(function (r) {
+          return r && r.thumb && (now - (r.time || 0)) < RECENT_TTL_MS;
+        })
+      ));
+    } catch (_) { /* 配额满/隐私模式：静默，仅会话内可见 */ }
+  }
+
+  function restoreRecent() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(RECENT_LS_KEY) || '[]');
+      var now = Date.now();
+      /* 恢复时就地清掉过期条目（persistRecent 随后写回时会一并清出 LS） */
+      Store.recent = Array.isArray(saved)
+        ? saved.filter(function (r) {
+            return r && r.id && r.thumb && (now - (r.time || 0)) < RECENT_TTL_MS;
+          })
+        : [];
+    } catch (_) { Store.recent = []; }
+    renderRecent();
+  }
+
+  function renderRecent() {
+    var wrap = $('recentWrap'), strip = $('recentStrip');
+    if (!wrap || !strip) { return; }
+    var now = Date.now();
+    /* 只过滤显示（过期/无缩略图的不渲染），不改写 Store.recent ——
+     * 缩略图由 makeThumb 异步回填，破坏性过滤会把没回填完的条目误删 */
+    var visible = Store.recent.filter(function (r) {
+      return r && r.id && r.thumb && (now - (r.time || 0)) < RECENT_TTL_MS;
+    });
+    if (!visible.length) {
+      wrap.hidden = true;
+      strip.innerHTML = '';
+      return;
+    }
+    wrap.hidden = false;
+    strip.innerHTML = '';
+    for (var i = 0; i < visible.length; i++) {
+      (function (r) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'recent-item';
+        btn.title = (r.style ? r.style + ' · ' : '') +
+          new Date(r.time).toLocaleString() + ' · 点击回看图纸（仅保存 72 小时）';
+        var img = document.createElement('img');
+        img.src = r.thumb;
+        img.alt = '最近生成的图纸缩略图';
+        btn.appendChild(img);
+        btn.addEventListener('click', function () { openTaskHtml(r.id); });
+        strip.appendChild(btn);
+      })(visible[i]);
+    }
+  }
+
   function generateFlow() {
     if (Store.generating) { return; }
     studioMsg('');
@@ -401,6 +506,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     setGenerating(false);
     openTaskHtml(taskId);
     showDone(taskId);
+    addRecent(taskId);
     updateSteps();
   }
 
@@ -519,6 +625,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     bindSubject();
     bindGenerate();
     loadStyles();
+    restoreRecent();
   }
 
   function cloudBootstrap() {
@@ -598,7 +705,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
   var wallet = auth.walletService;
 
   /* 测试钩子：jsdom 测试直接驱动内部状态与流程（线上无依赖方，仅挂 window 属性） */
-  window.__pixelart = { store: Store, generateFlow: generateFlow, regenFlow: regenFlow, acceptFile: acceptFile, renderStyleStrip: renderStyleStrip };
+  window.__pixelart = { store: Store, generateFlow: generateFlow, regenFlow: regenFlow, acceptFile: acceptFile, renderStyleStrip: renderStyleStrip, addRecent: addRecent, renderRecent: renderRecent, restoreRecent: restoreRecent, persistRecent: persistRecent, makeThumb: makeThumb };
 
   restoreAuth();
 })();
