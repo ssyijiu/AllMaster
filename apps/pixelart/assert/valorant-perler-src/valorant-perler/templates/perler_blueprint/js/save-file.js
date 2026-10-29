@@ -38,13 +38,13 @@ function saveFileKeys() {
   } catch (e) {}
 })();
 
-/* 文件名：【拼豆专家】标题-v版本号-保存时刻.html；版本号取当前规格 × 色板 × 色数下最新的版本（与「已保存 · vN」一致） */
+/* 文件名：【点豆】标题-v版本号-保存时刻.html；版本号取当前规格 × 色板 × 色数下最新的版本（与「已保存 · vN」一致） */
 function saveFileName() {
   const d = new Date(), p = n => String(n).padStart(2, '0');
   const stamp = `${d.getMonth() + 1}月${d.getDate()}日_${d.getHours()}点${d.getMinutes()}分${d.getSeconds()}秒`;
   const name = (state.title || D.taskName).replace(/[\\/:*?"<>|]/g, '').trim() || '拼豆图纸';
   const vl = verList(), ver = vl.length ? `-v${vl[vl.length - 1].n}` : '';
-  return `【拼豆专家】${name}${ver}-${stamp}.html`;
+  return `【点豆】${name}${ver}-${stamp}.html`;
 }
 
 /* 页面被嵌在 srcdoc 沙盒里（如 WorkBuddy 产物区）时，页面发起的下载、另存为窗口都会被静默拦掉；

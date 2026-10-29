@@ -20,7 +20,7 @@ alignment_search 已选好的对齐结果。颜色数量档位在默认簇上树
 
 不传 --source 时页面不出现「原图」页签（文生图等没有原图的场景）。
 
-产出 output/【拼豆专家】捷风的胜利手势-10月15日_9点30分5秒.html：单个自包含文件（数据、three.js、图片全部内联），
+产出 output/【点豆】捷风的胜利手势-10月15日_9点30分5秒.html：单个自包含文件（数据、three.js、图片全部内联），
 玩家可直接转发，双击即开（3D 看法也不需要 http）。文件名带渲染时刻，同一任务多次修改不会互相覆盖。
 底稿与原图保存在任务目录 .wip/ 下，供后续改图复用。
 """
@@ -121,7 +121,7 @@ UNSAFE_NAME_CHARS = re.compile(r'[/\\:*?"<>|\x00-\x1f]')
 
 
 def html_file_name(task_name: str, rendered_at: str) -> str:
-    """交付 HTML 的文件名：【拼豆专家】{任务名}-{M月D日}_{H点M分S秒}.html。
+    """交付 HTML 的文件名：【点豆】{任务名}-{M月D日}_{H点M分S秒}.html。
 
     rendered_at 是页面副标题用的同一时刻（HTML_TIMEZONE），文件名与页面显示因此天然一致。
     时间只到月日与时分秒，不带年份、不补零；任务名撞名不做区分，版本区分靠页面内保存的 -vN。
@@ -130,7 +130,7 @@ def html_file_name(task_name: str, rendered_at: str) -> str:
     safe = UNSAFE_NAME_CHARS.sub("", task_name).strip().strip(".")
     d = datetime.strptime(rendered_at, "%Y-%m-%d %H:%M:%S")
     stamp = f"{d.month}月{d.day}日_{d.hour}点{d.minute}分{d.second}秒"
-    return f"【拼豆专家】{safe}-{stamp}.html"
+    return f"【点豆】{safe}-{stamp}.html"
 
 
 def img_data_uri(path: Path) -> str:

@@ -1,5 +1,5 @@
 /* =========================================================
- * 拼豆大师 · 页面级样式
+ * 点豆（原拼豆大师） · 页面级样式
  * 布局与组件规格 1:1 对齐「头像制作大师」（apps/avatar/avatar.css），
  * 仅新增拼豆特有组件：主体分段控件 / 积分角标 / 完成态跳转。
  * ========================================================= */
@@ -18,11 +18,12 @@
     .brand { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-md); font-weight: var(--weight-announce); letter-spacing: -0.01em; }
     .brand-logo {
       width: 30px; height: 30px; border-radius: 9px;
-      background: #FFD02F; color: #1C1C1E;
+      background: #FFD02F;
       display: inline-flex; align-items: center; justify-content: center;
       box-shadow: 0 2px 6px rgba(240, 187, 0, 0.45);
     }
-    .brand-logo svg { width: 17px; height: 17px; display: block; }
+    .brand-logo svg { width: 18px; height: 18px; display: block; }
+    .brand-en { font-size: 10px; letter-spacing: 2px; color: #8A867C; font-weight: 500; padding-bottom: 2px; }
 
     .page {
       max-width: var(--container-max); margin: 0 auto;

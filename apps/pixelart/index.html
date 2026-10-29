@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="拼豆大师：上传图片，AI 生成可编辑、可导出的拼豆图纸。登录、积分钱包与「全员大师」平台全产品通用。" />
-  <title>拼豆大师 · AI 生成拼豆图纸</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23FFD02F'/%3E%3Ccircle cx='11' cy='11' r='2.6' fill='%231C1C1E'/%3E%3Ccircle cx='21' cy='11' r='2.6' fill='%231C1C1E'/%3E%3Ccircle cx='16' cy='16' r='2.6' fill='%231C1C1E'/%3E%3Ccircle cx='11' cy='21' r='2.6' fill='%231C1C1E'/%3E%3Ccircle cx='21' cy='21' r='2.6' fill='%231C1C1E'/%3E%3C/svg%3E" />
+  <meta name="description" content="点豆 DotBeads：上传图片，AI 生成可编辑、可导出的拼豆图纸。点豆科技旗下产品，登录与积分全平台通用。" />
+  <title>点豆 DotBeads · 照片变图纸，一点就成</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23FFD02F'/%3E%3Ccircle cx='10' cy='10' r='2.6' fill='none' stroke='%231F1D1A' stroke-width='2.4'/%3E%3Ccircle cx='22' cy='10' r='4.4' fill='%231F1D1A'/%3E%3Ccircle cx='10' cy='22' r='2.6' fill='none' stroke='%231F1D1A' stroke-width='2.4'/%3E%3Ccircle cx='22' cy='22' r='2.6' fill='none' stroke='%231F1D1A' stroke-width='2.4'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/shared/base.css" />
-  <link rel="stylesheet" href="/apps/pixelart/pixelart.css?v=20261026b" />
+  <link rel="stylesheet" href="/apps/pixelart/pixelart.css?v=20261029a" />
 </head>
 <body>
   <!-- ===== Section P1: SVG 图标 Sprite（Lucide 规格：viewBox 24 / stroke 1.5 / currentColor） ===== -->
@@ -29,15 +29,15 @@
     <div class="topbar-inner">
       <div class="brand">
         <span class="brand-logo" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none">
-            <circle cx="8" cy="8" r="2.3" fill="currentColor"/>
-            <circle cx="16" cy="8" r="2.3" fill="currentColor"/>
-            <circle cx="12" cy="12" r="2.3" fill="currentColor"/>
-            <circle cx="8" cy="16" r="2.3" fill="currentColor"/>
-            <circle cx="16" cy="16" r="2.3" fill="currentColor"/>
+          <svg viewBox="0 0 96 96" fill="none">
+            <circle cx="32" cy="32" r="9" stroke="#1F1D1A" stroke-width="7.5"/>
+            <circle cx="64" cy="32" r="13" fill="#1F1D1A"/>
+            <circle cx="32" cy="64" r="9" stroke="#1F1D1A" stroke-width="7.5"/>
+            <circle cx="64" cy="64" r="9" stroke="#1F1D1A" stroke-width="7.5"/>
           </svg>
         </span>
-        <span>拼豆大师</span>
+        <span>点豆</span>
+        <span class="brand-en">DOTBEADS</span>
       </div>
       <div class="topbar-actions">
         <button class="btn secondary" id="btnLogin" type="button" hidden>
@@ -60,8 +60,8 @@
   <main class="page">
     <!-- ===== Section P3: Hero + 步骤条（三步，与头像页一致） ===== -->
     <section class="hero">
-      <h1>上传图片，一键生成拼豆图纸</h1>
-      <p>选择喜欢的画风，AI 把图片转成可逐格编辑的豆子图纸，改完即可导出。</p>
+      <h1>照片变图纸，一点就成</h1>
+      <p>点豆 · AI 拼豆图纸生成：选喜欢的画风，把图片转成可逐格编辑的豆子图纸，改完即可导出。</p>
     </section>
 
     <div class="steps" aria-label="使用步骤">
@@ -157,7 +157,7 @@
     </div>
 
     <footer class="footer">
-      <p>「全员大师」平台产品 · 拼豆大师 · 积分全平台通用，生成失败自动退回</p>
+      <p>点豆科技旗下产品 · 点豆 DotBeads · dotbeads.com · 积分全平台通用，生成失败自动退回</p>
     </footer>
   </main>
 
@@ -206,7 +206,7 @@
           <svg class="icon icon-16" aria-hidden="true"><use href="#i-x"/></svg>
         </button>
       </div>
-      <p class="modal-desc">积分在「全员大师」全产品通用；生成拼豆图纸每次消耗 1 积分，生成失败自动退回。</p>
+      <p class="modal-desc">积分在「点豆科技」平台全产品通用；生成拼豆图纸每次消耗 1 积分，生成失败自动退回。</p>
       <p class="wallet-balance">当前余额 <b id="walletBalanceBig">–</b> 积分</p>
       <span class="group-label">充值套餐</span>
       <div class="product-grid" id="productGrid"></div>

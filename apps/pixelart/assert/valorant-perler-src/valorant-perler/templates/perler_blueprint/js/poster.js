@@ -425,7 +425,7 @@ function drawPoster(g) {
     if (unit) { txt(g, unit, sx + w + 3, sy + 37, { size: 13, weight: 300, color: C.mut, font: TS }); g.font = `300 13px ${TS}`; w += 3 + g.measureText(unit).width; }
     sx += w + 40;
   });
-  const tag = P.main === 'iron' ? '拼豆图纸烫后效果分享' : '拼豆图纸分享';   // 角标随主图：图纸 / 烫后效果
+  const tag = P.main === 'iron' ? '点豆图纸烫后效果分享' : '点豆图纸分享';   // 角标随主图：图纸 / 烫后效果
   g.font = `700 12px ${TS}`;
   const tw = g.measureText(tag).width + 6 * 1.5 + 22, tx = PW - M - tw;
   if (tx > sx - 20) {
