@@ -1,14 +1,14 @@
     /* =========================================================
-    * 点豆 DotBeads · 页面级样式（2026-10-29 设计稿三版：居中 Hero + 圆形步骤条）
+    * 点豆 DotBeads · 页面级样式（2026-10-29 设计稿四版：渐变底 + 黄油体面板标题）
     * 设计基准：Ardot 设计稿「01 首页·工作区 / 03 登录弹窗 / 04 积分钱包弹窗」
-    * 近白底 #FAFAF8 + 豆黄 #FFD02F + 墨 #1F1D1A + 浅米 #F2EDE0
+    * 渐变底 #FFFFFF→#FAFBFC→#F7F8FA + 面板描边 #E5E7EC + 豆黄 #FFD02F + 墨 #1F1D1A
     * 本文件只在拼豆页加载，token 覆盖不影响其他产品页。
     * ========================================================= */
 
     /* ===== 品牌字体：站酷庆科黄油体（设计稿指定） =====
-     * 仅子集化「点豆一下，就有」7 字（1.7KB），覆盖品牌名与 Hero 标题；
-     * 其余字符自动回退到系统圆体栈。
-     * 若 slogan 改字，需重新生成子集：
+     * 子集化 19 字「点豆一下，就有 + 上传图片选择画风生成结果」（3.7KB），
+     * 覆盖品牌名、Hero 标题与三处面板标题；其余字符自动回退到系统圆体栈。
+     * 若文案改字，需重新生成子集：
      * https://fonts.googleapis.com/css2?family=ZCOOL+QingKe+HuangYou&text=<新文案>
      */
     @font-face {
@@ -17,13 +17,13 @@
       font-weight: 400;
       font-display: swap;
       src: url("assets/fonts/zcool-qingke-huangyou-brand.woff2") format("woff2");
-      unicode-range: U+4E00, U+4E0B, U+5C31, U+6709, U+70B9, U+8C46, U+FF0C;
+      unicode-range: U+4E00-4E0B, U+4F20, U+56FE, U+5C31, U+6210, U+62E9, U+6709, U+679C, U+70B9, U+7247, U+751F, U+753B, U+7ED3, U+8C46, U+9009, U+98CE, U+FF0C;
     }
 
-    /* ===== Token 覆盖：墨色主 CTA / 冷灰白底 / 暖色描边（2026-10-29 二版设计稿） ===== */
+    /* ===== Token 覆盖：墨色主 CTA / 渐变底 / 冷灰描边（2026-10-29 四版设计稿） ===== */
     :root {
-      --bg: #FAFAF8;
-      --border-soft: #ECE7D5;
+      --bg: #F7F8FA;
+      --border-soft: #E5E7EC;
       --btn-primary-bg:     #1F1D1A;
       --btn-primary-text:   #FFFFFF;
       --btn-primary-hover:  #3A3730;
@@ -31,19 +31,22 @@
       --btn-secondary-bg:     #FFFFFF;
       --btn-secondary-border: #1F1D1A;
       --btn-secondary-text:   #1F1D1A;
-      --btn-secondary-hover:  #FBF8F2;
-      --input-bg:           #FAFAF8;
-      --input-border:       #EDE7D6;
+      --btn-secondary-hover:  #F7F8FA;
+      --input-bg:           #FFFFFF;
+      --input-border:       #E5E7EC;
       --input-focus-border: #F0BB00;
       --card-selected-ring: 0 0 0 2px #FFFFFF, 0 0 0 4px #FFD02F;
-      --card-hover-shadow:  0 6px 16px rgba(97, 82, 21, 0.10);
+      --card-hover-shadow:  0 6px 16px rgba(31, 41, 55, 0.10);
       --focus-ring: 0 0 0 3px rgba(240, 187, 0, 0.35);
     }
 
     /* ===== 布局（容器 / 顶栏 / Hero / 步骤 / 双栏） ===== */
+    /* 页面底：垂直渐变（设计师 spec：#FFFFFF → 420px 处 #FAFBFC → #F7F8FA） */
     body {
-      background-color: var(--bg);
-      background-image: none;
+      background-color: #F7F8FA;
+      background-image: linear-gradient(180deg, #FFFFFF 0px, #FAFBFC 420px, #F7F8FA 100%);
+      background-repeat: no-repeat;
+      background-size: 100% 100%;
     }
     .topbar {
       position: sticky; top: 0; z-index: 20;
@@ -106,7 +109,7 @@
     }
     .hero p {
       font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-      margin-top: 16px; color: #9A9A9A; font-size: 17px; font-weight: 400; letter-spacing: 0;
+      margin-top: 8px; color: #5F6478; font-size: 14px; font-weight: 400; letter-spacing: 0;
     }
 
     /* 步骤条：居中圆形序号式，去药丸（设计稿三版）——当前步黄圆，未到步米圆 */
@@ -123,7 +126,7 @@
     }
     .step-num {
       width: 28px; height: 28px; border-radius: var(--radius-full);
-      background: #F2EDE0; color: #1F1D1A;
+      background: #F2F3F6; color: #1F1D1A;
       display: inline-flex; align-items: center; justify-content: center;
       font-size: var(--text-xs); font-weight: var(--weight-announce);
       transition: background-color var(--motion-base) var(--ease-standard), color var(--motion-base) var(--ease-standard);
@@ -148,9 +151,11 @@
       box-shadow: var(--shadow-sm);
       padding: var(--space-6);
     }
+    /* 面板标题：黄油体 20px 墨色（设计稿四版「上传图片 / 选择画风 / 生成结果」） */
     .panel-title {
-      font-size: var(--text-md); font-weight: var(--weight-announce);
-      letter-spacing: -0.01em;
+      font-family: "ZCOOL QingKe HuangYou", "Yuanti SC", "Hiragino Maru Gothic ProN", "YouYuan", "PingFang SC", sans-serif;
+      font-size: 20px; font-weight: 400;
+      letter-spacing: 0;
       margin: var(--space-5) 0 var(--space-3);
       display: flex; align-items: center; gap: var(--space-2); color: var(--fg);
     }
@@ -165,7 +170,7 @@
     /* ===== 上传区（Empty / Dragover / 已选 三态） ===== */
     .upload-zone {
       min-height: 170px;
-      border: 1.5px dashed #797979;
+      border: 1.5px dashed #7A7A7A;
       border-radius: var(--radius-lg);
       background: var(--bg);
       cursor: pointer; outline: none;
@@ -210,10 +215,10 @@
     .btn-remove-photo:hover { background: var(--danger-bg); color: var(--danger); }
     #errFile { margin-top: var(--space-2); }
 
-    /* ===== 主体类型分段：米色槽 + active 墨底反白（设计稿） ===== */
+    /* ===== 主体类型分段：冷灰槽 + active 墨底反白（设计稿四版 #F2F3F6） ===== */
     .seg {
       display: inline-flex; gap: 2px; padding: 4px;
-      background: #F2EDE0; border-radius: 12px;
+      background: #F2F3F6; border-radius: 12px;
       margin-bottom: var(--space-3);
     }
     .seg-btn {
@@ -387,11 +392,11 @@
     /* ===== 提示与弹窗关闭钮 ===== */
     #studioMsg.warn, .hint.warn { color: var(--danger); }
     .btn-close-modal {
-      border: none; background: #F2EDE0; color: var(--muted); cursor: pointer;
+      border: none; background: #F2F3F6; color: var(--muted); cursor: pointer;
       border-radius: var(--radius-full);
       display: inline-flex; align-items: center; justify-content: center;
     }
-    .btn-close-modal:hover { background: #EAE3D0; color: var(--fg); }
+    .btn-close-modal:hover { background: #E8EAEE; color: var(--fg); }
 
     /* ===== 钱包弹窗（设计稿 04） ===== */
     .wallet-balance {
@@ -407,15 +412,15 @@
     }
     .wallet-balance .wb-num { font-size: 15px; font-weight: 700; color: #1F1D1A; }
     .product-card {
-      background: #FAFAF8; border: 1px solid #EDE7D6; border-radius: 14px;
+      background: #F7F8FA; border: 1px solid #E5E7EC; border-radius: 14px;
       padding: var(--space-3) var(--space-2); gap: 3px;
     }
     .product-card .p-credits { font-size: 18px; font-weight: 700; color: var(--fg); }
     .product-card .btn { margin-top: 6px; height: 30px; font-size: var(--text-xs); border-radius: var(--radius-full); }
     .txn-list {
-      border: none; background: #FAFAF8; border-radius: 14px; max-height: 220px;
+      border: none; background: #F7F8FA; border-radius: 14px; max-height: 220px;
     }
-    .txn-item { border-bottom: 1px solid #EDE7D6; padding: 10px 14px; font-size: var(--text-sm); }
+    .txn-item { border-bottom: 1px solid #E5E7EC; padding: 10px 14px; font-size: var(--text-sm); }
     .txn-item .t-credits.minus { color: var(--fg); }
     .txn-item .t-credits.plus { color: #2E9E63; }
 
