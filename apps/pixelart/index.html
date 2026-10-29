@@ -7,7 +7,7 @@
   <title>点豆 DotBeads · 点一下，豆就有</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='22' fill='%23FFD02F'/%3E%3Cpath d='M32 26 H44 C 60 26 70 35 70 48 C 70 61 60 70 44 70 H32' fill='none' stroke='%231F1D1A' stroke-width='14' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='80' cy='76' r='7' fill='%231F1D1A'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/shared/base.css" />
-  <link rel="stylesheet" href="/apps/pixelart/pixelart.css?v=20261029b" />
+  <link rel="stylesheet" href="/apps/pixelart/pixelart.css?v=20261029c" />
 </head>
 <body>
   <!-- ===== Section P1: SVG 图标 Sprite（Lucide 规格：viewBox 24 / stroke 1.5 / currentColor） ===== -->
@@ -58,10 +58,6 @@
   <main class="page">
     <!-- ===== Section P3: Hero + 步骤条（三步，与头像页一致） ===== -->
     <section class="hero">
-      <span class="hero-bead b1" aria-hidden="true"></span>
-      <span class="hero-bead b2" aria-hidden="true"></span>
-      <span class="hero-bead b3" aria-hidden="true"></span>
-      <span class="hero-bead b4" aria-hidden="true"></span>
       <h1>点一下，<em>豆就有</em></h1>
       <p>照片一键变拼豆图纸</p>
     </section>
@@ -128,7 +124,7 @@
 
       <!-- ===== Section P5: 右栏（生成结果：空 / 生成中 / 完成跳转） ===== -->
       <section class="panel result-panel">
-        <h2 class="panel-title"><svg class="icon icon-20" aria-hidden="true"><use href="#i-image"/></svg>生成结果</h2>
+        <h2 class="panel-title"><svg class="icon icon-20" aria-hidden="true"><use href="#i-sparkles"/></svg>生成结果</h2>
         <div class="result-stage">
           <div class="result-empty" id="resultEmpty">
             <svg class="icon icon-24" aria-hidden="true"><use href="#i-image"/></svg>
@@ -140,8 +136,13 @@
             <button class="btn ghost small" id="btnCancelPoll" type="button">后台等待</button>
           </div>
           <div class="result-done" id="genDone" hidden>
-            <span class="done-badge"><svg class="icon icon-24" aria-hidden="true"><use href="#i-check"/></svg></span>
-            <p class="gen-done-msg" id="genDoneMsg"></p>
+            <div class="done-banner">
+              <span class="done-badge"><svg class="icon icon-16" aria-hidden="true"><use href="#i-check"/></svg></span>
+              <p class="gen-done-msg" id="genDoneMsg"></p>
+            </div>
+            <div class="bead-demo" aria-hidden="true">
+              <span class="bead-note">↖ 每个豆都能改</span>
+            </div>
             <div class="done-actions">
               <button class="btn primary" id="btnOpenResult" type="button">
                 <svg class="icon icon-16" aria-hidden="true"><use href="#i-image"/></svg>
@@ -209,12 +210,11 @@
         </button>
       </div>
       <p class="modal-desc">积分在「点豆科技」平台全产品通用；生成拼豆图纸每次消耗 1 积分，生成失败自动退回。</p>
-      <p class="wallet-balance">当前余额 <b id="walletBalanceBig">–</b> 积分</p>
+      <p class="wallet-balance"><span class="wb-label">当前余额</span><span class="wb-num"><b id="walletBalanceBig">–</b>积分</span></p>
       <span class="group-label">充值套餐</span>
       <div class="product-grid" id="productGrid"></div>
       <p class="hint" id="payChannelsNote"></p>
-      <div class="login-divider"><span>或</span></div>
-      <span class="group-label">兑换码兑换</span>
+      <div class="login-divider"><span>兑换码</span></div>
       <div class="phone-row">
         <input type="text" id="redeemCode" class="text-input mono" placeholder="输入兑换码" />
         <button class="btn secondary small" id="btnRedeem" type="button">兑换</button>
