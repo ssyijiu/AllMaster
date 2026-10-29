@@ -55,7 +55,8 @@ ART_STYLES = {
 CHARACTER_ONLY_STYLES = {s["id"] for s in json.loads(
     (SCRIPTS.parent / "assets" / "style_guide.json").read_text(encoding="utf-8"))["styles"]
     if s.get("scope") == "character" and s["id"] != "original"}
-DEFAULT_ART_STYLE = "official"   # 人物默认走「官方同款」（对标参照后端观感）
+DEFAULT_ART_STYLE = "official"        # 人物默认走「官方同款」（对标参照后端观感）
+DEFAULT_ART_STYLE_PROP = "original"    # 道具默认仍是「还原」（与参照端行为一致）
 PALETTE_CSV = SCRIPTS / "palette_mard221.csv"
 IMAGE_RENDER = SCRIPTS / IMAGE_SCRIPT_NAME
 BLOCK_CLEANUP = SCRIPTS / "block_cleanup.py"
@@ -137,13 +138,15 @@ def art_style_name(value: str) -> str | None:
     return None
 
 
-def resolve_art_style(value: str | None) -> tuple[str, dict]:
+def resolve_art_style(value: str | None, subject: str = "character") -> tuple[str, dict]:
     """--art-style 的取值 → (运行记录.json 里记录的画风, art_style slot)。
 
-    None 取默认画风「还原」；库里的名字读对应正文；其他文字套进 custom.md 当作自定义画风。
+    None 取默认画风：人物 =「官方同款」（对标参照端观感），道具 =「还原」
+    —— 因为「官方同款」是 character 限定画风，道具沿用它会直接被闸门拦下。
+    库里的名字读对应正文；其他文字套进 custom.md 当作自定义画风。
     """
     if value is None:
-        value = DEFAULT_ART_STYLE
+        value = DEFAULT_ART_STYLE_PROP if subject == "prop" else DEFAULT_ART_STYLE
     if not value.strip():
         raise ValueError("画风不能为空")
     name = art_style_name(value)
@@ -180,12 +183,13 @@ def compose_prompt_json(size: int, subject: str, prompt_json_path: Path | None, 
                                  .replace("{GRID}", str(target_size * 2))}
     style_name = None
     if art_style is not None:
-        style_name, actual["art_style"] = resolve_art_style(art_style)
+        style_name, actual["art_style"] = resolve_art_style(art_style, subject)
     elif isinstance(actual.get("art_style"), dict) and "text" in actual["art_style"] \
             and art_style_name(str(actual["art_style"]["text"])) is not None:
-        style_name, actual["art_style"] = resolve_art_style(str(actual["art_style"]["text"]))
+        style_name, actual["art_style"] = resolve_art_style(
+            str(actual["art_style"]["text"]), subject)
     elif "art_style" not in actual and edit_request is None:
-        style_name, actual["art_style"] = resolve_art_style(None)
+        style_name, actual["art_style"] = resolve_art_style(None, subject)
     if style_name == "misty-pencil" and edit_request is None and not has_task_mission:
         # 灰雾配色由画风控制，拼豆要求使用完整 pixel_style。
         actual["task_mission"] = None
