@@ -56,11 +56,17 @@ def pair_meta(group: str) -> tuple[str, str]:
     31 组之后的数据集就是这么命名的，直接用它组提示词，才能和用户手上那张
     val-perler 转换图口径一致地比。
     """
+    known = {"还原", "官方同款", "Q版", "q版", "贴纸", "像素大头小图", "像素大头",
+             "手绘头像", "柔彩手绘", "粉彩手绘", "低饱和彩铅", "手绘小人", "简笔小人",
+             "手绘表情包"}
     for f in sorted((DATA / group).iterdir()):
         if f.is_file() and f.name.startswith("A_"):
             parts = Path(f).stem.split("_")
             tag = parts[2] if len(parts) > 2 else ""
             notes = "_".join(parts[3:-1]) if len(parts) > 4 else ""
+            # 有些组的文件名在标签位置是一个 hash（G47），照字面传进去会被当成自定义画风
+            if tag not in known:
+                tag = ""
             return tag, notes
     return "", ""
 

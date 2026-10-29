@@ -58,7 +58,6 @@ import numpy as np
 from PIL import Image
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.ndimage import distance_transform_edt, label as nd_label
-from skimage.filters.rank import modal
 from skimage.morphology import erosion, footprint_rectangle
 
 # 调色板簇数：2026-10-30 由 24 提到 96。理由：24 会把生图画出的 2~3 档硬边明暗
@@ -86,12 +85,17 @@ HALO_SAT_MIN = 0.15   # 或饱和度比相邻内部高这么多（粉/橙荧光�
 HALO_SCAN_MAX = 8     # 诊断 JSON 里最多记录几个簇（按面积降序，够判调优用）
 
 # —— 近色并档参数（v8，2026-10-30）——
-MERGE_DE = 8.0          # 并档阈值：Lab 感知色差小于它就并成一档（肉眼基本分不出）
+MERGE_DE = 8.0          # 并档阈值（v9 起只用于光晕检测的粗并档）
+HALO_DE = 16.0          # 光晕检测用的粗并档阈值：只求把画面分成几十块来「找出」光晕
 SHADE_QUANT = 6         # 并档前先把颜色量化到 6 级，消掉同一档内部的 ±2 抖动
 SHADE_MIN_PX = 8        # 面积小于这么多的颜色视为散点，直接并入最近档
 SHADE_MAX_UNIQUE = 3000 # 参与聚类的唯一色上限（按面积取前 N，控住层次聚类的耗时）
-MODAL_WIN = 3           # 去散点的小窗众数滤波（远小于 v7 的 pitch 窗口，不吃明暗档）
 LABEL_MAX = 250         # 档号上限：255 是不透明哨兵，超了就自动放宽并档阈值
+
+# —— 散点清理（v9 的主清洁手段）——
+SPECK_QUANT = 6         # 判定「同色」的量化粒度
+SPECK_MAX_PX = 14       # 同色连通域小于这么大就当散点（约 3x4 像素）
+SPECK_MAX_RATIO = 0.08  # 散点占主体超过这个比例就整体放过：那多半是细颗粒画法不是噪点
 
 # —— 诊断埋点（默认全关，环境变量开启）——
 # PERLER_CLEANUP_JSON=<path>   写完整诊断 JSON（链路侧据此决定是否留 RAW）
@@ -170,6 +174,105 @@ def normalize_background(a: np.ndarray) -> tuple[np.ndarray, dict]:
     return out, info
 
 
+def suppress_halo_rgb(rgb: np.ndarray, opaque: np.ndarray,
+                      inner: np.ndarray) -> tuple[np.ndarray, dict]:
+    """光晕抑制（v9 版）：先粗并成几十档只为「找出」光晕，再只替换那几块像素。
+
+    与 v8 的区别：v8 把全图重建为各档代表色（连正常颜色一起被换掉），
+    这里只动被判成光晕的像素，其余像素保持模型原本画的颜色。
+    """
+    info: dict = {"halo_clusters": 0}
+    lab_full, _centers, n_shades, de_used = shade_palette(rgb, opaque, de=HALO_DE)
+    info["halo_de"] = de_used
+    lab = lab_full.copy()
+    lab[~inner] = SENTINEL          # 判定只看内部（边缘混色不参与）
+    _lab2, halo_info = suppress_halo(lab, inner, opaque, rgb, n_shades)
+    info.update(halo_info)
+    if not info.get("halo_clusters"):
+        return rgb, info
+    # suppress_halo 已把命中的档号写进 halo_scan（hit=True）；替换时用**完整标签图**，
+    # 让整圈光晕（包括被腐蚀掉的边界那 3px）一起换掉，否则边界上会留一圈残色。
+    hits = [r["cluster"] for r in info.get("halo_scan", []) if r.get("hit")]
+    if not hits:
+        return rgb, info
+    halo_px = opaque & np.isin(lab_full, hits)
+    keep = opaque & ~halo_px
+    if keep.sum() < 30 or not halo_px.any():
+        return rgb, info
+    _, (iy, ix) = distance_transform_edt(~keep, return_indices=True)
+    out = rgb.copy()
+    out[halo_px] = rgb[iy[halo_px], ix[halo_px]]
+    info["halo_pixels"] = int(halo_px.sum())
+    return out, info
+
+
+def median_run(rgb: np.ndarray, opaque: np.ndarray, rows: int = 24) -> float:
+    """同色横向连片的中位长度（px）——颗粒粗细的体检值。参照端实测约 2~3px。"""
+    h, w = opaque.shape
+    step = max(1, h // rows)
+    c = (rgb // SPECK_QUANT).astype(np.int32)
+    runs: list[int] = []
+    for y in range(0, h, step):
+        row, op = c[y], opaque[y]
+        cur = 0
+        for x in range(w):
+            if not op[x]:
+                if cur:
+                    runs.append(cur)
+                cur = 0
+                continue
+            if cur and (row[x] != row[x - 1]).any():
+                runs.append(cur)
+                cur = 1
+            else:
+                cur += 1
+        if cur:
+            runs.append(cur)
+    return float(np.median(runs)) if runs else 0.0
+
+
+def despeckle(rgb: np.ndarray, opaque: np.ndarray) -> tuple[np.ndarray, dict]:
+    """散点清理：同色连通域小于 SPECK_MAX_PX 的碎片，用最近的非散点像素颜色顶掉。
+
+    只动碎片，成片的明暗档与描边一律不动——这是「保留参照端那种细密层次」的关键。
+    """
+    info: dict = {"speck_regions": 0, "speck_pixels": 0}
+    q = (rgb // SPECK_QUANT).astype(np.int32)
+    h, w = opaque.shape
+    flat = q.copy()
+    flat[~opaque] = -1
+    key = flat.reshape(-1, 3)
+    codes = (key[:, 0].astype(np.int64) * 1_000_003 + key[:, 1].astype(np.int64) * 1001
+             + key[:, 2].astype(np.int64))
+    uniq_code, inv = np.unique(codes, return_inverse=True)
+    inv = inv.reshape(h, w)
+    n = int(uniq_code.size)
+    sizes = np.bincount(inv.ravel(), minlength=n)
+    sizes[0] = 0                      # 透明区（code 里带 -1）不算
+    small = np.where((sizes > 0) & (sizes < SPECK_MAX_PX))[0]
+    if small.size == 0:
+        return rgb, info
+    # 连通域（8 邻域）：只有「连成一小片」的才算散点，散在边缘的零星像素不算
+    mask_small = np.isin(inv, small) & opaque
+    lab, ncomp = nd_label(mask_small, structure=np.ones((3, 3), int))
+    if ncomp == 0:
+        return rgb, info
+    csizes = np.bincount(lab.ravel())
+    csizes[0] = 0
+    speck = np.isin(lab, np.where((csizes > 0) & (csizes < SPECK_MAX_PX))[0])
+    if not speck.any():
+        return rgb, info
+    if speck.sum() / max(float(opaque.sum()), 1.0) > SPECK_MAX_RATIO:
+        # 散点太多说明这张图本身就是细颗粒画法，不是噪点：不动
+        info["speck_skipped"] = "比例过高"
+        return rgb, info
+    _, (iy, ix) = distance_transform_edt(~speck, return_indices=True)
+    out = rgb.copy()
+    out[speck] = rgb[iy[speck], ix[speck]]
+    info.update(speck_regions=int(len(np.unique(lab[speck]))), speck_pixels=int(speck.sum()))
+    return out, info
+
+
 def _rgb_to_lab(rgb: np.ndarray) -> np.ndarray:
     """sRGB(0~255) → Lab（D65），并档与光晕判据都按感知色差算。"""
     c = rgb / 255.0
@@ -182,10 +285,12 @@ def _rgb_to_lab(rgb: np.ndarray) -> np.ndarray:
     return np.stack([116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)], axis=-1)
 
 
-def shade_palette(rgb: np.ndarray, opaque: np.ndarray) -> tuple[np.ndarray, np.ndarray, int, float]:
+def shade_palette(rgb: np.ndarray, opaque: np.ndarray,
+                  de: float | None = None) -> tuple[np.ndarray, np.ndarray, int, float]:
     """近色并档：把「肉眼分不出差别」的颜色并成一档，看得出的档全部保留。
 
-    与 v7 的 KMeans(k) 的区别：档数不再由参数写死，而由色差本身决定。
+    v9 起默认只用于**光晕检测**（de=HALO_DE，粗并几十档找候选簇），
+    不再用来重建整张图——重建会把模型画出的细色块一起并掉。
     返回 (每像素档号图, 每档代表色 RGB, 档数, 实际用到的 ΔE)。
     """
     # 先量化到 6 级：模型画出的同一档内部也会有 ±2 的抖动，量化后才是真正的「色」
@@ -198,7 +303,7 @@ def shade_palette(rgb: np.ndarray, opaque: np.ndarray) -> tuple[np.ndarray, np.n
         keep = keep[np.argsort(-cnt[keep])[:SHADE_MAX_UNIQUE]]
     ku = uniq[keep]
 
-    de = MERGE_DE
+    de = MERGE_DE if de is None else de
     for _ in range(6):
         lbl = fcluster(linkage(_rgb_to_lab(ku.astype(np.float32) * SHADE_QUANT + SHADE_QUANT / 2),
                                method="average"), t=de, criterion="distance")
@@ -449,7 +554,7 @@ def clean_image(src: Path, dst: Path, erode: int = ERODE_DEFAULT) -> dict:
 
 def _clean_image(src: Path, dst: Path, erode: int = ERODE_DEFAULT) -> dict:
     a = np.asarray(Image.open(src).convert("RGBA"))
-    info: dict = {"ver": 8, "size": [a.shape[1], a.shape[0]]}
+    info: dict = {"ver": 9, "size": [a.shape[1], a.shape[0]]}
 
     # 0) 背景兜底透明化（在幂等跳过之前：干净图也可能带不透明背景）
     a, bg_info = normalize_background(a)
@@ -490,41 +595,29 @@ def _clean_image(src: Path, dst: Path, erode: int = ERODE_DEFAULT) -> dict:
         info["skipped"] = "不透明区过小"
         return info
 
-    # 2) 近色并档（v8）：按 Lab 感知色差聚类，而不是按固定数量把颜色砍掉。
-    #    v7 的 KMeans(k) 是「不管模型画了多少档，一律压成 k 档」，结果生图好不容易
-    #    画出来的 2~3 档硬边明暗被并回一档，观感比参照后端死板得多；而 k 提到 256
-    #    仍追不上（且开始出散点杂色）。改并档阈值后：档数由「色差是否看得出」决定，
-    #    看不出差别的并掉、看得出的留下，跟参照端底稿的实际构成一致。
-    lab, centers, n_shades, de_used = shade_palette(rgb, opaque)
-    info.update(shades=n_shades, merge_de=de_used)
-    lab[~inner] = SENTINEL          # 边缘混色带不参与并档，交给第 4 步继承
-
-    # 3) 光晕簇抑制：整簇贴背景的亮色/高饱和光晕从正常档取色（合法深色描边保留）
-    lab, halo_info = suppress_halo(lab, inner, opaque, rgb, n_shades)
+    # 2) 光晕抑制（v9：只改被判成光晕的那几块像素，其余颜色原样保留）
+    rgb, halo_info = suppress_halo_rgb(rgb, opaque, inner)
     info.update(halo_info)
 
-    # 4) 边界带：EDT 最近邻继承（零点集只含已填充像素，透明区不会串色）
-    unfilled = opaque & (lab == SENTINEL)
-    if unfilled.any():
-        _, (iy, ix) = distance_transform_edt(lab == SENTINEL, return_indices=True)
-        lab[unfilled] = lab[iy[unfilled], ix[unfilled]]
+    # 3) 散点清理（v9：只动「同色小连通域」，不动成片的明暗档）
+    #    v8 之前是先把全图并成几十~几百档再重建——那样连模型好不容易画出的细色块
+    #    一起并掉了，底稿观感退回「大色片」；实测 5 组里 3 组是「不清洗」更接近
+    #    参照端，只有背景噪点重的图才需要洗。所以改成定向去散点。
+    rgb, speck_info = despeckle(rgb, opaque)
+    info.update(speck_info)
 
-    # 5) 小窗单轮众数滤波：只去 1~2px 的散点，不吃掉成片的明暗档
-    win = MODAL_WIN if MODAL_WIN % 2 == 1 else MODAL_WIN + 1
-    f = modal(lab, footprint_rectangle((win, win)))
-    cur = lab.copy()
-    o = opaque & (f < SENTINEL)
-    cur[o] = f[o]
-
-    # 6) 贴上各档的代表色
     out = a.copy()
-    out[..., :3][opaque] = centers[cur[opaque]].astype(np.uint8)
+    px = np.clip(rgb, 0, 255).astype(np.uint8)
+    out[..., :3][opaque] = px[opaque]
     Image.fromarray(out).save(dst)
 
     rgb2 = out[..., :3].astype(np.int32)
     info["flatness"] = round(flatness_of(rgb2, opaque), 3)
-    info["colors"] = int(len(np.unique(rgb2[opaque].reshape(-1, 3), axis=0)))
-    info["pitch"] = detect_pitch(cur, opaque)   # 仅诊断：v8 起滤波窗口不再跟随颗粒度
+    # 色数按 8 级量化统计（与 tools/风格体检.py 同口径，可直接和参照端比）；
+    # 原始 RGB 三元组数对 v9 没有意义——保留模型原色后它是几十万级的。
+    info["colors"] = int(len(np.unique((rgb2 // 16)[opaque].reshape(-1, 3), axis=0)))
+    info["colors_full"] = int(len(np.unique(rgb2[opaque].reshape(-1, 3), axis=0)))
+    info["run_px"] = median_run(rgb, opaque)   # 诊断：同色横向连片的中位长度（颗粒粗细）
     return info
 
 
@@ -538,11 +631,15 @@ def main(argv: list[str]) -> None:
     dst = Path(argv[1]).resolve() if len(argv) > 1 else src
     info = clean_image(src, dst)
     parts = [f"平坦度 {info.get('flatness_before', '?')} → {info.get('flatness', '?')}",
-             f"颜色数 {info.get('colors', '?')}", f"颗粒度 ~{info.get('pitch', '?')}px"]
+             f"颜色数 {info.get('colors', '?')}", f"颗粒 ~{info.get('run_px', '?')}px"]
     if info.get("bg_mode") == "cut":
         parts.append(f"背景已抠（{info['bg_ratio']:.0%}）")
     if info.get("islands_removed"):
         parts.append(f"噪点岛 {info['islands_removed']} 片已清")
+    if info.get("speck_pixels"):
+        parts.append(f"散点 {info['speck_regions']} 块/{info['speck_pixels']}px 已并")
+    elif info.get("speck_skipped"):
+        parts.append(f"散点放过（{info['speck_skipped']}）")
     if info.get("halo_clusters"):
         parts.append(f"光晕簇 {info['halo_clusters']} 个/{info.get('halo_pixels', 0)}px 已清")
     else:
