@@ -789,12 +789,14 @@ let FMT = 'png';
 const DL_LABEL = IS_TOUCH ? '保存' : '下载';
 const dlLbl = $('psDl').querySelector('.lbl');
 dlLbl.textContent = DL_LABEL;
-/* 下载文件名：[A/B_]标题_任务ID_规格_色数色.png。任务 ID 与后端标识（A=经典版 val-perler.qq.com、
- * B=自研 apinebula）由产品服务端在对图纸页下发时注入 window.PIXELART_TASK_ID / window.PIXELART_BACKEND，
- * 本地直接打开这份 HTML 时没有这两个变量，就退回「标题_规格_色数色」。 */
+/* 下载文件名：[A/B_]标题[_画风_备注]_任务ID_规格_色数色.png。
+ * 任务 ID / 后端标识（A=经典版 val-perler.qq.com、B=自研 apinebula）/ 画风备注片段（如 _Q版_嘴巴改小）
+ * 由产品服务端在对图纸页下发时注入 window.PIXELART_TASK_ID / PIXELART_BACKEND / PIXELART_SEG；
+ * 本地直接打开这份 HTML 时没有这些变量，就退回「标题_规格_色数色」。 */
 const TASK_ID = (window.PIXELART_TASK_ID || '').toString().trim();
 const BACKEND_TAG = (window.PIXELART_BACKEND || '').toString().trim();
-const fileName = (ext = 'png') => `${BACKEND_TAG ? BACKEND_TAG + '_' : ''}${state.title.replace(/[\\/:*?"<>|]/g, '')}${TASK_ID ? '_' + TASK_ID : ''}_${PGW}x${PGH}_${PT.colors}色.${ext}`;
+const SEG_TAG = (window.PIXELART_SEG || '').toString();
+const fileName = (ext = 'png') => `${BACKEND_TAG ? BACKEND_TAG + '_' : ''}${state.title.replace(/[\\/:*?"<>|]/g, '')}${SEG_TAG}${TASK_ID ? '_' + TASK_ID : ''}_${PGW}x${PGH}_${PT.colors}色.${ext}`;
 $('psFmt').addEventListener('click', e => {
   e.stopPropagation();
   FMT = FMT === 'png' ? 'pdf' : 'png';

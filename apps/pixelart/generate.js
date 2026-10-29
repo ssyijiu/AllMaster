@@ -63,6 +63,15 @@ function findStyle(styleId) {
   return loadStyleGuide().styles.find((s) => s.id === styleId) || null;
 }
 
+/* 导出文件名里的「画风_备注」片段：A_转换图_Q版_嘴巴改小_ID.png。
+   规则：去掉文件名非法字符与换行、压缩空白；备注最多留 40 字（防止中文长备注把文件名撑爆）；
+   画风或备注缺省时该段自动跳过，由模板拼在类型名之后、任务 ID 之前。 */
+function segOf(styleLabel, notes) {
+  const clean = (v) => String(v == null ? '' : v)
+    .replace(/[\\/:*?"<>|\r\n\t]/g, '').replace(/\s+/g, ' ').trim();
+  return [clean(styleLabel), clean(notes).slice(0, 40)].filter(Boolean).map((s) => '_' + s).join('');
+}
+
 /* ---------- 提示词四槽位 ---------- */
 
 /* 模板兜底：无 LLM 配置时按主体类型 + 用户备注拼出四槽位（口径对齐 SKILL.md 的槽位定义） */
@@ -339,7 +348,11 @@ function createEngine(options) {
     } catch (err) {
       return sendJson(res, 500, { error: { message: '落盘失败：' + String(err.message || err).slice(0, 120) } });
     }
-    tasks.set(id, { status: 'running', workDir, startedAt: Date.now(), styleId, subject });
+    tasks.set(id, {
+      status: 'running', workDir, startedAt: Date.now(), styleId, subject,
+      /* 备注存下来：下发图纸页时要注入到 window.PIXELART_NOTE，供导出文件名使用 */
+      notes: String(body.notes || '').trim().slice(0, 200)
+    });
 
     /* 立即返回 taskId；压图 → LLM 槽位（失败回落模板）→ 写配置 → 起链路 全部在后台做。
        LLM 含重试最长约 3 分钟，若阻塞 HTTP 响应会被平台网关 502；前端靠轮询任务状态推进。 */
@@ -415,16 +428,25 @@ function createEngine(options) {
     try { fs.statSync(t.htmlPath); } catch (_) {
       return sendJson(res, 410, { error: { message: '图纸文件已清理' } });
     }
-    /* 图纸页里「导出」的下载文件名要带任务 ID 与后端标识（A_标题_ID_规格_色数色.png）。
+    /* 图纸页里「导出」的下载文件名要带 任务 ID + 后端标识 + 画风 + 备注
+       （A_标题_Q版_把嘴改小_ID_规格_色数色.png / A_转换图_Q版_把嘴改小_ID.png）。
        图纸是 build_html_blueprint 预先产出的静态单文件，构建时不知道我们的 taskId / 用哪个后端，
-       所以在下发时注入到页面里，模板从 window.PIXELART_TASK_ID / window.PIXELART_BACKEND 读取。
-       后端标识：A = 经典版（val-perler.qq.com，/pixelart）  B = 自研（apinebula，主页 /）。 */
+       所以在下发时注入到页面里，模板从 window.PIXELART_* 读取。
+       后端标识：A = 经典版（val-perler.qq.com，/pixelart）  B = 自研（apinebula，主页 /）。
+       画风取 style_guide 的 label（如 chibi → Q版）；备注用玩家填的「想调整的地方」。 */
     const BACKEND_TAG = backend === 'valperler' ? 'A' : 'B';
+    const styleLabel = (t.styleId && (findStyle(t.styleId) || {}).label) || '';
+    /* 注入到 <script> 里：把 < 转义掉，防止备注里出现 </script> 提前闭合标签 */
+    const jsStr = (v) => JSON.stringify(String(v == null ? '' : v)).replace(/</g, '\\u003c');
+    const SEG_PATCH = "${window.PIXELART_SEG || ''}";   // 旧图纸补丁用（画风_备注片段）
     let body;
     try {
       let html = fs.readFileSync(t.htmlPath, 'utf8');
-      const inject = '<script>window.PIXELART_TASK_ID=' + JSON.stringify(id) +
-        ';window.PIXELART_BACKEND=' + JSON.stringify(BACKEND_TAG) + ';</script>';
+      const inject = '<script>window.PIXELART_TASK_ID=' + jsStr(id) +
+        ';window.PIXELART_BACKEND=' + jsStr(BACKEND_TAG) +
+        ';window.PIXELART_STYLE=' + jsStr(styleLabel) +
+        ';window.PIXELART_NOTE=' + jsStr(t.notes || '') +
+        ';window.PIXELART_SEG=' + jsStr(segOf(styleLabel, t.notes)) + ';</script>';
       /* 本次改动之前产出的图纸，下载命名是 `${state.title}_${PGW}x${PGH}_${PT.colors}色`，
          里面没有任务 ID 的插槽。对这些旧文件在下发时补上插槽，避免老链接必须重新生成才能带上 ID；
          新图纸自带 `const TASK_ID`，不进这段。命中不到就原样下发，不会破坏旧文件。 */
@@ -445,6 +467,18 @@ function createEngine(options) {
         /* 更早一代（上面旧文件补丁刚注入 window.PIXELART_TASK_ID 插槽的）同理 */
         html = html.replace(HEAD + '${(window.PIXELART_TASK_ID',
           TAGX + HEAD + '${(window.PIXELART_TASK_ID');
+      }
+      /* 本代之前构建的图纸（导出名里还没有画风/备注片段）：下发时把 PIXELART_SEG 插进文件名插槽，
+         老任务不用重新生成也能拿到新命名。新图纸自带该插槽，命中不到原样跳过。 */
+      if (!html.includes('PIXELART_SEG')) {
+        html = html.replace("转换图${TASK_TAG ? '_' + TASK_TAG : ''}.png",
+          '转换图' + SEG_PATCH + "${TASK_TAG ? '_' + TASK_TAG : ''}.png");
+        html = html.replace("转换图${(window.PIXELART_TASK_ID ? '_' + window.PIXELART_TASK_ID : '')}.png",
+          '转换图' + SEG_PATCH + "${(window.PIXELART_TASK_ID ? '_' + window.PIXELART_TASK_ID : '')}.png");
+        html = html.replace("${TASK_ID ? '_' + TASK_ID : ''}_${PGW}x${PGH}",
+          SEG_PATCH + "${TASK_ID ? '_' + TASK_ID : ''}_${PGW}x${PGH}");
+        html = html.replace("${(window.PIXELART_TASK_ID ? '_' + window.PIXELART_TASK_ID : '')}_${PGW}x${PGH}",
+          SEG_PATCH + "${(window.PIXELART_TASK_ID ? '_' + window.PIXELART_TASK_ID : '')}_${PGW}x${PGH}");
       }
       html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + inject) : inject + html;
       body = Buffer.from(html, 'utf8');
@@ -495,7 +529,10 @@ function createEngine(options) {
       const slots = templateSlots(t.subject === 'prop' ? 'prop' : 'character', '', '');
       fs.writeFileSync(promptPath, JSON.stringify(slots, null, 2));
     }
-    tasks.set(newId, { status: 'running', workDir, startedAt: Date.now(), styleId: t.styleId, subject: t.subject, regenFrom: id });
+    tasks.set(newId, {
+      status: 'running', workDir, startedAt: Date.now(), styleId: t.styleId, subject: t.subject,
+      notes: t.notes || '', regenFrom: id
+    });
     sendJson(res, 200, { taskId: newId });
     startRegenTask(newId, workDir, effectImage, promptPath, t.styleId);
   }
