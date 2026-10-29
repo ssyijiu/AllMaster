@@ -369,20 +369,6 @@
       font-size: var(--text-sm); font-weight: var(--weight-emphasis); color: var(--fg);
       line-height: 1.5;
     }
-    /* 豆阵装饰 + 手写标注（设计稿「每个豆都能改」） */
-    .bead-demo {
-      position: relative; height: 148px; margin: var(--space-4) auto 0; max-width: 320px;
-      background-image:
-        radial-gradient(circle, #1F1D1A 37%, transparent 40%),
-        radial-gradient(circle, #FFD02F 37%, transparent 40%);
-      background-size: 66px 66px, 66px 66px;
-      background-position: 8px 8px, 41px 41px;
-    }
-    .bead-note {
-      position: absolute; top: -2px; right: 0;
-      font-family: "Yuanti SC", "Hiragino Maru Gothic ProN", "PingFang SC", sans-serif;
-      font-size: 13px; font-weight: 700; color: #6F6A5E; letter-spacing: 0.04em;
-    }
     .done-actions {
       display: flex; flex-wrap: wrap; gap: var(--space-2);
       margin-top: var(--space-5);
@@ -435,5 +421,4 @@
       :root { --container-gutter: 16px; }
       .btn.big { height: 44px; }
       .done-actions .btn { flex: 1 1 100%; }
-      .bead-demo { height: 110px; background-size: 52px 52px, 52px 52px; background-position: 6px 6px, 32px 32px; }
     }
