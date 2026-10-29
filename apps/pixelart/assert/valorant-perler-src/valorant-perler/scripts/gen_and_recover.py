@@ -41,6 +41,9 @@ SUBJECT_DESC_DIR = IMAGE_PROMPTS / "04-subject_description"
 # 画风库：目录名 → 可用的叫法。每个目录里 art_style.md 是画风正文；
 # 有 subject_description.md 的画风在人物主体没写描述时用它替换人物默认描述。
 ART_STYLES = {
+    # 官方同款：对标参照后端 val-perler 的人物观感（约 3 头身 + 统一粗深色描边 + 五官简化），
+    # 是人物主体的默认画风；想要按原图还原的玩家改选「还原」。
+    "official": ("官方同款", "官方", "经典款", "像素小人"),
     "original": ("还原",),
     "chibi": ("Q版", "q版", "手绘小人", "简笔小人", "手绘表情包"),
     "mini-sticker": ("贴纸", "迷你贴纸"),
@@ -52,7 +55,7 @@ ART_STYLES = {
 CHARACTER_ONLY_STYLES = {s["id"] for s in json.loads(
     (SCRIPTS.parent / "assets" / "style_guide.json").read_text(encoding="utf-8"))["styles"]
     if s.get("scope") == "character" and s["id"] != "original"}
-DEFAULT_ART_STYLE = "original"
+DEFAULT_ART_STYLE = "official"   # 人物默认走「官方同款」（对标参照后端观感）
 PALETTE_CSV = SCRIPTS / "palette_mard221.csv"
 IMAGE_RENDER = SCRIPTS / IMAGE_SCRIPT_NAME
 BLOCK_CLEANUP = SCRIPTS / "block_cleanup.py"
@@ -259,16 +262,101 @@ def say(text: str) -> None:
 def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-def run_command(cmd: list[str], stage: str, player: str | None = None) -> None:
+def run_command(cmd: list[str], stage: str, player: str | None = None,
+                env: dict | None = None) -> None:
     """阶段行 `[阶段] cmd`（便于分段计时）+ 可选的玩家进度行。"""
     if player:
         say(player)
     print(f"\n[{stage}] {' '.join(cmd)}", flush=True)
     try:
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, env=env)
     except subprocess.CalledProcessError:
         say("这一步卡住了，我看看怎么回事")
         raise
+
+
+# —— 色块规整诊断收尾（光晕判据要靠真实数据精化，所以每单触发都要留 RAW） ——
+SAMPLE_MAX_MB = 1024.0
+
+
+def _cleanup_report(qa_path: Path) -> dict:
+    try:
+        return json.loads(qa_path.read_text(encoding="utf-8")) if qa_path.is_file() else {}
+    except Exception as e:      # noqa: BLE001 - 诊断读取失败不影响出图
+        print(f"[诊断·色块规整] 读取失败：{e}", flush=True)
+        return {}
+
+
+def _prune_sample_dir(d: Path) -> None:
+    """采样目录按体积滚动：超过上限就删最旧的（默认 1GB，约两百多个样本）。"""
+    limit = float(os.environ.get("PERLER_SAMPLE_MAX_MB", SAMPLE_MAX_MB))
+    files = sorted((p for p in d.iterdir() if p.is_file()), key=lambda p: p.stat().st_mtime)
+    total = sum(p.stat().st_size for p in files) / 1e6
+    while total > limit and files:
+        p = files.pop(0)
+        try:
+            total -= p.stat().st_size / 1e6
+            p.unlink()
+        except Exception:      # noqa: BLE001
+            return
+
+
+def note_cleanup_diagnostics(work_dir: Path, qa_path: Path, raw_snapshot: Path,
+                             cleaned: Path, ctx: dict) -> dict:
+    """读规整诊断 → 打一行可 grep 的日志 → 触发时把「规整前底稿」留档并入库。
+
+    触发定义：光晕被清 / 噪点岛被清 / 背景被兜底抠 / 影调被拉伸或提饱和。
+    这几项正是还要靠真实数据调优的环节（光晕判据在 8 组真数据里几乎不触发），
+    所以留 RAW 才有意义。PERLER_HALO_SAMPLE_DIR 指定长期采样目录（任务目录
+    会被 GC，这里不会）；PERLER_KEEP_RAW=all 时无条件在任务目录内留档。
+    整段包 try：诊断任何环节出问题都不许影响出图。
+    """
+    try:
+        rep = _cleanup_report(qa_path)
+        if not rep:
+            return {}
+        halo = int(rep.get("halo_clusters") or 0)
+        near = int(rep.get("halo_near") or 0)
+        islands = int(rep.get("islands_removed") or 0)
+        bg = rep.get("bg_mode") or "-"
+        stretch = float(rep.get("stretch") or 1.0)
+        boost = float(rep.get("sat_boost") or 1.0)
+        # 「缺陷」才值得留 RAW：光晕/噪点岛/背景兜底都是偶发的链路问题，要靠真数据攒样本；
+        # 影调拉伸几乎每单都发生（v7 本来就是按参照带校准），只进日志，不入库。
+        defects = []
+        if halo:
+            defects.append(f"光晕{halo}簇")
+        if islands:
+            defects.append(f"噪点岛{islands}片")
+        if bg == "cut":
+            defects.append("背景兜底")
+        tone = f"影调x{stretch:.2f}" if (stretch > 1.001 or boost > 1.001) else ""
+        triggers = defects + ([tone] if tone else [])
+        print(f"[诊断·色块规整] 光晕 {halo} 簇已清 / 近候选 {near}；噪点岛 {islands}；背景 {bg}；"
+              f"平坦度 {rep.get('flatness_before')} → {rep.get('flatness')}；"
+              f"触发：{'、'.join(triggers) or '无'}", flush=True)
+        if not (defects or os.environ.get("PERLER_KEEP_RAW", "") == "all"):
+            raw_snapshot.unlink(missing_ok=True)
+            return rep
+        sample_dir = os.environ.get("PERLER_HALO_SAMPLE_DIR", "")
+        if not sample_dir:
+            return rep
+        dest = Path(sample_dir)
+        dest.mkdir(parents=True, exist_ok=True)
+        tag = "_".join(triggers) or "clean"
+        base = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}_{tag}"
+        shutil.copy2(raw_snapshot, dest / f"{base}_raw.png")
+        shutil.copy2(cleaned, dest / f"{base}_cleaned.png")
+        meta = dict(ctx.get("meta") or {})
+        (dest / f"{base}.json").write_text(
+            json.dumps({"task": meta, "diagnostics": rep}, ensure_ascii=False, indent=2),
+            encoding="utf-8")
+        _prune_sample_dir(dest)
+        print(f"[诊断·色块规整] 已入库采样：{dest / base}_raw.png（{tag}）", flush=True)
+        return rep
+    except Exception as e:      # noqa: BLE001
+        print(f"[诊断·色块规整] 留档失败（不影响出图）：{e}", flush=True)
+        return {}
 
 
 def parse_args() -> argparse.Namespace:
@@ -466,8 +554,23 @@ def main() -> None:
         # 色块规整：通用生图后端（gpt-image 系）的底稿带纹理噪点与边缘混色（平坦度 ~25%），
         # 洗成硬边平涂（~95%+）再切格，豆色更准、杂色更少。PERLER_BLOCK_CLEANUP=0 关闭。
         if os.environ.get("PERLER_BLOCK_CLEANUP", "") != "0":
+            diag_dir = work_dir / ".wip" / "诊断"
+            diag_dir.mkdir(parents=True, exist_ok=True)
+            raw_snapshot = diag_dir / "规整前底稿.png"
+            shutil.copy2(pixel_art, raw_snapshot)     # 先留一手，没触发再删
+            qa_path = diag_dir / "block_cleanup.json"
             run_command([sys.executable, str(BLOCK_CLEANUP), str(pixel_art)],
-                        "色块规整", "把底稿色块熨平整，豆子颜色更准～")
+                        "色块规整", "把底稿色块熨平整，豆子颜色更准～",
+                        env=dict(os.environ, PERLER_CLEANUP_JSON=str(qa_path)))
+            qa = note_cleanup_diagnostics(work_dir, qa_path, raw_snapshot, pixel_art, {
+                "meta": {"task_name": args.task_name, "subject": args.subject,
+                         "art_style": args.art_style, "work_dir": str(work_dir)}})
+            if qa:
+                run_data["cleanup"] = {
+                    k: qa.get(k) for k in
+                    ("ver", "flatness_before", "flatness", "colors", "halo_clusters",
+                     "halo_near", "islands_removed", "bg_mode", "stretch", "sat_boost")
+                    if k in qa}
 
         draft = pixel_art
         if args.keep_sticker_border:

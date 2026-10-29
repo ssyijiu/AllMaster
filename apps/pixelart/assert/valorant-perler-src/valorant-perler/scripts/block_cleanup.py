@@ -34,6 +34,10 @@
 幂等保护：背景兜底永远执行；平坦度已 ≥ FLAT_SKIP（0.85）时跳过 1-5（一键
 重转等场景不重复洗）。环境变量 PERLER_BLOCK_CLEANUP=0 时调用方跳过整个脚本。
 
+诊断埋点（2026-10-29）：每次都会把「光晕候选簇的量测 + 为什么没动手」记进
+halo_scan；开关如下（都可选，不开就不落任何东西）：
+  PERLER_CLEANUP_JSON=<路径>   写完整诊断 JSON，链路侧据此决定是否留 RAW
+  PERLER_CLEANUP_TRACE=<路径>  追加一行 JSONL，长期统计触发率
 用法：
   python3 block_cleanup.py <in.png>              # 原地清洗
   python3 block_cleanup.py <in.png> <out.png>    # 清洗到新文件
@@ -41,9 +45,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import warnings
+from datetime import datetime, timezone
 from pathlib import Path
 
 warnings.filterwarnings("ignore")
@@ -71,6 +77,15 @@ HALO_NEAR_FRAC = 0.6  # 簇内贴背景像素（距背景 ≤HALO_NEAR）占比�
 HALO_MAX_FRAC = 0.18  # 簇面积占不透明区比例上限（大簇是正文不是晕）
 HALO_LUM_MIN = 6.0    # 光晕须比相邻内部亮这么多（Lab L）；更暗的是合法描边，保留
 HALO_SAT_MIN = 0.15   # 或饱和度比相邻内部高这么多（粉/橙荧光晕）
+HALO_SCAN_MAX = 8     # 诊断 JSON 里最多记录几个簇（按面积降序，够判调优用）
+
+# —— 诊断埋点（默认全关，环境变量开启）——
+# PERLER_CLEANUP_JSON=<path>   写完整诊断 JSON（链路侧据此决定是否留 RAW）
+# PERLER_CLEANUP_TRACE=<path>  追加一行 JSONL，长期统计「光晕触发率」
+DIAG_TRIM_KEYS = ("ver", "halo_clusters", "halo_pixels", "halo_near", "halo_all_candidates",
+                  "islands_removed", "island_pixels", "bg_mode", "bg_ratio", "skipped",
+                  "flatness_before", "flatness", "colors", "opaque_ratio",
+                  "stretch", "sat_boost", "sat_before", "l_range_before")
 # —— 孤立噪点岛参数 ——
 ISLAND_MAX_FRAC = 0.0004   # 岛面积上限（占全图比例；1024² 时约 420px ≈ 2 颗豆）
 # —— 影调校准参数（v7：目标值来自 2026-10-29 的 8 组同源真实标定） ——
@@ -184,23 +199,47 @@ def suppress_halo(lab: np.ndarray, inner: np.ndarray, opaque: np.ndarray,
 
     几何条件（整簇贴背景）+ 颜色条件（比相邻内部更亮或更饱和）。比内部
     更暗的贴边簇是合法描边（像素画常规风格），保留不动。
+
+    每个候选簇都留一份量测（halo_scan，按面积降序留前 HALO_SCAN_MAX 个），
+    连同「为什么没动手」的原因一起写进诊断：v6/v7 判据在真实数据上很保守
+    （厚环不触发），只有拿到这些近候选数据才能安全地把判据放开。
     """
     info: dict = {"halo_clusters": 0}
     if not opaque.any():
         return lab, info
     d_bg = distance_transform_edt(opaque)   # 每个不透明像素到最近背景/边界的距离
-    total = float(opaque.sum())
+    total = max(float(opaque.sum()), 1.0)
     cand = np.zeros(k, bool)
+    scan: list[dict] = []
     for c in range(k):
         m = inner & (lab == c)
         n = int(m.sum())
-        if n < 30 or n / total > HALO_MAX_FRAC:
+        if n < 16:                       # 连记录价值都没有的碎簇
             continue
+        frac = n / total
         mean_d = float(d_bg[m].mean())
         near_frac = float((d_bg[m] <= HALO_NEAR).mean())
-        if mean_d <= HALO_MEAN_D and near_frac >= HALO_NEAR_FRAC:
-            cand[c] = True
+        rec = {"cluster": int(c), "px": n, "frac": round(frac, 4),
+               "mean_d": round(mean_d, 2), "near_frac": round(near_frac, 3)}
+        if n < 30:
+            rec["skip"] = "too_small"
+        elif frac > HALO_MAX_FRAC:
+            rec["skip"] = "too_big"      # 正文色（如整片外套），不是晕
+        else:
+            rec["geometry"] = bool(mean_d <= HALO_MEAN_D and near_frac >= HALO_NEAR_FRAC)
+            if rec["geometry"]:
+                cand[c] = True
+            elif mean_d <= HALO_MEAN_D * 2 and near_frac >= HALO_NEAR_FRAC * 0.5:
+                rec["near"] = True   # 判据放宽一点点就该命中：调参时优先看这批数据
+        scan.append(rec)
+    # 诊断清单按「与判据的相关性」排：命中/近候选在前，其余按面积降序
+    scan.sort(key=lambda r: (0 if (r.get("geometry") or r.get("near")) else 1, -r["px"]))
+    info["halo_scan"] = scan[:HALO_SCAN_MAX]
     if not cand.any() or bool(cand.all()):
+        if cand.any():                   # 全簇都贴边：多半是整体小图，动手会全图重涂
+            info["halo_all_candidates"] = True
+        else:
+            info["halo_near"] = sum(1 for r in scan if r.get("near"))
         return lab, info
     halo_px = inner & np.isin(lab, np.where(cand)[0])
     keep = inner & ~np.isin(lab, np.where(cand)[0])
@@ -215,10 +254,34 @@ def suppress_halo(lab: np.ndarray, inner: np.ndarray, opaque: np.ndarray,
     sat_h = (halo_rgb.max(axis=1) - halo_rgb.min(axis=1)) / np.maximum(halo_rgb.max(axis=1), 1)
     sat_n = (nb_rgb.max(axis=1) - nb_rgb.min(axis=1)) / np.maximum(nb_rgb.max(axis=1), 1)
     glow = (lum_h > lum_n + HALO_LUM_MIN) | (sat_h > sat_n + HALO_SAT_MIN)
+    # 每个候选簇单独的「像不像光晕」占比（诊断用，决定是否动手仍按全局口径）
+    cls = lab[halo_px]
+    cnt = np.bincount(cls, minlength=k).astype(float)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        g_frac = np.where(cnt > 0, np.bincount(cls, weights=glow.astype(float), minlength=k) / np.maximum(cnt, 1), 0.0)
+        d_lum = np.where(cnt > 0, np.bincount(cls, weights=(lum_h - lum_n), minlength=k) / np.maximum(cnt, 1), 0.0)
+        d_sat = np.where(cnt > 0, np.bincount(cls, weights=(sat_h - sat_n), minlength=k) / np.maximum(cnt, 1), 0.0)
+    def _audit() -> None:
+        """把每个候选簇的实际量测贴回诊断清单（后续两处都会调用）。"""
+        for rec in info["halo_scan"]:
+            c = rec["cluster"]
+            if cand[c]:
+                rec.update(glow_frac=round(float(g_frac[c]), 3),
+                           mean_dL=round(float(d_lum[c]), 2),
+                           mean_dS=round(float(d_sat[c]), 3))
     if glow.mean() < 0.6:   # 该候选簇大半像素不像光晕：整簇保留
+        _audit()
+        for rec in info["halo_scan"]:
+            if cand[rec["cluster"]]:
+                rec["skip"] = "color"   # 不够亮也不够艳：是描边/暗边，不是光晕
+        info["halo_near"] = int(cand.sum())
         return lab, info
     fixed = lab.copy()
     fixed[halo_px] = lab[iy[halo_px], ix[halo_px]]
+    _audit()
+    for rec in info["halo_scan"]:
+        if cand[rec["cluster"]]:
+            rec["hit"] = True
     info["halo_clusters"] = int(cand.sum())
     info["halo_pixels"] = int(halo_px.sum())
     return fixed, info
@@ -282,10 +345,45 @@ def enhance_tone(rgb: np.ndarray, opaque: np.ndarray) -> tuple[np.ndarray, dict]
                 l_range_before=round(cur_range, 1))
     return out, info
 
+def emit_diagnostics(info: dict) -> None:
+    """诊断落盘（默认不落任何东西，环境变量开启）：
+
+    PERLER_CLEANUP_JSON=<path>    写完整 JSON，链路侧据此决定是否留 RAW
+    PERLER_CLEANUP_TRACE=<path>   追加一行 JSONL，长期统计「光晕触发率」
+
+    写失败只打一行提示，绝不影响出图。
+    """
+    jpath = os.environ.get("PERLER_CLEANUP_JSON")
+    if jpath:
+        try:
+            Path(jpath).write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:      # noqa: BLE001 - 诊断失败不许中断链路
+            print(f"[色块规整] 诊断写盘失败：{e}", flush=True)
+    tpath = os.environ.get("PERLER_CLEANUP_TRACE")
+    if tpath:
+        try:
+            line = {"ts": datetime.now(timezone.utc).isoformat(),
+                    **{k: info.get(k) for k in DIAG_TRIM_KEYS if k in info}}
+            with open(tpath, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+        except Exception as e:      # noqa: BLE001
+            print(f"[色块规整] 追踪日志写入失败：{e}", flush=True)
+
+
 def clean_image(src: Path, dst: Path, k: int = K_DEFAULT, erode: int = ERODE_DEFAULT) -> dict:
-    """清洗一张底稿，返回统计信息（供运行记录）。"""
+    """清洗一张底稿，返回统计信息（供运行记录），并顺带落诊断。"""
+    try:
+        info = _clean_image(src, dst, k, erode)
+        emit_diagnostics(info)
+        return info
+    except Exception as e:          # noqa: BLE001 - 诊断侧：原样抛出，但先留个记录
+        emit_diagnostics({"error": f"{type(e).__name__}: {e}", "src": str(src)})
+        raise
+
+
+def _clean_image(src: Path, dst: Path, k: int = K_DEFAULT, erode: int = ERODE_DEFAULT) -> dict:
     a = np.asarray(Image.open(src).convert("RGBA"))
-    info: dict = {"size": [a.shape[1], a.shape[0]]}
+    info: dict = {"ver": 7, "size": [a.shape[1], a.shape[0]]}
 
     # 0) 背景兜底透明化（在幂等跳过之前：干净图也可能带不透明背景）
     a, bg_info = normalize_background(a)
@@ -379,10 +477,15 @@ def main(argv: list[str]) -> None:
         parts.append(f"噪点岛 {info['islands_removed']} 片已清")
     if info.get("halo_clusters"):
         parts.append(f"光晕簇 {info['halo_clusters']} 个/{info.get('halo_pixels', 0)}px 已清")
+    else:
+        # 未触发也报个数：哪天真出光晕，靠这行能算出触发率和近候选量
+        near = info.get("halo_near", 0)
+        parts.append(f"光晕 0 簇（近候选 {near}）")
     if info.get("enhanced"):
         parts.append(f"影调增强 ×{info.get('stretch', 1)}")
     if "skipped" in info:
-        print(f"[色块规整] 跳过 1-5（{info['skipped']}）；背景：{info.get('bg_mode', '-')}")
+        print(f"[色块规整] 跳过 1-5（{info['skipped']}）；背景：{info.get('bg_mode', '-')}"
+              f"；光晕 0 簇（近候选 {info.get('halo_near', 0)}）")
         return
     print("[色块规整] " + "，".join(parts))
 
