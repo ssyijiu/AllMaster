@@ -334,7 +334,9 @@ def note_cleanup_diagnostics(work_dir: Path, qa_path: Path, raw_snapshot: Path,
             defects.append(f"噪点岛{islands}片")
         if bg == "cut":
             defects.append("背景兜底")
-        tone = f"影调x{stretch:.2f}" if (stretch > 1.001 or boost > 1.001) else ""
+        tone = (f"影调拉伸x{stretch:.2f}" if stretch > 1.001 else "") + \
+               ("、" if (stretch > 1.001 and boost > 1.001) else "") + \
+               (f"提饱和x{boost:.2f}" if boost > 1.001 else "")
         triggers = defects + ([tone] if tone else [])
         print(f"[诊断·色块规整] 光晕 {halo} 簇已清 / 近候选 {near}；噪点岛 {islands}；背景 {bg}；"
               f"平坦度 {rep.get('flatness_before')} → {rep.get('flatness')}；"

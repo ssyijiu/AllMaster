@@ -56,8 +56,8 @@ warnings.filterwarnings("ignore")
 
 import numpy as np
 from PIL import Image
+from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.ndimage import distance_transform_edt, label as nd_label
-from sklearn.cluster import KMeans
 from skimage.filters.rank import modal
 from skimage.morphology import erosion, footprint_rectangle
 
@@ -84,6 +84,14 @@ HALO_MAX_FRAC = 0.18  # 簇面积占不透明区比例上限（大簇是正文�
 HALO_LUM_MIN = 6.0    # 光晕须比相邻内部亮这么多（Lab L）；更暗的是合法描边，保留
 HALO_SAT_MIN = 0.15   # 或饱和度比相邻内部高这么多（粉/橙荧光晕）
 HALO_SCAN_MAX = 8     # 诊断 JSON 里最多记录几个簇（按面积降序，够判调优用）
+
+# —— 近色并档参数（v8，2026-10-30）——
+MERGE_DE = 8.0          # 并档阈值：Lab 感知色差小于它就并成一档（肉眼基本分不出）
+SHADE_QUANT = 6         # 并档前先把颜色量化到 6 级，消掉同一档内部的 ±2 抖动
+SHADE_MIN_PX = 8        # 面积小于这么多的颜色视为散点，直接并入最近档
+SHADE_MAX_UNIQUE = 3000 # 参与聚类的唯一色上限（按面积取前 N，控住层次聚类的耗时）
+MODAL_WIN = 3           # 去散点的小窗众数滤波（远小于 v7 的 pitch 窗口，不吃明暗档）
+LABEL_MAX = 250         # 档号上限：255 是不透明哨兵，超了就自动放宽并档阈值
 
 # —— 诊断埋点（默认全关，环境变量开启）——
 # PERLER_CLEANUP_JSON=<path>   写完整诊断 JSON（链路侧据此决定是否留 RAW）
@@ -160,6 +168,58 @@ def normalize_background(a: np.ndarray) -> tuple[np.ndarray, dict]:
     info.update(bg_mode="cut", bg_ratio=round(ratio, 3),
                 bg_color=[int(c) for c in med])
     return out, info
+
+
+def _rgb_to_lab(rgb: np.ndarray) -> np.ndarray:
+    """sRGB(0~255) → Lab（D65），并档与光晕判据都按感知色差算。"""
+    c = rgb / 255.0
+    c = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    x = c[..., 0] * 0.4124 + c[..., 1] * 0.3576 + c[..., 2] * 0.1805
+    y = c[..., 0] * 0.2126 + c[..., 1] * 0.7152 + c[..., 2] * 0.0722
+    z = c[..., 0] * 0.0193 + c[..., 1] * 0.1192 + c[..., 2] * 0.9505
+    f = lambda t: np.where(t > 216 / 24389, np.cbrt(t), (24389 / 27 * t + 16) / 116)
+    fx, fy, fz = f(x / 0.95047), f(y), f(z / 1.08883)
+    return np.stack([116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)], axis=-1)
+
+
+def shade_palette(rgb: np.ndarray, opaque: np.ndarray) -> tuple[np.ndarray, np.ndarray, int, float]:
+    """近色并档：把「肉眼分不出差别」的颜色并成一档，看得出的档全部保留。
+
+    与 v7 的 KMeans(k) 的区别：档数不再由参数写死，而由色差本身决定。
+    返回 (每像素档号图, 每档代表色 RGB, 档数, 实际用到的 ΔE)。
+    """
+    # 先量化到 6 级：模型画出的同一档内部也会有 ±2 的抖动，量化后才是真正的「色」
+    codes = (rgb // SHADE_QUANT).astype(np.int32)[opaque]
+    uniq, inv = np.unique(codes, axis=0, return_inverse=True)
+    cnt = np.bincount(inv)
+    # 面积极小的色是散点，不单独成档（后面并到最近档）
+    keep = np.where(cnt >= SHADE_MIN_PX)[0]
+    if keep.size > SHADE_MAX_UNIQUE:
+        keep = keep[np.argsort(-cnt[keep])[:SHADE_MAX_UNIQUE]]
+    ku = uniq[keep]
+
+    de = MERGE_DE
+    for _ in range(6):
+        lbl = fcluster(linkage(_rgb_to_lab(ku.astype(np.float32) * SHADE_QUANT + SHADE_QUANT / 2),
+                               method="average"), t=de, criterion="distance")
+        if int(lbl.max()) <= LABEL_MAX:
+            break
+        de *= 1.5        # 档数超 uint8 上限（哨兵 255）就放宽阈值再来
+    centers = np.stack([ku[lbl == i].mean(0) * SHADE_QUANT + SHADE_QUANT / 2
+                        for i in np.unique(lbl)]).astype(np.float32)
+
+    # 每个唯一色 → 档号；散点色并到 Lab 最近的档
+    shade_of = np.zeros(uniq.shape[0], np.int32)
+    shade_of[keep] = lbl - 1
+    miss = np.setdiff1d(np.arange(uniq.shape[0]), keep)
+    if miss.size:
+        d = np.linalg.norm(_rgb_to_lab(uniq[miss] * SHADE_QUANT + SHADE_QUANT / 2)[:, None, :]
+                           - _rgb_to_lab(centers)[None, :, :], axis=2)
+        shade_of[miss] = np.argmin(d, axis=1)
+
+    lab = np.full(rgb.shape[:2], SENTINEL, np.uint8)
+    lab[opaque] = shade_of[inv].astype(np.uint8)
+    return lab, np.clip(centers, 0, 255), int(len(centers)), round(float(de), 1)
 
 
 def detect_pitch(lab: np.ndarray, opaque: np.ndarray) -> int:
@@ -376,11 +436,10 @@ def emit_diagnostics(info: dict) -> None:
             print(f"[色块规整] 追踪日志写入失败：{e}", flush=True)
 
 
-def clean_image(src: Path, dst: Path, k: int = K_DEFAULT, erode: int = ERODE_DEFAULT,
-                win_scale: float = WIN_SCALE) -> dict:
+def clean_image(src: Path, dst: Path, erode: int = ERODE_DEFAULT) -> dict:
     """清洗一张底稿，返回统计信息（供运行记录），并顺带落诊断。"""
     try:
-        info = _clean_image(src, dst, k, erode, win_scale)
+        info = _clean_image(src, dst, erode)
         emit_diagnostics(info)
         return info
     except Exception as e:          # noqa: BLE001 - 诊断侧：原样抛出，但先留个记录
@@ -388,10 +447,9 @@ def clean_image(src: Path, dst: Path, k: int = K_DEFAULT, erode: int = ERODE_DEF
         raise
 
 
-def _clean_image(src: Path, dst: Path, k: int = K_DEFAULT, erode: int = ERODE_DEFAULT,
-                 win_scale: float = WIN_SCALE) -> dict:
+def _clean_image(src: Path, dst: Path, erode: int = ERODE_DEFAULT) -> dict:
     a = np.asarray(Image.open(src).convert("RGBA"))
-    info: dict = {"ver": 7, "size": [a.shape[1], a.shape[0]]}
+    info: dict = {"ver": 8, "size": [a.shape[1], a.shape[0]]}
 
     # 0) 背景兜底透明化（在幂等跳过之前：干净图也可能带不透明背景）
     a, bg_info = normalize_background(a)
@@ -427,19 +485,22 @@ def _clean_image(src: Path, dst: Path, k: int = K_DEFAULT, erode: int = ERODE_DE
     info.update(enh_info)
 
     inner = erosion(opaque, footprint_rectangle((erode * 2 + 1, erode * 2 + 1)))
-    if inner.sum() < k:                        # 图太小：不值得聚类，原样保存
+    if inner.sum() < 30:                       # 图太小：不值得并档，原样保存
         Image.fromarray(a).save(dst)
         info["skipped"] = "不透明区过小"
         return info
 
-    # 2) 内部像素拟合调色板
-    km = KMeans(n_clusters=k, n_init=4, random_state=42).fit(
-        rgb[inner][::max(1, int(inner.sum()) // 20000)])
-    lab = np.full((h, w), SENTINEL, np.uint8)
-    lab[inner] = km.predict(rgb[inner])
+    # 2) 近色并档（v8）：按 Lab 感知色差聚类，而不是按固定数量把颜色砍掉。
+    #    v7 的 KMeans(k) 是「不管模型画了多少档，一律压成 k 档」，结果生图好不容易
+    #    画出来的 2~3 档硬边明暗被并回一档，观感比参照后端死板得多；而 k 提到 256
+    #    仍追不上（且开始出散点杂色）。改并档阈值后：档数由「色差是否看得出」决定，
+    #    看不出差别的并掉、看得出的留下，跟参照端底稿的实际构成一致。
+    lab, centers, n_shades, de_used = shade_palette(rgb, opaque)
+    info.update(shades=n_shades, merge_de=de_used)
+    lab[~inner] = SENTINEL          # 边缘混色带不参与并档，交给第 4 步继承
 
-    # 3) 光晕簇抑制：整簇贴背景的亮色/高饱和光晕从正常簇取色（合法深色描边保留）
-    lab, halo_info = suppress_halo(lab, inner, opaque, rgb, k)
+    # 3) 光晕簇抑制：整簇贴背景的亮色/高饱和光晕从正常档取色（合法深色描边保留）
+    lab, halo_info = suppress_halo(lab, inner, opaque, rgb, n_shades)
     info.update(halo_info)
 
     # 4) 边界带：EDT 最近邻继承（零点集只含已填充像素，透明区不会串色）
@@ -448,25 +509,22 @@ def _clean_image(src: Path, dst: Path, k: int = K_DEFAULT, erode: int = ERODE_DE
         _, (iy, ix) = distance_transform_edt(lab == SENTINEL, return_indices=True)
         lab[unfilled] = lab[iy[unfilled], ix[unfilled]]
 
-    # 5) 自适应窗口单轮众数滤波（窗口跟随颗粒度 × win_scale，细小特征不被吃掉）
-    pitch = detect_pitch(lab, opaque)
-    win = max(3, int(round(pitch * win_scale)))
-    if win % 2 == 0:
-        win += 1
+    # 5) 小窗单轮众数滤波：只去 1~2px 的散点，不吃掉成片的明暗档
+    win = MODAL_WIN if MODAL_WIN % 2 == 1 else MODAL_WIN + 1
     f = modal(lab, footprint_rectangle((win, win)))
     cur = lab.copy()
     o = opaque & (f < SENTINEL)
     cur[o] = f[o]
 
-    # 6) 贴回调色板中心色
+    # 6) 贴上各档的代表色
     out = a.copy()
-    out[..., :3][opaque] = km.cluster_centers_[cur[opaque]].astype(np.uint8)
+    out[..., :3][opaque] = centers[cur[opaque]].astype(np.uint8)
     Image.fromarray(out).save(dst)
 
     rgb2 = out[..., :3].astype(np.int32)
     info["flatness"] = round(flatness_of(rgb2, opaque), 3)
     info["colors"] = int(len(np.unique(rgb2[opaque].reshape(-1, 3), axis=0)))
-    info["pitch"] = pitch
+    info["pitch"] = detect_pitch(cur, opaque)   # 仅诊断：v8 起滤波窗口不再跟随颗粒度
     return info
 
 
