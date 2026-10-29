@@ -14,7 +14,8 @@ echo "==> 1/4 打包 $ROOT"
 tar czf /tmp/allmaster.tgz \
   --exclude='.git' --exclude='.workbuddy' --exclude='node_modules' \
   --exclude='.DS_Store' --exclude='*.genie' --exclude='.pay-state.json' \
-  --exclude='.pixelart-config.json' --exclude='.pixelart-tasks' --exclude='.pixelart-tasks-vp' --exclude='.venv' \
+  --exclude='.pixelart-config.json' --exclude='.pixelart-tasks' --exclude='.pixelart-tasks-vp' \
+  --exclude='.pixelart-samples' --exclude='.pixelart-cleanup-trace.jsonl' --exclude='.venv' \
   -C "$ROOT" .
 ls -lh /tmp/allmaster.tgz | awk '{print "    包大小:", $5}'
 
