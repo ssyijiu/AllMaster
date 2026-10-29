@@ -38,13 +38,31 @@ def cfg(key):
 
 def original_of(group: str) -> Path | None:
     """组内「原图」= 第一个非 1/2 的图片文件。必须过滤 .DS_Store 之类的隐藏文件：
-    它们没有扩展名，前几版会把它当原图拷过去，结果下游找不到图。"""
+    它们没有扩展名，前几版会把它当原图拷过去，结果下游找不到图。
+    31 组之后目录里还会混着 A_/B_ 转换图（那也是 PNG），必须一并排除。"""
     imgs = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
     for f in sorted((DATA / group).iterdir()):
-        if f.is_file() and not f.name.startswith(".") and f.stem not in ("1", "2") \
-                and f.suffix.lower() in imgs:
-            return f
+        if not f.is_file() or f.name.startswith((".", "A_", "B_")):
+            continue
+        if f.stem in ("1", "2") or f.suffix.lower() not in imgs:
+            continue
+        return f
     return None
+
+
+def pair_meta(group: str) -> tuple[str, str]:
+    """从 A_ 转换图的文件名里读回「画风标签 + 备注」（命名：A_转换图_<标签>[_<备注>]_<hash>.png）。
+
+    31 组之后的数据集就是这么命名的，直接用它组提示词，才能和用户手上那张
+    val-perler 转换图口径一致地比。
+    """
+    for f in sorted((DATA / group).iterdir()):
+        if f.is_file() and f.name.startswith("A_"):
+            parts = Path(f).stem.split("_")
+            tag = parts[2] if len(parts) > 2 else ""
+            notes = "_".join(parts[3:-1]) if len(parts) > 4 else ""
+            return tag, notes
+    return "", ""
 
 
 def prepare_prompt(group: str, subject: str, desc: str, wd: Path, style: str = "") -> Path:
@@ -81,7 +99,7 @@ def run_render(script: str, prompt: Path, src: Path, dst: Path, env_extra: dict,
     """跑一次生图。val-perler 活动后端同一时刻只让一张图在生成（429 user_busy），
     遇到就按它给的 retry_after 等一会儿再来，所以它的重试次数给得多一些。"""
     env = dict(os.environ, NO_PROXY="*", **env_extra)
-    tries = 6 if script == "image_render_vp.py" else retries
+    tries = 6 if script == "image_render_vp.py" else max(retries, 4)
     for attempt in range(1, tries + 1):
         r = subprocess.run([PY, str(SCRIPTS / script), "--prompt", str(prompt),
                             "--image", str(src), "--output", str(dst)],
@@ -93,6 +111,9 @@ def run_render(script: str, prompt: Path, src: Path, dst: Path, env_extra: dict,
             wait = RETRY_BACKOFF
             if "user_busy" in tail or "429" in tail:
                 wait = 20.0     # 活动后端：等前一张出完
+            elif "ConnectionError" in tail or "ConnectionReset" in tail \
+                    or "file_zero_bytes" in tail:
+                wait = RETRY_BACKOFF * attempt   # 网关抽风：退避着来
             print(f"    [retry {attempt}/{tries - 1}，{wait:.0f}s] {script}: {tail[-160:]}", flush=True)
             time.sleep(wait)
     return False, tail
@@ -102,6 +123,13 @@ def one_job(spec: str, with_vp: bool) -> tuple[str, str]:
     group, subject, desc = (spec.split(":", 2) + ["", ""])[:3]
     subject = subject or "prop"
     style = getattr(one_job, "style", "")
+    if getattr(one_job, "use_pair", False):
+        # 直接用用户那对转换图文件名里写的画风标签与备注，口径和他手上那张 val-perler 一致
+        ptag, pnotes = pair_meta(group)
+        if ptag and not style:
+            style = ptag
+        if not desc:
+            desc = pnotes
     # 目录带 pid：本工具常被拆成「我方并行 + vp 串行」两个进程同时跑，共享临时目录会互相删
     wd = Path("/tmp/pixelart_raw") / f"G{group}-{style or 'base'}-{os.getpid()}"
     if wd.exists():
@@ -153,6 +181,8 @@ def main(argv=None):
             workers = int(a.split("=", 1)[1] or 3)
         elif a.startswith("--style="):
             one_job.style = a.split("=", 1)[1]
+        elif a == "--pair":
+            one_job.use_pair = True   # 画风标签与备注从 A_ 转换图的文件名里读
         else:
             specs.append(a)
     if not specs:

@@ -61,8 +61,14 @@ from sklearn.cluster import KMeans
 from skimage.filters.rank import modal
 from skimage.morphology import erosion, footprint_rectangle
 
-K_DEFAULT = 24        # 调色板簇数：覆盖主色 + 大对比细节，切格阶段还会再归并
+# 调色板簇数：2026-10-30 由 24 提到 96。理由：24 会把生图画出的 2~3 档硬边明暗
+# 全并成一档，观感比参照后端（val-perler）死板得多；实测提 k 不会增加图纸豆色
+# （切格受 --max-colors 28 约束：k24→17 色、k48→23、k96→24，参照端自己就是 23），
+# 但 k≥256 会在皮肤/衬衫上留下散点杂色，96 是「够细腻 + 够干净」的实测平衡点。
+K_DEFAULT = 96
 ERODE_DEFAULT = 3     # 边缘腐蚀半径：抗锯齿混色带的典型宽度
+WIN_SCALE = 1.0       # 众数滤波窗口 = 颗粒度 pitch × 该系数（调小=多留细节但也多留散点；实测 0.7 与 1.0
+                      # 的色数/层次密度完全一致，只是散点从 0.033 涨到 0.040，故保持 1.0）
 SENTINEL = 255        # 未填充/透明的 label 哨兵
 FLAT_SKIP = 0.85      # 输入平坦度已达标时跳过 1-5（幂等保护）
 PITCH_MIN, PITCH_MAX = 5, 32   # 色块颗粒度检测的合理区间（px）
@@ -370,10 +376,11 @@ def emit_diagnostics(info: dict) -> None:
             print(f"[色块规整] 追踪日志写入失败：{e}", flush=True)
 
 
-def clean_image(src: Path, dst: Path, k: int = K_DEFAULT, erode: int = ERODE_DEFAULT) -> dict:
+def clean_image(src: Path, dst: Path, k: int = K_DEFAULT, erode: int = ERODE_DEFAULT,
+                win_scale: float = WIN_SCALE) -> dict:
     """清洗一张底稿，返回统计信息（供运行记录），并顺带落诊断。"""
     try:
-        info = _clean_image(src, dst, k, erode)
+        info = _clean_image(src, dst, k, erode, win_scale)
         emit_diagnostics(info)
         return info
     except Exception as e:          # noqa: BLE001 - 诊断侧：原样抛出，但先留个记录
@@ -381,7 +388,8 @@ def clean_image(src: Path, dst: Path, k: int = K_DEFAULT, erode: int = ERODE_DEF
         raise
 
 
-def _clean_image(src: Path, dst: Path, k: int = K_DEFAULT, erode: int = ERODE_DEFAULT) -> dict:
+def _clean_image(src: Path, dst: Path, k: int = K_DEFAULT, erode: int = ERODE_DEFAULT,
+                 win_scale: float = WIN_SCALE) -> dict:
     a = np.asarray(Image.open(src).convert("RGBA"))
     info: dict = {"ver": 7, "size": [a.shape[1], a.shape[0]]}
 
@@ -440,9 +448,11 @@ def _clean_image(src: Path, dst: Path, k: int = K_DEFAULT, erode: int = ERODE_DE
         _, (iy, ix) = distance_transform_edt(lab == SENTINEL, return_indices=True)
         lab[unfilled] = lab[iy[unfilled], ix[unfilled]]
 
-    # 5) 自适应窗口单轮众数滤波（窗口跟随颗粒度，细小特征不被吃掉）
+    # 5) 自适应窗口单轮众数滤波（窗口跟随颗粒度 × win_scale，细小特征不被吃掉）
     pitch = detect_pitch(lab, opaque)
-    win = max(3, pitch if pitch % 2 == 1 else pitch + 1)
+    win = max(3, int(round(pitch * win_scale)))
+    if win % 2 == 0:
+        win += 1
     f = modal(lab, footprint_rectangle((win, win)))
     cur = lab.copy()
     o = opaque & (f < SENTINEL)
