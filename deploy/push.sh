@@ -16,6 +16,7 @@ tar czf /tmp/allmaster.tgz \
   --exclude='.DS_Store' --exclude='*.genie' --exclude='.pay-state.json' \
   --exclude='.pixelart-config.json' --exclude='.pixelart-tasks' --exclude='.pixelart-tasks-vp' \
   --exclude='.pixelart-samples' --exclude='.pixelart-cleanup-trace.jsonl' --exclude='.venv' \
+  --exclude='apps/pixelart/assert/生图对比' \
   -C "$ROOT" .
 ls -lh /tmp/allmaster.tgz | awk '{print "    包大小:", $5}'
 

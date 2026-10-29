@@ -27,3 +27,6 @@ __pycache__/
 # ===== 拼豆链路诊断采样（触发样本与追踪日志，不入库）=====
 .pixelart-samples/
 .pixelart-cleanup-trace.jsonl
+
+# ===== 算法对比数据集（30 组生图对比原图+输出，372MB，不入库）=====
+apps/pixelart/assert/生图对比/
