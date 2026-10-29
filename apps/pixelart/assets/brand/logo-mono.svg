@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
   <!-- 点豆 logo 无底单色变体：水印 / 打印 / 单色场合，实心豆用点缀色珊瑚 -->
-  <circle cx="32" cy="32" r="9" fill="none" stroke="#1F1D1A" stroke-width="7.5"/>
-  <circle cx="64" cy="32" r="13" fill="#FF6B5E"/>
-  <circle cx="32" cy="64" r="9" fill="none" stroke="#1F1D1A" stroke-width="7.5"/>
-  <circle cx="64" cy="64" r="9" fill="none" stroke="#1F1D1A" stroke-width="7.5"/>
+  <circle cx="31" cy="31" r="11" fill="#1F1D1A"/>
+  <circle cx="65" cy="31" r="17" fill="#FF6B5E"/>
+  <circle cx="31" cy="65" r="17" fill="#1F1D1A"/>
+  <circle cx="65" cy="65" r="17" fill="#1F1D1A"/>
 </svg>

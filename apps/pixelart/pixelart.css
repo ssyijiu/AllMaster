@@ -15,27 +15,47 @@
       padding: var(--space-3) var(--container-gutter);
       display: flex; align-items: center; justify-content: space-between;
     }
-    .brand { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-md); font-weight: var(--weight-announce); letter-spacing: -0.01em; }
+    .brand { display: flex; align-items: center; gap: 10px; font-size: var(--text-md); font-weight: 800; letter-spacing: 0.01em;
+      font-family: "Yuanti SC", "Hiragino Maru Gothic ProN", "YouYuan", "PingFang SC", sans-serif; }
     .brand-logo {
-      width: 30px; height: 30px; border-radius: 9px;
+      width: 32px; height: 32px; border-radius: 10px;
       background: #FFD02F;
       display: inline-flex; align-items: center; justify-content: center;
       box-shadow: 0 2px 6px rgba(240, 187, 0, 0.45);
     }
-    .brand-logo svg { width: 18px; height: 18px; display: block; }
-    .brand-en { font-size: 10px; letter-spacing: 2px; color: #8A867C; font-weight: 500; padding-bottom: 2px; }
+    .brand-logo svg { width: 20px; height: 20px; display: block; }
+    .brand-en { font-family: "Arial Rounded MT Bold", "Nunito", "Quicksand", "Avenir Next Rounded", sans-serif;
+      font-size: 11px; letter-spacing: 0.26em; color: #A89F8D; font-weight: 700; padding-bottom: 2px; }
 
     .page {
       max-width: var(--container-max); margin: 0 auto;
       padding: var(--space-10) var(--container-gutter) var(--space-12);
     }
 
-    .hero { margin-bottom: var(--space-5); text-align: center; }
+    .hero { margin-bottom: var(--space-5); text-align: center; position: relative; padding: var(--space-4) 0 var(--space-2); }
     .hero h1 {
-      font-size: clamp(28px, 4vw, 40px); font-weight: 700;
-      line-height: 1.2; letter-spacing: -0.02em; color: var(--fg);
+      font-family: "Yuanti SC", "Hiragino Maru Gothic ProN", "YouYuan", "PingFang SC", sans-serif;
+      font-size: clamp(34px, 5vw, 52px); font-weight: 800;
+      line-height: 1.18; letter-spacing: 0.01em; color: var(--fg);
     }
-    .hero p { margin-top: var(--space-2); color: var(--muted); max-width: 60ch; margin-left: auto; margin-right: auto; }
+    .hero h1 em {
+      font-style: normal; padding: 0 0.08em;
+      background: linear-gradient(transparent 64%, #FFD02F 64%);
+      border-radius: 6px;
+    }
+    .hero p {
+      font-family: "Yuanti SC", "Hiragino Maru Gothic ProN", "YouYuan", "PingFang SC", sans-serif;
+      margin-top: 14px; color: #6F6A5E; font-size: 17px; font-weight: 600; letter-spacing: 0.04em;
+    }
+    /* Hero 漂浮豆装饰：呼应品牌，填补留白（窄屏隐藏） */
+    .hero-bead { position: absolute; border-radius: 50%; pointer-events: none;
+      animation: bead-float 6s ease-in-out infinite; }
+    .hero-bead.b1 { width: 18px; height: 18px; background: #FFD02F; left: 11%; top: 10px; }
+    .hero-bead.b2 { width: 12px; height: 12px; background: #FF6B5E; right: 15%; top: 0; animation-delay: -2s; }
+    .hero-bead.b3 { width: 26px; height: 26px; background: radial-gradient(circle at 35% 35%, #FFE58A, #FFD02F); left: 19%; bottom: -8px; animation-delay: -4s; }
+    .hero-bead.b4 { width: 10px; height: 10px; background: #FFD02F; right: 21%; bottom: 2px; animation-delay: -1s; }
+    @keyframes bead-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+    @media (max-width: 720px) { .hero-bead { display: none; } }
 
     .steps {
       display: flex; align-items: center; justify-content: center; gap: var(--space-4);
