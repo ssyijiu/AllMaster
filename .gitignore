@@ -23,3 +23,7 @@ node_modules/
 # ===== Python =====
 __pycache__/
 .pixelart-tasks-vp/
+
+# ===== 拼豆链路诊断采样（触发样本与追踪日志，不入库）=====
+.pixelart-samples/
+.pixelart-cleanup-trace.jsonl

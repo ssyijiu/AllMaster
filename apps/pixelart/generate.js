@@ -35,6 +35,13 @@ const STYLE_GUIDE_JSON = path.join(PERLER_DIR, 'assets', 'style_guide.json');
    且 /tmp 可能被定期清理导致图纸丢失。默认落仓库根 /opt/allmaster/.pixelart-tasks（属主 allmaster 可写），
    可用环境变量 PIXELART_TASK_ROOT 覆盖。 */
 const DEFAULT_TASK_ROOT = process.env.PIXELART_TASK_ROOT || path.join(ROOT, '.pixelart-tasks');
+/* 色块规整诊断采样：任务目录 72h 后会被 GC，而光晕/背景兜底这类偶发触发要靠真数据攒样本，
+   所以触发时把「规整前底稿」额外存到这两个长期位置（不受任务清理影响，可用环境变量改路径）：
+   .pixelart-samples/           触发样本：*_raw.png / *_cleaned.png / *.json（同名的诊断）
+   .pixelart-cleanup-trace.jsonl 每行一次规整的摘要，用来统计「光晕触发率 / 近候选分布」 */
+const SAMPLE_DIR = process.env.PIXELART_SAMPLE_DIR || path.join(ROOT, '.pixelart-samples');
+const TRACE_LOG = process.env.PIXELART_CLEANUP_TRACE || path.join(ROOT, '.pixelart-cleanup-trace.jsonl');
+try { fs.mkdirSync(SAMPLE_DIR, { recursive: true }); } catch (_) {}
 const GEN_TIMEOUT_MS = 8 * 60 * 1000;   // 生图+切格上限（实测约 1 分钟）
 const TASK_TTL_MS = 2 * 60 * 60 * 1000; // 渲染服务只保留 2 小时，任务记录同步过期
 /* 磁盘任务目录保留时长：过期后 pruneTasks 连盘一起删（tmpdir 时代由系统清理兜底，落仓库后必须自己 GC，
@@ -249,6 +256,9 @@ function createEngine(options) {
       if (pLLM.baseUrl) { env.PERLER_IMAGE_BASE_URL = pLLM.baseUrl; }
       if (imgKey) { env.PERLER_IMAGE_API_KEY = imgKey; }
       if (cfg.imageModel || pLLM.imageModel) { env.PERLER_IMAGE_MODEL = cfg.imageModel || pLLM.imageModel; }
+      // 规整诊断：默认开（只是把触发样本存下来 + 追加一行追踪日志，不会污染正常日志）
+      env.PERLER_HALO_SAMPLE_DIR = SAMPLE_DIR;
+      env.PERLER_CLEANUP_TRACE = TRACE_LOG;
     }
     const child = spawn(pythonExe(), ['val_perler.py', 'generate'].concat(args), {
       cwd: PERLER_SCRIPTS,

@@ -12,6 +12,7 @@
   python3 批量取材.py 20:prop 21:character 28:prop
   python3 批量取材.py 20:prop:" descriptive text "
   python3 批量取材.py --no-vp 20:prop          # 不出 val-perler（活动池额度紧时）
+  python3 批量取材.py --style=chibi 20:prop     # 换个画风出一组（画风对标实验用）
 """
 import concurrent.futures as cf
 import json
@@ -36,15 +37,21 @@ def cfg(key):
 
 
 def original_of(group: str) -> Path | None:
+    """组内「原图」= 第一个非 1/2 的图片文件。必须过滤 .DS_Store 之类的隐藏文件：
+    它们没有扩展名，前几版会把它当原图拷过去，结果下游找不到图。"""
+    imgs = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
     for f in sorted((DATA / group).iterdir()):
-        if f.is_file() and f.stem not in ("1", "2"):
+        if f.is_file() and not f.name.startswith(".") and f.stem not in ("1", "2") \
+                and f.suffix.lower() in imgs:
             return f
     return None
 
 
-def prepare_prompt(group: str, subject: str, desc: str, wd: Path) -> Path:
+def prepare_prompt(group: str, subject: str, desc: str, wd: Path, style: str = "") -> Path:
     """用链路自带的 compose_prompt_json 组提示词（--prompt-only，不生图、不计费）。"""
     orig = original_of(group)
+    if orig is None:
+        raise SystemExit(f"[G{group}] 找不到原图（组目录里没有可用的图片文件）")
     wd.mkdir(parents=True, exist_ok=True)
     src = wd / ("原图" + orig.suffix.lower())
     if src != orig:
@@ -57,12 +64,12 @@ def prepare_prompt(group: str, subject: str, desc: str, wd: Path) -> Path:
     }
     pj = wd / "prompt.json"
     pj.write_text(json.dumps(slots, ensure_ascii=False, indent=2), encoding="utf-8")
-    # 注意：输入图是位置参数（val_perler.py generate 转发时才带 generate 子命令）
-    r = subprocess.run(
-        [PY, str(SCRIPTS / "gen_and_recover.py"), str(src),
-         "--work-dir", str(wd), "--prompt", str(pj),
-         "--subject", subject, "--task-name", f"取材G{group}", "--prompt-only"],
-        capture_output=True, text=True, check=False)
+    cmd = [PY, str(SCRIPTS / "gen_and_recover.py"), str(src),
+           "--work-dir", str(wd), "--prompt", str(pj),
+           "--subject", subject, "--task-name", f"取材G{group}", "--prompt-only"]
+    if style:
+        cmd += ["--art-style", style]      # 画风对比：同一张原图换个画风再组一次提示词
+    r = subprocess.run(cmd, capture_output=True, text=True, check=False)
     md = wd / ".wip" / "提示词" / "提示词.md"
     if not md.is_file():
         print(f"    [提示词失败 G{group}] rc={r.returncode} out={r.stdout[-200:]!r} err={r.stderr[-300:]!r}",
@@ -94,10 +101,12 @@ def run_render(script: str, prompt: Path, src: Path, dst: Path, env_extra: dict,
 def one_job(spec: str, with_vp: bool) -> tuple[str, str]:
     group, subject, desc = (spec.split(":", 2) + ["", ""])[:3]
     subject = subject or "prop"
-    wd = Path("/tmp/pixelart_raw") / f"G{group}"
+    style = getattr(one_job, "style", "")
+    # 目录带 pid：本工具常被拆成「我方并行 + vp 串行」两个进程同时跑，共享临时目录会互相删
+    wd = Path("/tmp/pixelart_raw") / f"G{group}-{style or 'base'}-{os.getpid()}"
     if wd.exists():
         shutil.rmtree(wd)
-    prompt = prepare_prompt(group, subject, desc, wd)
+    prompt = prepare_prompt(group, subject, desc, wd, style)
     if not prompt.is_file():
         return group, f"提示词组不出来：{prompt}"
     src = next(wd.glob("原图.*"))
@@ -107,16 +116,26 @@ def one_job(spec: str, with_vp: bool) -> tuple[str, str]:
     vp_env = {"ACC_USER_ID": cfg("accUserId")}
     dst_dir = OUT / f"G{group}"
     dst_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(prompt, dst_dir / "prompt.md")
+    ours_name = f"ours_{style}_raw.png" if style else "ours_raw.png"
+    shutil.copy2(prompt, dst_dir / (f"prompt_{style}.md" if style else "prompt.md"))
     msg = []
-    ok = (dst_dir / "ours_raw.png").is_file()
-    if not getattr(one_job, "skip_ours", False):
-        ok, tail = run_render("image_render.py", prompt, src, dst_dir / "ours_raw.png", key_env)
+    skip = getattr(one_job, "skip_ours", False)
+    ok = skip or (dst_dir / ours_name).is_file()   # --vp-only 时没有 ours 也继续
+    if not skip:
+        ok, tail = run_render("image_render.py", prompt, src, dst_dir / ours_name, key_env)
         msg.append(("ours" if ok else "ours失败") + ("：" + tail.strip()[-160:] if not ok else ""))
     if ok and with_vp:
         ok2, tail2 = run_render("image_render_vp.py", prompt, src, dst_dir / "vp_raw.png", vp_env)
         msg.append("vp" if ok2 else "vp失败：" + tail2.strip()[-160:])
     return group, "  ".join(msg)
+
+
+def _safe_job(spec: str, with_vp: bool) -> tuple[str, str]:
+    """包一层：单组炸了（找不到原图、生图接口抽风）不许拖垮整批。"""
+    try:
+        return one_job(spec, with_vp)
+    except Exception as e:      # noqa: BLE001
+        return spec.split(":", 1)[0], f"失败：{type(e).__name__}: {e}"
 
 
 def main(argv=None):
@@ -132,6 +151,8 @@ def main(argv=None):
             skip_ours = True
         elif a.startswith("--workers="):
             workers = int(a.split("=", 1)[1] or 3)
+        elif a.startswith("--style="):
+            one_job.style = a.split("=", 1)[1]
         else:
             specs.append(a)
     if not specs:
@@ -140,7 +161,7 @@ def main(argv=None):
     one_job.skip_ours = skip_ours
     print(f"取材 {len(specs)} 组（{'双后端' if with_vp else '仅我方'}），并行 {workers}")
     with cf.ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(one_job, s, with_vp): s for s in specs}
+        futs = {ex.submit(_safe_job, s, with_vp): s for s in specs}
         for f in cf.as_completed(futs):
             g, m = f.result()
             print(f"[G{g}] {m}", flush=True)

@@ -61,7 +61,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     imgDataUrl: null,     /* 处理后的 dataURL（≤1024px PNG） */
     subject: 'character', /* character | prop */
     styles: [],           /* [{id,label,scope,thumb}] */
-    styleId: 'original',
+    styleId: 'official',   /* 人物默认「官方同款」（对标参照后端观感）；道具侧会自动回落到「还原」 */
     generating: false,
     pollTimer: null,
     watchToken: 0,        /* SSE 观察轮次：每轮生成 +1，回调对不上号即视为已取消 */
