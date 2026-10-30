@@ -162,7 +162,7 @@ def compose_prompt_json(size: int, subject: str, prompt_json_path: Path | None, 
     """按 SLOT_ORDER 组装 XML slot，并补齐基础规格、画风和主体描述。
 
     target_size 是玩家指定的小板子边长（≤ SMALL_BOARD_MAX）：补 target_size slot，让底稿按这块板子的粒度画。
-    art_style 是画风库里的名字或一段自定义画风描述，优先于配置里的 art_style；两处都没给时补默认画风「还原」。
+    art_style 是画风库里的名字或一段自定义画风描述，优先于配置里的 art_style；两处都没给时按主体补默认画风（人物「卡通」、道具「还原」，见 resolve_art_style）。
     配置里的 art_style 写成库里的名字（如 "Q版"）时同样读库里的正文。
     edit_request 非空时为修改模式：参考图本身就是主体，不补 subject_description 和默认画风；
     补 edit_mission，并把修改要求作为最后一个 slot 拼入。
