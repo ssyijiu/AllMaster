@@ -84,7 +84,12 @@ restoreAuth();                            // 最后才执行入口（→ continu
 | `POST /api/pay/order` | 创建支付订单（虎皮椒） |
 | `GET /api/pay/notify` | 支付异步回调（验签 → RPC 入账） |
 | `GET /api/pay/return` | 支付同步回跳 → 302 产品页 `?paid=<base64>` |
+| `POST /api/orders/settle` | 登录后补退：把本人被遗弃的 pending 单结掉（`order_reap(30min)`） |
+| `GET /api/orders/get?id=` | 查单（本人，401 基线） |
+| `GET /api/admin/orders/health?hours=` | 生成单运维快照（header `x-access-key`）；聚合数据来自云端 `order_health()`，云端内部再比一次 accessKey |
 | 密钥下发 | `app_secrets` 表经 DB 端 RPC 管理，**密钥永不进前端**（admin 保存走 base64 参数化 + md5 校验） |
+
+**生成单（P3）与巡检**：所有扣积分生成必须走 `建单 → 扣费 → 成功/失败结算`（`server/orders.js`，产品代码不得自己调 `wallet_refund`）。服务端每 30 分钟把健康快照写入 `/opt/allmaster/.health/latest.json`（隐藏目录，静态服务 403；已 gitignore），超阈值同时打 `[health] WARN` 到 journalctl；每日巡视 automation 直接 ssh 读这个文件，无需把 accessKey 写进任何脚本。
 
 **⚠️ 发布与密钥覆盖（重要教训，2026-10-26 手机 401 事故）**：deploy 工具全量上传本地目录，
 本地 `.ai-config.json` 会**覆盖**线上服务器文件——而后台保存 Key 时是先更新线上（sync-key）再写 DB，

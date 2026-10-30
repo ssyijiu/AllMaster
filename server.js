@@ -47,6 +47,7 @@ const PAY_STATE_FILE = path.join(ROOT, '.pay-state.json');
  * 云端 app_orders 存状态，退款在 order_fail() 里与状态变更同事务、且幂等。 */
 const orderService = require('./server/orders').createOrderService({
   rpc: function (token, fn, params) { return cloudRpc(token, fn, params); },
+  rpcAnon: function (fn, params) { return cloudRpcAnon(fn, params); },
   log: function (msg) { console.warn('[order] ' + msg); }
 });
 
@@ -788,6 +789,44 @@ function rpcErrorText(r) {
   return String(r.text || '');
 }
 
+/* 匿名（无 JWT）调云函数：用于跨用户的运维聚合 order_health()。
+ * 云端用「accessKey 门」而不是 auth.uid()，因为巡检时没有登录用户。
+ * 只读、只返回计数，不含任何用户标识。 */
+function cloudRpcAnon(fn, params) {
+  return new Promise((resolve, reject) => {
+    const body = Buffer.from(JSON.stringify(params || {}), 'utf8');
+    const u = new URL('/.cloud/database/rest/rpc/' + fn, CLOUD_UPSTREAM);
+    const req = https.request({
+      protocol: 'https:',
+      hostname: u.hostname,
+      port: u.port || 443,
+      path: u.pathname + u.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': body.length,
+        'x-wb-webapp-access-key': CLOUD_PUBLISHABLE_KEY,
+        Origin: CLOUD_ORIGIN,
+        Referer: CLOUD_ORIGIN + '/'
+      },
+      timeout: 15000
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch (_) { data = null; }
+        resolve({ status: res.statusCode || 0, data: data, text: text });
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('health rpc timeout')));
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
 /* ---------- 拼豆生成：生成单 + 任务结算 ----------
  * 提交期失败（参数错 / 落盘失败，引擎还回 4xx-5xx）→ 包装层直接 fail 退款；
  * 任务期失败 / 超时 → 引擎回调 onTaskFinish 结算。两条路都不依赖前端还在页面上，
@@ -893,6 +932,23 @@ async function handleOrderGet(req, res, fullUrl) {
   const row = await orderService.get(id, bearer[1]);
   if (!row) { return sendJson(res, 404, { error: { message: '单据不存在' } }); }
   return sendJson(res, 200, { order: row });
+}
+
+/* GET /api/admin/orders/health?hours=24（header x-access-key）：生成单运维快照
+ * 为什么用 accessKey 而不是登录态：巡检看的是跨用户聚合，服务端没有管理员 JWT。
+ * 云端 order_health() 内部再比一次 app_secrets.accessKey（密钥换了对不上就 P0001）。 */
+async function handleOrderHealth(req, res, fullUrl) {
+  const cfg = readDotJson(PAY_CONFIG_FILE) || {};
+  if (!cfg.accessKey || !safeEqual(req.headers['x-access-key'], cfg.accessKey)) {
+    return sendJson(res, 401, { error: { message: '无权访问' } });
+  }
+  const raw = parseInt(fullUrl.searchParams.get('hours'), 10);
+  const hours = Math.max(1, Math.min(720, isFinite(raw) ? raw : 24));
+  const r = await orderService.health({ key: cfg.accessKey, hours: hours });
+  if (r.error) {
+    return sendJson(res, 502, { error: { message: '云端巡检接口不可用：' + r.error } });
+  }
+  return sendJson(res, 200, { snapshot: r.snapshot, summary: r.summary });
 }
 
 function proxyCloud(req, res) {
@@ -1009,6 +1065,9 @@ const server = http.createServer((req, res) => {
     if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
     return handleOrderSettle(req, res);
   }
+  if (pathOnly === '/api/admin/orders/health') {
+    return handleOrderHealth(req, res, fullUrl);
+  }
   if (pathOnly === '/api/orders/get') {
     return handleOrderGet(req, res, fullUrl);
   }
@@ -1087,6 +1146,64 @@ const server = http.createServer((req, res) => {
   serveStatic(req, res);
 });
 
+/* ---------- 生成单巡检（默认每 30 分钟） ----------
+ * 为什么要「服务端自己算 + 落盘」而不是只做接口：
+ * 1. pending 卡住是静默故障——用户不再登录，order_reap 就永远等不到它，
+ *    所以需要一个不依赖任何人上线来看的定时器；
+ * 2. 快照落到 .health/latest.json，定时巡检（automation）ssh 上来 cat 即可出简报，
+ *    不必把 accessKey 写进任何脚本或提示词；
+ * 3. 超阈值同时打 [health] WARN 到 journalctl，服务器自己也有据可查。
+ * .health 是隐藏目录，静态服务本就 403，不会被下发。
+ */
+const HEALTH_DIR = path.join(ROOT, '.health');
+const HEALTH_FILE = path.join(HEALTH_DIR, 'latest.json');
+const HEALTH_HISTORY = path.join(HEALTH_DIR, 'history.log');
+const HEALTH_INTERVAL_MS = (parseFloat(process.env.ORDER_HEALTH_INTERVAL_MIN) || 30) * 60 * 1000;
+const HEALTH_FIRST_DELAY_MS = (process.env.ORDER_HEALTH_FIRST_DELAY_SEC == null
+  ? 90
+  : parseFloat(process.env.ORDER_HEALTH_FIRST_DELAY_SEC) || 0) * 1000;
+
+function writeHealthSnapshot(obj) {
+  try {
+    fs.mkdirSync(HEALTH_DIR, { recursive: true });
+    fs.writeFileSync(HEALTH_FILE, JSON.stringify(obj, null, 2));
+    fs.appendFileSync(HEALTH_HISTORY, JSON.stringify(obj) + '\n');
+    /* 历史只留最近 500 条，避免无限增长（30 分钟一条 ≈ 10 天） */
+    const lines = fs.readFileSync(HEALTH_HISTORY, 'utf8').split('\n').filter(Boolean);
+    if (lines.length > 800) { fs.writeFileSync(HEALTH_HISTORY, lines.slice(-500).join('\n') + '\n'); }
+  } catch (e) {
+    console.warn('[health] 快照落盘失败：' + ((e && e.message) || e));
+  }
+}
+
+async function runOrderHealth() {
+  const cfg = readDotJson(PAY_CONFIG_FILE) || {};
+  if (!cfg.accessKey) { return; }
+  const at = new Date().toISOString();
+  const r = await orderService.health({ key: cfg.accessKey, hours: 24 });
+  if (r.error) {
+    console.warn('[health] 巡检失败：' + r.error);
+    writeHealthSnapshot({ at: at, ok: false, error: String(r.error) });
+    return;
+  }
+  writeHealthSnapshot(Object.assign({ at: at, ok: true }, r.snapshot || {}, { summary: r.summary }));
+  if (r.summary && r.summary.level === 'warn') {
+    console.warn('[health] WARN ' + r.summary.warnings.join('；') + ' | ' + r.summary.text);
+  }
+}
+
+function startOrderHealth() {
+  const tick = () => {
+    runOrderHealth().catch((e) => console.warn('[health] 异常：' + ((e && e.message) || e)));
+  };
+  const first = setTimeout(tick, HEALTH_FIRST_DELAY_MS);
+  const timer = setInterval(tick, HEALTH_INTERVAL_MS);
+  if (first.unref) { first.unref(); }
+  if (timer.unref) { timer.unref(); }
+  return { first: first, timer: timer };
+}
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log('AI Avatar Studio server listening on port ' + PORT);
+  startOrderHealth();
 });

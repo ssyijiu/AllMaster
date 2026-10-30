@@ -13,6 +13,9 @@
 .pixelart-tasks/
 .venv/
 
+# ===== 生成单巡检快照（服务端每 30 分钟落盘，运行时产物）=====
+.health/
+
 # ===== 系统与依赖 =====
 .DS_Store
 node_modules/

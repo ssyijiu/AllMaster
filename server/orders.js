@@ -62,8 +62,58 @@ function mapChargeError(r) {
   return { status: 502, code: 'WALLET_UNAVAILABLE', message: '计费服务暂不可用，请稍后重试' };
 }
 
+/* ---------- 巡检（health） ----------
+ * 只看运营指标，不含任何用户标识：待结算积压、最老单龄、窗口内成功/失败数、
+ * 失败原因分布。为什么需要：p4 之前「单卡在 pending」是静默的——用户不再来登录，
+ * order_reap 就永远等不到，谁也不知道有多少单悬着。
+ */
+const HEALTH = {
+  STALE_MINUTES: REAP_MINUTES,   // 与补退窗口一致：超过这个时长还 pending 就是异常
+  MIN_SAMPLE: 5,                 // 窗口内样本太少时不判失败率（避免 1/1 就告警）
+  FAIL_RATIO_WARN: 0.3           // 失败率 ≥30% 视为异常
+};
+
+function num(v) { return typeof v === 'number' && isFinite(v) ? v : 0; }
+
+/**
+ * 把 order_health() 的快照翻译成「要不要报警」+ 一句人话。
+ * 纯函数，便于单测（不依赖时间以外的东西）。
+ */
+function summarizeHealth(h) {
+  const s = h || {};
+  const succeeded = num(s.succeeded_window);
+  const failed = num(s.failed_window);
+  const sample = succeeded + failed;
+  const pendingTotal = num(s.pending_total);
+  const stale = num(s.pending_stale);
+  const oldest = num(s.oldest_pending_minutes);
+  const warnings = [];
+
+  if (stale > 0) {
+    warnings.push('有 ' + stale + ' 单超过 ' + HEALTH.STALE_MINUTES + ' 分钟未结算（最老 ' + oldest + ' 分钟）');
+  }
+  const ratio = sample > 0 ? failed / sample : 0;
+  if (sample >= HEALTH.MIN_SAMPLE && ratio >= HEALTH.FAIL_RATIO_WARN) {
+    warnings.push('失败率 ' + Math.round(ratio * 100) + '%（' + failed + '/' + sample + '，窗口 ' + num(s.window_hours) + 'h）');
+  }
+  const reasons = s.fail_reasons && typeof s.fail_reasons === 'object' ? s.fail_reasons : {};
+  const topReason = Object.keys(reasons).sort(function (a, b) { return num(reasons[b]) - num(reasons[a]); })[0];
+
+  const text = '生成单 health：pending ' + pendingTotal + '（超窗 ' + stale + '）'
+    + '，窗口 ' + num(s.window_hours) + 'h 成功 ' + succeeded + ' / 失败 ' + failed
+    + (topReason ? '，主因 ' + topReason + '×' + num(reasons[topReason]) : '');
+
+  return {
+    level: warnings.length ? 'warn' : 'ok',
+    warnings: warnings,
+    ratio: Math.round(ratio * 1000) / 1000,
+    text: text
+  };
+}
+
 function createOrderService(deps) {
   const rpc = deps.rpc;
+  const rpcAnon = deps.rpcAnon || rpc;
   const log = deps.log || function () {};
 
   /* 关单 + 退款。永不抛错：结算失败最多让这一单停在 pending，
@@ -214,8 +264,42 @@ function createOrderService(deps) {
       } catch (e) {
         return null;
       }
+    },
+
+    /**
+     * 运维快照。没有调用者身份，走「accessKey 门」而不是 JWT：
+     * 云端 order_health() 会比对 app_secrets.accessKey，错就 P0001 FORBIDDEN。
+     * @returns {Promise<{snapshot:object, summary:object}|{error:string}>}
+     */
+    async health(opts) {
+      const o = opts || {};
+      const key = o.key || '';
+      if (!key) { return { error: 'no-access-key' }; }
+      let r;
+      try {
+        r = await rpcAnon('order_health', { p_key: key, p_hours: o.hours || 24 });
+      } catch (e) {
+        return { error: (e && e.message) || String(e) };
+      }
+      if (!r || r.status !== 200) {
+        return { error: (r ? r.status : 0) + ' ' + rpcMessage(r) };
+      }
+      let d = r.data;
+      if (Array.isArray(d)) { d = d[0]; }
+      /* PostgREST 对返回 jsonb 的函数可能包一层函数名，两种形态都接受 */
+      if (d && typeof d === 'object' && d.order_health && typeof d.order_health === 'object') {
+        d = d.order_health;
+      }
+      if (!d || typeof d !== 'object') { return { error: 'empty snapshot' }; }
+      return { snapshot: d, summary: summarizeHealth(d) };
     }
   };
 }
 
-module.exports = { createOrderService: createOrderService, newOrderId: newOrderId, REAP_MINUTES: REAP_MINUTES };
+module.exports = {
+  createOrderService: createOrderService,
+  newOrderId: newOrderId,
+  summarizeHealth: summarizeHealth,
+  HEALTH: HEALTH,
+  REAP_MINUTES: REAP_MINUTES
+};
