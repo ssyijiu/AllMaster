@@ -51,6 +51,9 @@ function layout() {
 const LAT = '"DIN Alternate","Bahnschrift","Arial Narrow","PingFang SC",sans-serif';
 const C = { ink: '#0F1923', ink2: '#16202B', ink3: '#1E2B38', red: '#FF4655', bone: '#ECE8E1', mut: '#8B9BB0', light: false };
 const P = { main: 'board', codes: true, grid: true, glow: true, source: true, thumbs: ['plain'], ironStyle: 'plain', chipLevel: 3 };   // thumbs：底栏放哪几种烫后小图（按 IRON_STYLES 顺序，空 = 不放）
+/* 初始主题跟「背景色」色板的高亮档走（index.html 默认白），不再固定 VALORANT 暗色 */
+const _onBg = document.querySelector('#psBgs i.on');
+setTheme(_onBg && _onBg.dataset.bg || '#FFFFFF');
 const PNG_SCALE = 3.5556;   // 小规格（≤104）基准 4K 宽；中/大规格按分辨率梯度升档（pngGrade）
 const view = { z: 1, tx: 0, ty: 0 };   // 主图区（图纸框）里图纸的缩放，及图纸中心相对框中心的平移（海报坐标）；预览与出图共用
 
@@ -97,11 +100,11 @@ function hlum(hex) {
   const n = parseInt(hex.slice(1), 16);
   return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
 }
-function setTheme(bg) {   // 一个底色推出整套配色：深底浅字，浅底深字
+function setTheme(bg) {   // 一个底色推出整套配色：深底浅字，浅底深字；点缀色 C.red 同步点豆化（深底豆黄、浅底可读琥珀）
   const light = hlum(bg) > .55;
   Object.assign(C, light
-    ? { ink: bg, ink2: mixHex(bg, '#FFFFFF', .55), ink3: mixHex(bg, '#0F1923', .08), bone: '#0F1923', mut: '#6B7A8C', light }
-    : { ink: bg, ink2: mixHex(bg, '#FFFFFF', .05), ink3: mixHex(bg, '#FFFFFF', .10), bone: '#ECE8E1', mut: '#8B9BB0', light });
+    ? { ink: bg, ink2: mixHex(bg, '#FFFFFF', .55), ink3: mixHex(bg, '#0F1923', .08), bone: '#0F1923', mut: '#6B7A8C', red: '#F0BB00', light }
+    : { ink: bg, ink2: mixHex(bg, '#FFFFFF', .05), ink3: mixHex(bg, '#FFFFFF', .10), bone: '#ECE8E1', mut: '#8B9BB0', red: '#FFD02F', light });
 }
 function cutPath(g, x, y, w, h, c) {
   g.beginPath();
@@ -404,7 +407,7 @@ function drawPoster(g) {
   g.clearRect(0, 0, PW, PH);
   g.fillStyle = C.ink; g.fillRect(0, 0, PW, PH);
   const rg = g.createRadialGradient(PW * .82, -60, 40, PW * .82, -60, 820);
-  rg.addColorStop(0, 'rgba(255,70,85,.13)'); rg.addColorStop(1, 'rgba(255,70,85,0)');
+  rg.addColorStop(0, C.light ? 'rgba(240,187,0,.10)' : 'rgba(255,208,47,.10)'); rg.addColorStop(1, 'rgba(240,187,0,0)');
   g.fillStyle = rg; g.fillRect(0, 0, PW, PH);
   g.save(); g.globalAlpha = .04; g.strokeStyle = C.bone; g.lineWidth = 1;
   for (let x = -PH; x < PW; x += 26) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x + PH, PH); g.stroke(); }
@@ -431,7 +434,7 @@ function drawPoster(g) {
   if (tx > sx - 20) {
     cutPath(g, tx, sy + 12, tw, 24, 6);
     g.strokeStyle = C.red; g.lineWidth = 1.2; g.stroke();
-    txt(g, tag, tx + tw / 2 + 1, sy + 24, { size: 12, weight: 700, color: C.red, font: TS, align: 'center', spacing: 1.5 });
+    txt(g, tag, tx + tw / 2 + 1, sy + 24, { size: 12, weight: 700, color: C.light ? C.bone : C.red, font: TS, align: 'center', spacing: 1.5 });
   }
 
   /* 图纸面板：切角边框 + 红色角标，图纸是画面绝对主体 */

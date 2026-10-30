@@ -26,7 +26,7 @@ header{
   background:var(--panel);
 }
 .title-block{min-width:0}
-.title-block h1{font-family:var(--font-d); font-size:16px; letter-spacing:.01em; font-weight:700; white-space:nowrap}
+.title-block h1{font-family:"ZCOOL QingKe HuangYou","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif; font-size:18px; letter-spacing:.03em; font-weight:400; white-space:nowrap}
 .title-block h1 em{color:var(--txt2); font-style:normal}
 /* [TITLE] 标题行：标题 + 铅笔；改名时标题变输入框 */
 .title-row{display:flex; align-items:center; gap:6px; min-width:0}

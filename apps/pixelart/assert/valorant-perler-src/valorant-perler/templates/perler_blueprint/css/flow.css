@@ -79,7 +79,9 @@ body[data-st="plan"] aside > .flow-next, body[data-st="edit"] aside > .flow-next
 }
 #flowNav button[data-st]:hover{color:var(--txt2)}
 #flowNav button b{
-  flex:none; width:22px; height:22px; line-height:22px; text-align:center; font-size:12px;
+  /* 圆内数字：flex 居中 + 清掉按钮的 .1em 字距（单字会被字距顶偏）；padding-bottom 做光学纠偏（数字字形天然偏下） */
+  flex:none; width:22px; height:22px; font-size:12px; letter-spacing:0;
+  display:flex; align-items:center; justify-content:center; line-height:1; padding-bottom:1px;
   border:1px solid var(--line2); border-radius:50%; transition:all .2s;
 }
 #flowNav button.seen{color:var(--txt2)}
@@ -131,7 +133,7 @@ body[data-st="plan"] aside > .flow-next, body[data-st="edit"] aside > .flow-next
   body[data-nav="right"] #flowNav, body[data-nav="left"] #flowNav{padding-inline:4px; gap:2px}
   /* 侧栏窄：站点 Tab 只留序号 + 文字，缩字距；位置切换按钮收窄 */
   body[data-nav="right"] #flowNav button[data-st], body[data-nav="left"] #flowNav button[data-st]{gap:4px; font-size:12px; letter-spacing:0}
-  body[data-nav="right"] #flowNav button b, body[data-nav="left"] #flowNav button b{width:18px; height:18px; line-height:18px; font-size:11px}
+  body[data-nav="right"] #flowNav button b, body[data-nav="left"] #flowNav button b{width:18px; height:18px; font-size:11px}
   body[data-nav="right"] #navDock, body[data-nav="left"] #navDock{padding:0 0 0 4px}
   body[data-nav="right"] #navDock button, body[data-nav="left"] #navDock button{width:24px; height:24px}
   body[data-nav="right"] #navDock svg, body[data-nav="left"] #navDock svg{width:16px; height:16px}
@@ -266,7 +268,7 @@ body[data-st="plan"] aside > .flow-next, body[data-st="edit"] aside > .flow-next
 
   #flowNav{height:38px; padding:0 6px; gap:2px}
   #flowNav button[data-st]{font-size:12px; letter-spacing:.04em; gap:5px}
-  #flowNav button b{width:18px; height:18px; line-height:18px; font-size:11px}
+  #flowNav button b{width:18px; height:18px; font-size:11px}
   .panel-section{padding:7px 10px 6px}
   .panel-label{font-size:11px; letter-spacing:.14em}
   #edBar button{width:34px; height:38px}

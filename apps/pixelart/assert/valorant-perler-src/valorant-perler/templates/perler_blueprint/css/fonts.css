@@ -1,3 +1,7 @@
+/* ===== 品牌字体：站酷庆科黄油体子集（顶栏标题用，与拼豆页同一份子集文件）=====
+ * 覆盖「点豆一下，就有上传图片选择画风生成结果拼图纸交互」23 字；改文案需重新生成子集。 */
+@font-face{font-family:"ZCOOL QingKe HuangYou"; font-style:normal; font-weight:400; font-display:swap; src:url("assets/fonts/zcool-qingke-huangyou-brand.woff2") format("woff2");
+  unicode-range:U+4E00,U+4E0A-4E0B,U+4E92,U+4EA4,U+4F20,U+56FE,U+5C31,U+6210,U+62E9,U+62FC,U+6709,U+679C,U+70B9,U+7247,U+751F,U+753B,U+7EB8,U+7ED3,U+8C46,U+9009,U+98CE,U+FF0C}
 /* ===== [POSTER-FONT] 腾讯体子集：分享图海报文字用（js/poster.js 的 TS 字体栈）=====
  * 300 = W3（只含海报固定标签用字，含五种烫法名与「烫效果模拟」），700 = W7（GB2312 一级常用字 + ASCII + 常用标点，玩家标题也用它）。
  * 构建时字体文件内联成 data URI，单文件离线可用；子集外的生僻字自动回退系统黑体。 */

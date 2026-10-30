@@ -30,9 +30,10 @@ aside::-webkit-scrollbar-thumb{background:var(--line)}
 .size-card .n{font-family:var(--font-d); font-size:15px; font-weight:700; letter-spacing:.01em}
 .size-card .meta{font-size:9.5px; color:var(--txt2); letter-spacing:0; white-space:nowrap}
 .size-card .badge{
-  position:absolute; top:0; right:0; background:var(--acc); color:var(--txt);
-  font-size:9.5px; letter-spacing:.06em; padding:2px 7px; font-weight:700;
-  border-radius:0 11px 0 10px;
+  /* 设计稿「06」角标：悬浮胶囊（44×20 r10），骑在卡片顶边、右缩进 8，不再贴角切角 */
+  position:absolute; top:-8px; right:8px; height:20px; line-height:20px; padding:0 10px;
+  background:var(--acc); color:var(--txt); font-size:11px; font-weight:500; letter-spacing:.02em;
+  border-radius:10px;
 }
 
 /* 色板 */

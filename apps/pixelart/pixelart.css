@@ -6,8 +6,8 @@
     * ========================================================= */
 
     /* ===== 品牌字体：站酷庆科黄油体（设计稿指定） =====
-     * 子集化 19 字「点豆一下，就有 + 上传图片选择画风生成结果」（3.7KB），
-     * 覆盖品牌名、Hero 标题与三处面板标题；其余字符自动回退到系统圆体栈。
+     * 子集化 23 字「点豆一下，就有 + 上传图片选择画风生成结果 + 拼图纸交互」（4.4KB），
+     * 覆盖品牌名、Hero 标题、三处面板标题与图纸页顶栏标题；其余字符自动回退到系统圆体栈。
      * 若文案改字，需重新生成子集：
      * https://fonts.googleapis.com/css2?family=ZCOOL+QingKe+HuangYou&text=<新文案>
      */
@@ -17,7 +17,7 @@
       font-weight: 400;
       font-display: swap;
       src: url("assets/fonts/zcool-qingke-huangyou-brand.woff2") format("woff2");
-      unicode-range: U+4E00-4E0B, U+4F20, U+56FE, U+5C31, U+6210, U+62E9, U+6709, U+679C, U+70B9, U+7247, U+751F, U+753B, U+7ED3, U+8C46, U+9009, U+98CE, U+FF0C;
+      unicode-range: U+4E00, U+4E0A-4E0B, U+4E92, U+4EA4, U+4F20, U+56FE, U+5C31, U+6210, U+62E9, U+62FC, U+6709, U+679C, U+70B9, U+7247, U+751F, U+753B, U+7EB8, U+7ED3, U+8C46, U+9009, U+98CE, U+FF0C;
     }
 
     /* ===== Token 覆盖：墨色主 CTA / 渐变底 / 冷灰描边（2026-10-29 四版设计稿） ===== */
