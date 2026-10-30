@@ -701,7 +701,7 @@
         btn.title = h.styleName + ' · ' + new Date(h.time).toLocaleTimeString();
         btn.setAttribute('aria-label', '回看：' + h.styleName);
         var img = document.createElement('img');
-        img.src = h.src;
+        img.src = h.thumb || h.src;   /* 有缩略图用缩略图，点开才加载原图 */
         img.alt = '';
         img.loading = 'lazy';
         btn.appendChild(img);
@@ -1071,6 +1071,9 @@
 
 
     /* ---------- 云端历史：上传 / 拉取（全部 try/catch 静默降级） ---------- */
+    /* 上传原图的同时传一张 400px 缩略图（<原图>.thumb.jpg）：
+       /my 与历史栏卡片都用缩略图（~40KB），点开/下载才动 1–2MB 的原图。
+       缩略图失败不影响原图上传。 */
     function syncResultToCloud(resultUrl, style) {
       var user = Store.state.user;
       var cloud = cloudService.getClient();
@@ -1081,10 +1084,17 @@
         var ext = blob.type && blob.type.indexOf('png') >= 0 ? 'png' : 'jpg';
         var path = cloud.storage.userPath(user.id,
           'history/' + Date.now() + '-' + mode + '-' + style.id + '.' + ext);
-        return cloud.storage.upload(path, blob, {
+        var upFull = cloud.storage.upload(path, blob, {
           contentType: blob.type || 'image/jpeg',
           metadata: { style: style.name, mode: mode }
         }).then(function (res) { return !(res && res.error); }).catch(function () { return false; });
+        var upThumb = Platform.makeThumb(blob, 400).then(function (tb) {
+          if (!tb) { return false; }
+          return Promise.resolve(cloud.storage.upload(path + '.thumb.jpg', tb, {
+            contentType: 'image/jpeg'
+          })).then(function (r) { return !(r && r.error); }).catch(function () { return false; });
+        }).catch(function () { return false; });
+        return Promise.all([upFull, upThumb]).then(function (rs) { return !!rs[0]; });
       }).catch(function () { return false; });
     }
 
@@ -1098,13 +1108,23 @@
           /* 条目可能是完整 key，也可能只有文件名：交给平台层归一化后再签名 */
           var keys = Platform.storageListKeys(prefix, res);
           if (!keys.length) { Store.state.cloudHistory = []; renderHistory(); return; }
-          return Platform.storageSigned(cloud, keys, 3600).then(function (signed) {
+          /* 有缩略图的卡片用缩略图，原图留给点开大图 */
+          var paired = Platform.pairThumbs(keys);
+          var signKeys = paired.photos.slice();
+          for (var pi = 0; pi < paired.photos.length; pi++) {
+            var tk = paired.thumbFor(paired.photos[pi]);
+            if (tk) { signKeys.push(tk); }
+          }
+          return Platform.storageSigned(cloud, signKeys, 3600).then(function (signed) {
             if (!signed.length) { return; }
+            var urlOf = {};
+            for (var si = 0; si < signed.length; si++) { urlOf[signed[si].path] = signed[si].url; }
             var cfgStyles = Store.styles();
             var arr = [];
-            for (var i = 0; i < signed.length && i < CLOUD_HISTORY_MAX; i++) {
+            for (var i = 0; i < paired.photos.length && arr.length < CLOUD_HISTORY_MAX; i++) {
+              var p = paired.photos[i];
               /* 文件名携带元数据：<ts>-<mode>-<styleId>.<ext> */
-              var name = signed[i].path.slice(prefix.length);
+              var name = p.slice(prefix.length);
               var parts = name.split('-');
               var mode = parts[1] === 'ai' ? 'ai' : 'local';
               var styleId = parts.slice(2).join('-').replace(/\.(png|jpg|jpeg|webp)$/i, '');
@@ -1112,8 +1132,13 @@
               for (var s = 0; s < cfgStyles.length; s++) {
                 if (cfgStyles[s].id === styleId) { styleName = cfgStyles[s].name; break; }
               }
+              var thumbKey = paired.thumbFor(p);
+              var thumbUrl = thumbKey ? (urlOf[thumbKey] || '') : '';
+              var full = urlOf[p] || '';
+              if (!full) { continue; }
               arr.push({
-                src: signed[i].url, thumb: signed[i].url,
+                src: full,
+                thumb: thumbUrl || full,
                 styleName: styleName + ' · 云端',
                 mode: mode,
                 time: parseInt(parts[0], 10) || 0,

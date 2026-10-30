@@ -131,11 +131,25 @@
         }
         return [];
       }
-      return Platform.storageSigned(cloud, keys, 3600).then(function (signed) {
+      /* 缩略图配对：<原图>.thumb.jpg 存在则卡片用它，原图只给点开/下载 */
+      var paired = Platform.pairThumbs(keys);
+      var signKeys = paired.photos.slice();
+      for (var pi = 0; pi < paired.photos.length; pi++) {
+        var tk = paired.thumbFor(paired.photos[pi]);
+        if (tk) { signKeys.push(tk); }
+      }
+      return Platform.storageSigned(cloud, signKeys, 3600).then(function (signed) {
         if (!signed.length) { Store.state.error = '作品图片地址生成失败'; return []; }
+        var urlOf = {};
+        for (var si = 0; si < signed.length; si++) { urlOf[signed[si].path] = signed[si].url; }
         var out = [];
-        for (var i = 0; i < signed.length; i++) {
-          var meta = parseAvatarName(signed[i].path, prefix);
+        for (var i = 0; i < paired.photos.length; i++) {
+          var p = paired.photos[i];
+          var full = urlOf[p];
+          if (!full) { continue; }
+          var thumbKey = paired.thumbFor(p);
+          var thumb = thumbKey ? urlOf[thumbKey] : '';
+          var meta = parseAvatarName(p, prefix);
           out.push({
             kind: 'avatar',
             title: '成像头像',
@@ -144,8 +158,11 @@
             /* 时间解析不出来就留 0（不伪造「现在」）：清理时一律跳过这类文件，
                免得把老格式/异常文件名当成新作品或被误删 */
             time: meta.time || 0,
-            src: signed[i].url,
-            path: signed[i].path
+            /* src 给卡片（有缩略图用缩略图，60MB → ~1MB）；srcFull 给大图/下载 */
+            src: thumb || full,
+            srcFull: full,
+            hasThumb: !!thumb,
+            path: p
           });
         }
         return out;
@@ -264,6 +281,7 @@
         renderWorks();
         renderWorksNote();
         pruneCloud(drop);
+        backfillThumbs(keep);   /* 存量作品缺缩略图的后台补齐，不阻塞浏览 */
       })
       .catch(function () {
         Store.state.loading = false;
@@ -290,6 +308,38 @@
       Store.state.pruned = paths.length;
       renderWorksNote();
     }).catch(function () { /* 清理失败不影响浏览，下次打开会再算一遍 */ });
+  }
+
+  /* 存量补缩略图：老作品（缩略图约定上线前生成的）没有 <file>.thumb.jpg。
+   * 用本人登录态在浏览器里逐个「下载原图 → 缩 400px → 上传」补齐——
+   * 服务器没有用户 token，写不了 users/<uid>/，只能由用户端做。
+   * 串行（一次一张，不抢图片带宽）、限量；原图取不到或云端无 CORS 就跳过，
+   * 下次打开再试。每补上一张，后续打开都快一截。 */
+  var THUMB_BACKFILL_MAX = 12;
+
+  function backfillThumbs(works) {
+    var cloud = Platform.cloud.getClient();
+    if (!cloud || !cloud.storage || !cloud.storage.upload) { return; }
+    var queue = [];
+    for (var i = 0; i < works.length && queue.length < THUMB_BACKFILL_MAX; i++) {
+      var w = works[i];
+      if (w.kind === 'avatar' && w.path && w.srcFull && !w.hasThumb) { queue.push(w); }
+    }
+    if (!queue.length) { return; }
+    var idx = 0;
+    var step = function () {
+      if (idx >= queue.length) { return; }
+      var w = queue[idx++];
+      Platform.makeThumb(w.srcFull, 400).then(function (tb) {
+        if (!tb) { return; }
+        return Promise.resolve(cloud.storage.upload(w.path + '.thumb.jpg', tb, {
+          contentType: 'image/jpeg'
+        })).then(function (r) {
+          if (r && !r.error) { w.hasThumb = true; }   /* 本次不改图，下次打开生效 */
+        }).catch(function () { /* 下次再试 */ });
+      }).catch(function () { /* 同上 */ }).then(step);
+    };
+    step();
   }
 
   function renderWorksNote() {
@@ -360,10 +410,12 @@
           '<button class="btn ghost small" type="button" data-act="delete">删除</button>' +
         '</div>';
       var img = card.querySelector('img');
+      img.loading = 'lazy';       /* 视口外的先不下载，首屏只拉前几张 */
+      img.decoding = 'async';
       img.src = w.src;
       card.querySelector('.work-title').textContent = w.kind === 'pixelart' ? '拼豆图纸' : (w.styleId ? '头像 · ' + w.styleId : '头像');
       card.querySelector('.work-sub').textContent = fmtTime(w.time);
-      card.querySelector('.work-thumb').addEventListener('click', function () { openLightbox(w.src); });
+      card.querySelector('.work-thumb').addEventListener('click', function () { openLightbox(w.srcFull || w.src); });
       card.querySelector('[data-act="download"]').addEventListener('click', function () { downloadWork(w); });
       card.querySelector('[data-act="delete"]').addEventListener('click', function () { deleteWork(w, card); });
       grid.appendChild(card);
@@ -407,9 +459,9 @@
   }
 
   function downloadWork(w) {
-    /* 签名 URL 带参数，用 a[download] 会被忽略跨域限制，直接新窗口打开由浏览器接管 */
+    /* 下载/保存一律用原图（srcFull）；卡片里那张可能是缩略图 */
     var a = document.createElement('a');
-    a.href = w.src;
+    a.href = w.srcFull || w.src;
     a.target = '_blank';
     a.rel = 'noopener';
     a.download = (w.kind === 'avatar' ? 'avatar-' : 'pixelart-') + w.time + '.png';
@@ -424,7 +476,11 @@
       : '删除后不可恢复，确定删除这个作品？';
     if (!window.confirm(tip)) { return; }
     card.style.opacity = '0.4';
-    Promise.resolve(cloud.storage.remove([w.path])).then(function (res) {
+    /* 头像原图连带它的缩略图一起删（缩略图可能还不存在，一起传即可） */
+    var paths = (w.kind === 'avatar' && w.path)
+      ? [w.path, w.path + '.thumb.jpg']
+      : [w.path];
+    Promise.resolve(cloud.storage.remove(paths)).then(function (res) {
       if (res && res.error) { card.style.opacity = '1'; showHint('删除失败，请稍后重试', true); return; }
       Store.state.works = Store.state.works.filter(function (x) { return x.path !== w.path; });
       renderWorks();

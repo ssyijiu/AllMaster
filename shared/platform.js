@@ -154,6 +154,85 @@
       .catch(function () { return []; });
   };
 
+  /* ---------- 缩略图（2026-10-31 性能修复） ----------
+   * 背景：头像作品是 1–2MB 原图，/my 一页 30 张 ≈ 60MB，跨境链路（dotbeads.online
+   * 在雅加达）下要好几分钟。约定：<原文件>.thumb.jpg 是它的 400px JPEG 缩略图；
+   * 展示用缩略图，点开大图/下载才用原图。 */
+  var THUMB_SUFFIX = '.thumb.jpg';
+
+  /* 从列表 keys 里分离缩略图与原图配对。
+   * 返回 { photos: [原图key], thumbFor(key) → 缩略图key 或 '' } */
+  Platform.pairThumbs = function (keys) {
+    var isThumb = {}, baseOf = {};
+    if (keys && keys.length) {
+      for (var i = 0; i < keys.length; i++) {
+        var k = String(keys[i] || '');
+        if (k.length > THUMB_SUFFIX.length &&
+            k.slice(-THUMB_SUFFIX.length).toLowerCase() === THUMB_SUFFIX) {
+          isThumb[k] = 1;
+          baseOf[k.slice(0, -THUMB_SUFFIX.length)] = k;
+        }
+      }
+    }
+    var photos = [];
+    if (keys && keys.length) {
+      for (var j = 0; j < keys.length; j++) {
+        if (!isThumb[keys[j]]) { photos.push(keys[j]); }
+      }
+    }
+    return {
+      photos: photos,
+      thumbFor: function (p) { return baseOf[p] || ''; }
+    };
+  };
+
+  /* 把图片（blob 或 URL）缩成 maxW 宽的 JPEG blob。失败返回 null，绝不抛。
+   * URL 方式需要云端带 CORS 头（canvas 读跨域像素要求），没有就失败——
+   * 调用方按 null 降级即可，不影响图片本身展示。 */
+  Platform.makeThumb = function (source, maxW) {
+    return new Promise(function (resolve) {
+      /* 环境探测：无 canvas（老浏览器/测试环境）直接降级，绝不挂起调用方 */
+      try {
+        var probe = document.createElement('canvas');
+        var ctx = probe.getContext && probe.getContext('2d');
+        if (!ctx) { return resolve(null); }
+      } catch (_) { return resolve(null); }
+      var objUrl = '';
+      var created = false;
+      var settled = false;
+      var done = function (b) {
+        if (settled) { return; }
+        settled = true;
+        if (created && objUrl) { try { URL.revokeObjectURL(objUrl); } catch (_) {} }
+        resolve(b || null);
+      };
+      /* Image 加载事件丢失（极端网络/实现差异）的兜底：8 秒后放弃 */
+      var guard = null;
+      try { guard = setTimeout(done, 8000); } catch (_) {}
+      var finish = function (b) { if (guard) { try { clearTimeout(guard); } catch (_) {} } done(b); };
+      try {
+        if (typeof source === 'string') { objUrl = source; }
+        else { objUrl = URL.createObjectURL(source); created = true; }
+        var img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = function () {
+          try {
+            var w = img.naturalWidth || img.width || (maxW || 400);
+            var h = img.naturalHeight || img.height || (maxW || 400);
+            var scale = Math.min(1, (maxW || 400) / w);
+            var c = document.createElement('canvas');
+            c.width = Math.max(1, Math.round(w * scale));
+            c.height = Math.max(1, Math.round(h * scale));
+            c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+            c.toBlob(function (b) { finish(b); }, 'image/jpeg', 0.82);
+          } catch (_) { finish(null); }
+        };
+        img.onerror = function () { finish(null); };
+        img.src = objUrl;
+      } catch (_) { finish(null); }
+    });
+  };
+
   Platform.setup = function (ctx) {
     var els = ctx.els;
     var Store = ctx.store;
