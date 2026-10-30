@@ -1056,32 +1056,25 @@
       cloud.storage.list(prefix, { limit: CLOUD_HISTORY_MAX, sortBy: { column: 'created_at', order: 'desc' } })
         .then(function (res) {
           if (!res || res.error) { return; }
-          var items = (res.data && res.data.items) ? res.data.items : (res.data || []);
-          var paths = items.map(function (it) {
-            return it.path || it.name ? (it.path || prefix + it.name) : '';
-          }).filter(function (p) { return p && p.indexOf(prefix) === 0; });
-          if (!paths.length) { Store.state.cloudHistory = []; renderHistory(); return; }
-          return cloud.storage.createSignedUrls(paths, 3600).then(function (res2) {
-            if (!res2 || res2.error) { return; }
-            var urlList = (res2.data && typeof res2.data.length === 'number') ? res2.data : [];
+          /* 条目可能是完整 key，也可能只有文件名：交给平台层归一化后再签名 */
+          var keys = Platform.storageListKeys(prefix, res);
+          if (!keys.length) { Store.state.cloudHistory = []; renderHistory(); return; }
+          return Platform.storageSigned(cloud, keys, 3600).then(function (signed) {
+            if (!signed.length) { return; }
+            var cfgStyles = Store.styles();
             var arr = [];
-            for (var i = 0; i < paths.length && i < CLOUD_HISTORY_MAX; i++) {
-              var entry = urlList[i];
-              var signed = entry && (entry.signedUrl || entry.signed_url || entry.url ||
-                (typeof entry === 'string' ? entry : null));
-              if (!signed) { continue; }
+            for (var i = 0; i < signed.length && i < CLOUD_HISTORY_MAX; i++) {
               /* 文件名携带元数据：<ts>-<mode>-<styleId>.<ext> */
-              var name = paths[i].slice(prefix.length);
+              var name = signed[i].path.slice(prefix.length);
               var parts = name.split('-');
               var mode = parts[1] === 'ai' ? 'ai' : 'local';
               var styleId = parts.slice(2).join('-').replace(/\.(png|jpg|jpeg|webp)$/i, '');
               var styleName = '云端头像';
-              var cfgStyles = Store.styles();
               for (var s = 0; s < cfgStyles.length; s++) {
                 if (cfgStyles[s].id === styleId) { styleName = cfgStyles[s].name; break; }
               }
               arr.push({
-                src: signed, thumb: signed,
+                src: signed[i].url, thumb: signed[i].url,
                 styleName: styleName + ' · 云端',
                 mode: mode,
                 time: parseInt(parts[0], 10) || 0,

@@ -56,6 +56,72 @@
     CONFIG_ID: CONFIG_ID
   };
 
+  /* =========================================================
+   * 存储列表：条目 → 完整 object key
+   * ---------------------------------------------------------
+   * 云端 list 返回的条目字段并不稳定：有时给完整 key
+   * （users/<uid>/history/a.png），有时只给相对名（a.png 或 history/a.png）。
+   * 2026-10-30 线上问题：/my「我的作品」与头像「云端历史」都把 it.path 当完整
+   * 路径用，再按 indexOf(prefix) === 0 过滤 —— 相对名全被丢掉，paths 变空，
+   * 于是**一次签名请求都不会发出**，页面永远显示“没有作品”。
+   * 统一在这里归一化：能识别的绝对 key 原样保留，否则按 prefix + basename 拼。
+   * ========================================================= */
+  Platform.storageItemKey = function (prefix, item) {
+    if (!item) { return ''; }
+    var raw = item.path || item.name || item.key || '';
+    raw = String(raw).replace(/^\/+/, '');
+    if (!raw) { return ''; }
+    if (raw.indexOf('users/') === 0 || raw.indexOf('shared/') === 0) { return raw; }
+    var base = raw.split('/').pop();
+    if (!base) { return ''; }
+    var p = String(prefix || '');
+    if (p && p.slice(-1) !== '/') { p += '/'; }
+    return p + base;
+  };
+
+  /* 列表响应 → 文件 key 数组（跳过子目录占位项、去重） */
+  Platform.storageListKeys = function (prefix, res) {
+    var data = res && res.data;
+    var items = (data && data.items) ? data.items : data;
+    if (!items || typeof items.length !== 'number') { return []; }
+    var out = [], seen = {};
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (!it) { continue; }
+      if (it.type === 'folder') { continue; }
+      if (Object.prototype.hasOwnProperty.call(it, 'id') && it.id === null) { continue; }
+      var key = Platform.storageItemKey(prefix, it);
+      if (!key || seen[key]) { continue; }
+      seen[key] = 1;
+      out.push(key);
+    }
+    return out;
+  };
+
+  /* 批量签名 → [{ path, url }]（容忍 signedUrl / signed_url / url / 纯字符串） */
+  Platform.storageSigned = function (cloud, keys, ttl) {
+    if (!cloud || !cloud.storage || !cloud.storage.createSignedUrls || !keys || !keys.length) {
+      return Promise.resolve([]);
+    }
+    return Promise.resolve(cloud.storage.createSignedUrls(keys, ttl || 3600))
+      .then(function (res) {
+        if (!res || res.error) { return []; }
+        var list = (res.data && res.data.items) ? res.data.items : res.data;
+        if (!list || typeof list.length !== 'number') { return []; }
+        var out = [];
+        for (var i = 0; i < keys.length; i++) {
+          var e = list[i];
+          var url = e && (e.signedUrl || e.signed_url || e.url || (typeof e === 'string' ? e : null));
+          if (!url) { continue; }
+          var p = (e && e.path) || keys[i];
+          if (p && p.indexOf('users/') !== 0 && p.indexOf('shared/') !== 0) { p = keys[i]; }
+          out.push({ path: p, url: url });
+        }
+        return out;
+      })
+      .catch(function () { return []; });
+  };
+
   Platform.setup = function (ctx) {
     var els = ctx.els;
     var Store = ctx.store;

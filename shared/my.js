@@ -55,7 +55,7 @@
     btnCloseLightbox: $('btnCloseLightbox')
   };
 
-  var Store = { state: { user: null, works: [], filter: 'all', loading: false } };
+  var Store = { state: { user: null, works: [], filter: 'all', loading: false, error: '' } };
 
   function showHint(msg, isError) {
     /* 页面无独立提示条，借钱包弹窗提示位（不打开弹窗时静默） */
@@ -105,34 +105,28 @@
       limit: WORK_LIMIT,
       sortBy: { column: 'created_at', order: 'desc' }
     })).then(function (res) {
-      if (!res || res.error) { return []; }
-      var items = (res.data && res.data.items) ? res.data.items : (res.data || []);
-      var paths = items.map(function (it) {
-        return it.path || (it.name ? prefix + it.name : '');
-      }).filter(function (p) { return p && p.indexOf(prefix) === 0; });
-      if (!paths.length) { return []; }
-      return Promise.resolve(cloud.storage.createSignedUrls(paths, 3600)).then(function (res2) {
-        if (!res2 || res2.error) { return []; }
-        var urls = (res2.data && typeof res2.data.length === 'number') ? res2.data : [];
+      if (!res || res.error) { Store.state.error = '云端列表读取失败'; return []; }
+      /* 条目字段不稳定（可能是完整 key，也可能只有文件名），统一由平台层归一化 */
+      var keys = Platform.storageListKeys(prefix, res);
+      if (!keys.length) { return []; }
+      return Platform.storageSigned(cloud, keys, 3600).then(function (signed) {
+        if (!signed.length) { Store.state.error = '作品图片地址生成失败'; return []; }
         var out = [];
-        for (var i = 0; i < paths.length && i < WORK_LIMIT; i++) {
-          var e = urls[i];
-          var signed = e && (e.signedUrl || e.signed_url || e.url || (typeof e === 'string' ? e : null));
-          if (!signed) { continue; }
-          var meta = parseAvatarName(paths[i], prefix);
+        for (var i = 0; i < signed.length; i++) {
+          var meta = parseAvatarName(signed[i].path, prefix);
           out.push({
             kind: 'avatar',
             title: '成像头像',
             styleId: meta.styleId,
             mode: meta.mode,
             time: meta.time || Date.now(),
-            src: signed,
-            path: paths[i]
+            src: signed[i].url,
+            path: signed[i].path
           });
         }
         return out;
       });
-    }).catch(function () { return []; });
+    }).catch(function () { Store.state.error = '云端读取异常'; return []; });
   }
 
   /* 拼豆图纸：P2 接入云端留存，当前先给空态文案 */
@@ -142,6 +136,7 @@
     var user = Store.state.user;
     if (!user) { Store.state.works = []; renderWorks(); return Promise.resolve(); }
     Store.state.loading = true;
+    Store.state.error = '';
     renderWorks();
     return Promise.all([loadAvatarWorks(user.id), loadPixelartWorks(user.id)])
       .then(function (lists) {
@@ -189,6 +184,14 @@
     var list = Store.state.works.filter(function (w) { return filter === 'all' || w.kind === filter; });
     if (!list.length) {
       empty.hidden = false;
+      /* 读取失败不再伪装成“没有作品”：否则线上故障永远看不见 */
+      if (Store.state.error) {
+        empty.innerHTML = '<b>' + Store.state.error + '</b>作品保存在云端，网络或登录状态异常时会取不到。' +
+          '<br /><button class="btn secondary" type="button" id="emptyRetry" style="margin-top:14px;">重新加载</button>';
+        var rb = $('emptyRetry');
+        if (rb) { rb.addEventListener('click', function () { loadWorks(); }); }
+        return;
+      }
       empty.innerHTML = filter === 'pixelart'
         ? '<b>图纸云端保存即将上线</b>目前图纸在服务器保留 72 小时，期间可在生成页「最近生成」里回看。<br /><a class="btn secondary" style="margin-top:14px;display:inline-block;text-decoration:none;" href="/">去生成一张</a>'
         : '<b>还没有作品</b>生成结果会自动保存到这里。<br /><a class="btn primary" style="margin-top:14px;display:inline-block;text-decoration:none;" href="' + (filter === 'avatar' ? '/apps/avatar/' : '/') + '">去生成</a>';
