@@ -62,6 +62,9 @@ const DEFAULT_ARCHIVE_ROOT = process.env.PIXELART_ARCHIVE_ROOT || path.join(ROOT
 const ARCHIVE_MAX_BYTES = (parseFloat(process.env.PIXELART_ARCHIVE_MAX_GB) || 2) * 1024 * 1024 * 1024;
 const ARCHIVE_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024;
 const ARCHIVE_COVER_PX = 640;
+/* 归档保留期（与产品保留策略一致：每产品最近 30 张 / 90 天）。
+   云端作品行由 /my 按同一规则物理清理，服务器归档在这里按目录 mtime 兜底。 */
+const ARCHIVE_TTL_DAYS = (parseFloat(process.env.PIXELART_ARCHIVE_TTL_DAYS) || 90);
 
 function dirSize(dir) {
   let total = 0;
@@ -77,7 +80,10 @@ function dirSize(dir) {
   return total;
 }
 
-/* 归档 GC：总量超上限时按目录 mtime 从旧到新删，删到 80% 水位为止 */
+/* 归档 GC：
+ * 1) 超保留期（默认 90 天）的整目录直接删——与产品保留策略对齐，避免归档无限长大
+ * 2) 总量超上限时按目录 mtime 从旧到新删到 80% 水位
+ */
 function pruneArchive(archiveRoot) {
   let names = [];
   try { names = fs.readdirSync(archiveRoot).filter((n) => /^[0-9a-f]{16}$/.test(n)); } catch (_) { return; }
@@ -92,11 +98,18 @@ function pruneArchive(archiveRoot) {
     try { mtime = fs.statSync(dir).mtimeMs; } catch (_) {}
     entries.push({ name, dir, size, mtime });
   }
-  if (total <= ARCHIVE_MAX_BYTES) { return; }
+  const ttlMs = ARCHIVE_TTL_DAYS * 24 * 60 * 60 * 1000;
+  const now = Date.now();
   entries.sort((a, b) => a.mtime - b.mtime);
+  for (const e of entries) {
+    if (!e.mtime || now - e.mtime <= ttlMs) { continue; }
+    try { fs.rmSync(e.dir, { recursive: true, force: true }); total -= e.size; e.removed = true; } catch (_) {}
+  }
+  if (total <= ARCHIVE_MAX_BYTES) { return; }
   const target = ARCHIVE_MAX_BYTES * 0.8;
   for (const e of entries) {
     if (total <= target) { break; }
+    if (e.removed) { continue; }
     try { fs.rmSync(e.dir, { recursive: true, force: true }); total -= e.size; } catch (_) {}
   }
 }
@@ -286,9 +299,41 @@ function createEngine(options) {
   const backend = opts.backend === 'valperler' ? 'valperler' : 'apinebula';
   const taskRoot = opts.taskRoot || DEFAULT_TASK_ROOT;
   const archiveRoot = opts.archiveRoot || DEFAULT_ARCHIVE_ROOT;
+  /* 任务结束回调（P3 生成单结算用）：由服务端注入 (taskId, status, orderId) => void。
+     引擎只负责「告诉外面这一单成没成」，退款/结算策略全在服务端，引擎不碰钱。 */
+  const onTaskFinish = typeof opts.onTaskFinish === 'function' ? opts.onTaskFinish : null;
 
-  /* 内存任务表：{ id: { status, error?, htmlPath?, workDir, startedAt } } */
+  /* 内存任务表：{ id: { status, error?, htmlPath?, workDir, startedAt, orderId } } */
   const tasks = new Map();
+
+  /* 通知结算方并等它回话（最长 6 秒）：失败要「先退款、再对外报失败」，
+   * 前端看到 failed 时余额已经回来了，文案才敢直说「已退回」。 */
+  function notifyFinish(id, status, orderId) {
+    if (!onTaskFinish) { return Promise.resolve(null); }
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => { if (done) { return; } done = true; resolve(v); };
+      const timer = setTimeout(() => finish(null), 6000);
+      if (timer.unref) { timer.unref(); }
+      Promise.resolve()
+        .then(() => onTaskFinish(id, status, orderId || ''))
+        .then((v) => { clearTimeout(timer); finish(v); })
+        .catch(() => { clearTimeout(timer); finish(null); });
+    });
+  }
+
+  /* 任务失败统一出口：先挂 settling（前端只认 done/failed，不会误判终态）→
+   * 结算退款 → 再置 failed。任何绕过这里的失败都会让单据停在 pending 等补退。 */
+  async function failTask(id, message) {
+    const t = tasks.get(id);
+    if (!t) { return; }
+    if (t.status === 'done' || t.status === 'failed' || t.status === 'settling') { return; }
+    t.status = 'settling';
+    t.error = String(message || '生成失败').slice(0, 600).trim();
+    const settle = await notifyFinish(id, 'failed', t.orderId);
+    t.refunded = !!(settle && settle.refunded);
+    t.status = 'failed';
+  }
 
   function pruneTasks() {
     const now = Date.now();
@@ -373,20 +418,23 @@ function createEngine(options) {
     });
   }
 
-  /* 任务完成后收尾：判 done/failed → 成功即归档 */
-  function finishTask(id, code, stderrTail, stdoutTail) {
+  /* 任务完成后收尾：判 done/failed → 成功即归档 → 通知结算方（生成单） */
+  async function finishTask(id, code, stderrTail, stdoutTail) {
     const t = tasks.get(id);
     if (!t) { return; }
+    if (t.status === 'done' || t.status === 'failed' || t.status === 'settling') { return; }
     t.finishedAt = Date.now();
     const html = findOutputHtml(t.workDir);
     if (code === 0 && html) {
+      /* 成功：先让用户能打开图纸，再定格账单（succeed 失败只会留 pending，
+         下次登录补退时对用户有利，不会多扣） */
       t.status = 'done';
       t.htmlPath = html;
       try { archiveWork(id); } catch (_) {}
-    } else {
-      t.status = 'failed';
-      t.error = ('退出码 ' + code + ' ' + stderrTail + ' ' + stdoutTail).slice(-600).trim();
+      notifyFinish(id, 'done', t.orderId);
+      return;
     }
+    await failTask(id, ('退出码 ' + code + ' ' + stderrTail + ' ' + stdoutTail).slice(-600).trim());
   }
 
   function startTask(id, workDir, imagePath, promptPath, subject, styleId) {
@@ -449,8 +497,7 @@ function createEngine(options) {
     });
     child.on('error', (err) => {
       clearTimeout(timer);
-      t.status = 'failed';
-      t.error = '启动失败：' + String(err.message || err).slice(0, 300);
+      failTask(id, '启动失败：' + String(err.message || err).slice(0, 300));
     });
   }
 
@@ -518,7 +565,9 @@ function createEngine(options) {
     tasks.set(id, {
       status: 'running', workDir, startedAt: Date.now(), styleId, subject,
       /* 备注存下来：下发图纸页时要注入到 window.PIXELART_NOTE，供导出文件名使用 */
-      notes: String(body.notes || '').trim().slice(0, 200)
+      notes: String(body.notes || '').trim().slice(0, 200),
+      /* 生成单号（服务端在调用本函数前挂在 req 上）：任务结束据此结算 */
+      orderId: String(req.orderId || '')
     });
 
     /* 立即返回 taskId；压图 → LLM 槽位（失败回落模板）→ 写配置 → 起链路 全部在后台做。
@@ -535,19 +584,24 @@ function createEngine(options) {
             fs.writeFileSync(promptPath, JSON.stringify(slots, null, 2));
             startTask(id, workDir, imagePath, promptPath, subject, styleId);
           } catch (err) {
-            const t = tasks.get(id);
-            if (t) { t.status = 'failed'; t.error = '启动失败：' + String(err.message || err).slice(0, 200); }
+            /* 走统一失败出口：否则生成单停在 pending，用户要等补退才拿回积分 */
+            failTask(id, '启动失败：' + String(err.message || err).slice(0, 200));
           }
         });
     });
   }
 
-  /* GET /task?id= → { status, error? }；重启后从磁盘恢复已完成的任务 */
+  /* GET /task?id= → { status, error?, refunded? }；重启后从磁盘恢复已完成的任务 */
   function handleTaskStatus(req, res, fullUrl, sendJson) {
     const id = String(fullUrl.searchParams.get('id') || '');
     const t = resolveTask(id);
     if (!t) { return sendJson(res, 404, { error: { message: '任务不存在或已过期' } }); }
-    return sendJson(res, 200, { status: t.status, error: t.error || undefined });
+    return sendJson(res, 200, {
+      status: t.status,
+      error: t.error || undefined,
+      /* 失败单是否真的退到了钱：前端据此决定说「已退回」还是「将自动补退」 */
+      refunded: t.refunded === true ? true : undefined
+    });
   }
 
   /* GET /task/stream?id= → SSE 心跳流（对齐 /api/ai 防 524 的成熟方案）：
@@ -572,7 +626,11 @@ function createEngine(options) {
     const sendStatus = () => {
       if (t.status === lastSent) { return; }
       lastSent = t.status;
-      res.write('event: status\ndata: ' + JSON.stringify({ status: t.status, error: t.error || undefined }) + '\n\n');
+      res.write('event: status\ndata: ' + JSON.stringify({
+        status: t.status,
+        error: t.error || undefined,
+        refunded: t.refunded === true ? true : undefined
+      }) + '\n\n');
     };
     sendStatus();
     const hb = setInterval(() => {

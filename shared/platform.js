@@ -220,7 +220,10 @@
           throw err;
         });
       },
-      /* 生成失败自动退回（静默，不影响主流程提示） */
+      /* 生成失败退回（静默，不影响主流程提示）
+       * ⚠️ 2026-10-30 起产品代码不要再调它：退款已归服务端生成单
+       * （server/orders.js → order_fail，与状态变更同事务且幂等）。
+       * 保留此方法仅为平台层兼容与后台工具使用。 */
       refund: function (txnId) {
         if (!txnId) { return Promise.resolve(null); }
         return walletRpc('wallet_refund', { p_ref: String(txnId) }).then(function (balance) {
@@ -454,6 +457,8 @@
       /* 登录：初始化积分钱包并处理支付回跳；退出：隐藏钱包并清零余额 */
       if (Store.state.user) {
         walletService.refresh().then(function () { handlePaidReturn(); });
+        /* 顺手把上次没结算完的生成单退掉（关页/崩溃/断网的残留） */
+        settleStaleOrders();
       } else {
         walletService.balance = null;
         els.btnWallet.hidden = true;
@@ -489,6 +494,32 @@
       return Promise.resolve(cloud.auth.getAccessToken())
         .then(function (t) { return t || ''; })
         .catch(function () { return ''; });
+    }
+
+    /* 生成单补退（P3）：登录态一建立就结算本人被遗弃的 pending 单。
+     * 覆盖服务端来不及结算的场景——生成中关页、服务重启、响应丢了但扣费成了。
+     * 云端 order_reap 幂等，多调无副作用；失败静默，不干扰正常流程。 */
+    function settleStaleOrders() {
+      if (!Store.state.user) { return Promise.resolve({ refunded: 0 }); }
+      return getAuthToken().then(function (token) {
+        if (!token) { return { refunded: 0 }; }
+        return fetch('/api/orders/settle', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + token }
+        }).then(function (res) {
+          return res.json().catch(function () { return {}; });
+        }).then(function (data) {
+          var refunded = Number(data && data.refunded) || 0;
+          if (data && typeof data.balance === 'number') {
+            walletService.balance = data.balance;
+            walletService.renderChip();
+          }
+          if (refunded > 0) {
+            showHint('已为你补退 ' + refunded + ' 个未完成生成的积分');
+          }
+          return { refunded: refunded, balance: data ? data.balance : null };
+        });
+      }).catch(function () { return { refunded: 0 }; });
     }
 
     /* ---------- 登录弹窗 ---------- */
@@ -662,6 +693,7 @@
       applySession: applySession,
       ensureAuth: ensureAuth,
       getAuthToken: getAuthToken,
+      settleStaleOrders: settleStaleOrders,
       openLogin: openLogin,
       closeLogin: closeLogin,
       openWallet: openWallet,

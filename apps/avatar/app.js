@@ -334,9 +334,11 @@
             body: JSON.stringify(payload)
           });
         }).then(function (res) {
-          /* 服务端扣费后的余额，回写顶部积分 chip */
+          /* 服务端扣费后的余额 + 生成单号（P3：一次生成一单，失败由服务端退款） */
           var bal = res.headers && res.headers.get ? res.headers.get('X-Wallet-Balance') : null;
           if (bal !== null && bal !== '') { walletService.applyBalance(bal); }
+          var orderId = res.headers && res.headers.get ? res.headers.get('X-Order-Id') : null;
+          if (orderId) { Store.state.lastOrderId = orderId; }
           var ctype = (res.headers && res.headers.get ? res.headers.get('Content-Type') : '') || '';
           /* 参数错误 / 未登录 / 积分不足等快速失败：普通 JSON 响应 */
           if (ctype.indexOf('text/event-stream') === -1 || !res.body || !res.body.getReader) {
@@ -387,7 +389,8 @@
           return reader.read().then(function (chunk) {
             if (chunk.done) {
               if (!result) {
-                var e = new Error('生成连接被中断（未收到结果），请重试');
+                /* 连接断了不代表被扣钱：服务端会按投放结果决定 success 还是退款 */
+                var e = new Error('生成连接被中断（未收到结果）。若已扣积分会自动退回，也可到「我的」看看是否已生成');
                 e.status = 502;
                 throw e;
               }

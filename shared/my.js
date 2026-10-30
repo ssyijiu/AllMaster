@@ -4,13 +4,18 @@
  *   拼豆图纸 → 云存储 users/<uid>/pixelart/<ts>-<taskId>.json（元数据）
  *              + 服务器长期归档 /api/pixelart/task/cover|html?id=（封面与图纸本体）
  *   积分明细 → 云数据库 app_wallet_txns（RLS 只读本人）
- * 展示上限：每个产品最近 30 条 / 90 天（老于 90 天的不显示，物理清理随 P3 落地）
+ * 保留策略：每产品最近 30 条 / 90 天。P3 起这条策略是**真删**——
+ *   页面打开时把超出的云端对象删掉（服务器归档按同一规则自行清理），
+ *   而不只是「不显示」。时间解析不出来的老文件一律不动，避免误删。
  */
 (function () {
   'use strict';
 
   var WORK_LIMIT = 30;
   var WORK_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+  /* 一次多取一些：既要展示 30 条，也要看见「被挤出去」的那些才能真删 */
+  var LIST_LIMIT = 60;
+  var PRUNE_PER_RUN = 30;
   var AVATAR_PREFIX = 'users/';
 
   var $ = function (id) { return document.getElementById(id); };
@@ -50,13 +55,14 @@
     workFilters: $('workFilters'),
     worksGrid: $('worksGrid'),
     worksEmpty: $('worksEmpty'),
+    worksNote: $('worksNote'),
     txnList: $('txnList'),
     lightbox: $('lightbox'),
     lightboxImg: $('lightboxImg'),
     btnCloseLightbox: $('btnCloseLightbox')
   };
 
-  var Store = { state: { user: null, works: [], filter: 'all', loading: false, error: '' } };
+  var Store = { state: { user: null, works: [], filter: 'all', loading: false, error: '', pruned: 0 } };
 
   function showHint(msg, isError) {
     /* 页面无独立提示条，借钱包弹窗提示位（不打开弹窗时静默） */
@@ -72,7 +78,13 @@
     userChipTitle: '已登录，作品与积分全平台通用',
     productSlug: '',
     onLoginSuccess: function () { loadAll(); },
-    onSignOut: function () { Store.state.works = []; renderWorks(); renderTxnsEmpty(); }
+    onSignOut: function () {
+      Store.state.works = [];
+      Store.state.pruned = 0;
+      renderWorks();
+      renderWorksNote();
+      renderTxnsEmpty();
+    }
   });
 
   /* ---------- 标签切换 ---------- */
@@ -103,7 +115,7 @@
     if (!cloud || !cloud.storage || !uid) { return Promise.resolve([]); }
     var prefix = AVATAR_PREFIX + uid + '/history/';
     return Promise.resolve(cloud.storage.list(prefix, {
-      limit: WORK_LIMIT,
+      limit: LIST_LIMIT,
       sortBy: { column: 'created_at', order: 'desc' }
     })).then(function (res) {
       if (!res || res.error) { Store.state.error = '云端列表读取失败'; return []; }
@@ -120,7 +132,9 @@
             title: '成像头像',
             styleId: meta.styleId,
             mode: meta.mode,
-            time: meta.time || Date.now(),
+            /* 时间解析不出来就留 0（不伪造「现在」）：清理时一律跳过这类文件，
+               免得把老格式/异常文件名当成新作品或被误删 */
+            time: meta.time || 0,
             src: signed[i].url,
             path: signed[i].path
           });
@@ -165,7 +179,7 @@
       styleLabel: label,
       notes: (meta && meta.notes) || '',
       title: (meta && meta.title) || (label ? label + '拼豆图纸' : '拼豆图纸'),
-      time: (meta && meta.createdAt) || ts || Date.now(),
+      time: (meta && meta.createdAt) || ts || 0,
       src: taskId ? apiBase + '/task/cover?id=' + encodeURIComponent(taskId) : '',
       openUrl: taskId ? apiBase + '/task/html?id=' + encodeURIComponent(taskId) : ''
     };
@@ -176,13 +190,16 @@
     if (!cloud || !cloud.storage || !uid) { return Promise.resolve([]); }
     var prefix = AVATAR_PREFIX + uid + '/pixelart/';
     return Promise.resolve(cloud.storage.list(prefix, {
-      limit: WORK_LIMIT,
+      limit: LIST_LIMIT,
       sortBy: { column: 'created_at', order: 'desc' }
     })).then(function (res) {
       if (!res || res.error) { return []; }
       var keys = Platform.storageListKeys(prefix, res).filter(function (k) { return /\.json$/i.test(k); });
       if (!keys.length) { return []; }
-      return Promise.all(keys.map(function (key) {
+      /* 只下载要展示的那些（最近 30 条）的元数据；被挤出保留期的条目
+         时间在文件名里就有，清理时不需要内容，省掉几十次下载 */
+      var shown = keys.slice(0, WORK_LIMIT);
+      return Promise.all(shown.map(function (key) {
         var read;
         try { read = cloud.storage.download(key); } catch (_) { read = null; }
         return Promise.resolve(read).then(function (r) {
@@ -194,7 +211,13 @@
             return mapPixelartRow(prefix, key, meta);
           });
         }).catch(function () { return mapPixelartRow(prefix, key, null); });
-      }));
+      })).then(function (works) {
+        /* 超出保留期的条目也要进列表（只是不展示），这样清理逻辑能一并算到它们 */
+        var rest = keys.slice(WORK_LIMIT).map(function (key) {
+          return mapPixelartRow(prefix, key, null);
+        });
+        return works.concat(rest);
+      });
     }).catch(function () { return []; });
   }
 
@@ -208,17 +231,58 @@
       .then(function (lists) {
         var all = lists[0].concat(lists[1]);
         var now = Date.now();
-        all = all.filter(function (w) { return now - w.time <= WORK_TTL_MS; });
-        all.sort(function (a, b) { return b.time - a.time; });
-        Store.state.works = all;
+        /* 先按时间倒序，再逐产品判定：前 30 个且 90 天内 → 展示；其余 → 真删 */
+        all.sort(function (a, b) { return (b.time || 0) - (a.time || 0); });
+        var keep = [], drop = [], seen = { avatar: 0, pixelart: 0 };
+        all.forEach(function (w) {
+          /* 时间未知的条目：照常展示，不占上限、也绝不删（宁可留着也不误删） */
+          if (!w.time) { keep.push(w); return; }
+          seen[w.kind] = (seen[w.kind] || 0) + 1;
+          var tooOld = now - w.time > WORK_TTL_MS;
+          if (seen[w.kind] > WORK_LIMIT || tooOld) { drop.push(w); } else { keep.push(w); }
+        });
+        Store.state.works = keep;
         Store.state.loading = false;
+        Store.state.pruned = 0;
         renderWorks();
+        renderWorksNote();
+        pruneCloud(drop);
       })
       .catch(function () {
         Store.state.loading = false;
         Store.state.works = [];
         renderWorks();
       });
+  }
+
+  /* 保留策略的物理清理：删云端对象（头像原图 / 拼豆作品行）。
+   * 只在用户打开本页、且能确定时间时才删——解析不出时间的条目不碰。
+   * 服务器归档（拼豆图纸本体）由 generate.js 按同一规则自行清理。 */
+  function pruneCloud(items) {
+    var cloud = Platform.cloud.getClient();
+    if (!cloud || !cloud.storage || !cloud.storage.remove) { return; }
+    var paths = items.filter(function (w) { return w.path && w.time > 0; })
+      .map(function (w) { return w.path; })
+      .slice(0, PRUNE_PER_RUN);
+    if (!paths.length) { return; }
+    Promise.resolve(cloud.storage.remove(paths)).then(function (res) {
+      if (res && res.error) {
+        console.warn('[my] 旧作品清理失败：' + JSON.stringify(res.error).slice(0, 200));
+        return;
+      }
+      Store.state.pruned = paths.length;
+      renderWorksNote();
+    }).catch(function () { /* 清理失败不影响浏览，下次打开会再算一遍 */ });
+  }
+
+  function renderWorksNote() {
+    var el = els.worksNote;
+    if (!el) { return; }
+    var n = Store.state.pruned || 0;
+    el.hidden = !n;
+    if (!n) { return; }
+    el.textContent = '已按保留策略（每产品最近 ' + WORK_LIMIT + ' 个 / ' +
+      Math.round(WORK_TTL_MS / 86400000) + ' 天）清理 ' + n + ' 个较早的作品。';
   }
 
   function fmtTime(ts) {

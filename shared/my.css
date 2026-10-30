@@ -213,6 +213,13 @@ body {
   line-height: 1;
 }
 
+/* 保留策略清理提示（只在真的删了东西时出现） */
+.works-note {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: var(--fg-muted, #8a8f98);
+}
+
 @media (max-width: 720px) {
   .topbar-inner { padding: 10px 14px; gap: 10px; flex-wrap: wrap; }
   .topnav { order: 3; width: 100%; margin: 0; }

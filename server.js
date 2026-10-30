@@ -43,6 +43,13 @@ const AI_CONFIG_FILE = path.join(ROOT, '.ai-config.json');
 const PAY_CONFIG_FILE = path.join(ROOT, '.pay-config.json');
 const PAY_STATE_FILE = path.join(ROOT, '.pay-state.json');
 
+/* 生成单（P3）：一次生成 = 一单，先建单扣费，成功/失败必须结算。
+ * 云端 app_orders 存状态，退款在 order_fail() 里与状态变更同事务、且幂等。 */
+const orderService = require('./server/orders').createOrderService({
+  rpc: function (token, fn, params) { return cloudRpc(token, fn, params); },
+  log: function (msg) { console.warn('[order] ' + msg); }
+});
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
@@ -263,8 +270,23 @@ async function callUpstream(arg) {
   }
 }
 
+/* 前端能解析的图片形态（对齐 apps/avatar/app.js 的 parseImageResponse/extractImageUrl）：
+ * 只认 data[0].b64_json | data[0].url。2xx 但没有图 = 用户拿不到东西，按失败处理并退款。 */
+function hasImagePayload(data) {
+  if (!data || typeof data !== 'object') { return false; }
+  const arr = Array.isArray(data.data) ? data.data : null;
+  if (!arr || !arr.length) { return false; }
+  const it = arr[0];
+  if (!it || typeof it !== 'object') { return false; }
+  return !!(it.b64_json || it.url);
+}
+
 /* POST /api/ai { providerId, baseUrl, model, path, prompt, imageBase64? }
- * Key 按 providerId 从服务器本地 .ai-config.json 解析；响应为 SSE 心跳流。 */
+ * Key 按 providerId 从服务器本地 .ai-config.json 解析；响应为 SSE 心跳流。
+ *
+ * 计费（P3 生成单）：建单 → 扣费(单号即 ref) → 调上游 → 交付成功才结算 succeeded；
+ * 上游失败、2xx 但没图、图拿到了却没能写回客户端（用户关页/断网）——全部 fail 退款。
+ * 这样「已扣费但没拿到图」的三个窗口都收敛到同一处判断，前端不需要再退款。 */
 async function handleAi(req, res) {
   let payload;
   try {
@@ -296,11 +318,14 @@ async function handleAi(req, res) {
     return sendJson(res, err.status || 400, { error: { message: err.message } });
   }
 
-  /* —— 计费（服务端把关，前端无法跳过）—— */
-  const chargeRef = 'gen-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
-  const charge = await chargeOneCredit(token, chargeRef);
-  if (charge.error) {
-    return sendJson(res, charge.error.status, { error: { code: charge.error.code, message: charge.error.message } });
+  /* —— 建单 + 扣费（服务端把关，前端绕不过）—— */
+  const order = await orderService.create({
+    token: token,
+    product: 'avatar',
+    meta: { path: arg.apiPath, model: arg.model }
+  });
+  if (order.error) {
+    return sendJson(res, order.error.status, { error: { code: order.error.code, message: order.error.message } });
   }
 
   /* SSE 心跳流：边等上游边每 2 秒写心跳，最后一行 data: 携带真实结果 */
@@ -308,7 +333,8 @@ async function handleAi(req, res) {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-store',
     'X-Accel-Buffering': 'no',
-    'X-Wallet-Balance': charge.balance == null ? '' : String(charge.balance),
+    'X-Order-Id': order.orderId,
+    'X-Wallet-Balance': order.balance == null ? '' : String(order.balance),
     Connection: 'keep-alive'
   });
   const startedAt = Date.now();
@@ -319,22 +345,59 @@ async function handleAi(req, res) {
     try { res.write(': wait ' + Math.round((Date.now() - startedAt) / 1000) + '\n\n'); } catch (_) {}
   }, BEAT_INTERVAL);
 
-  let out;
+  let out = null;
+  let delivered = false;
+  let settled = false;
+
   try {
-    const r = await callUpstream(arg);
-    out = { statusCode: r.statusCode, data: r.data };
+    try {
+      const r = await callUpstream(arg);
+      out = { statusCode: r.statusCode, data: r.data };
+    } catch (err) {
+      out = { statusCode: err.status || 502, data: { error: { message: err.message } } };
+    }
+
+    const httpOk = out.statusCode >= 200 && out.statusCode < 300;
+    if (!httpOk || !hasImagePayload(out.data)) {
+      /* 上游失败 / 超时 / 2xx 但没图：这一单没交付，退款并给前端明确原因 */
+      if (httpOk) {
+        out = {
+          statusCode: 502,
+          data: { error: { message: '服务商没有返回图片（回包缺少 b64_json / url），本次未扣积分，请重试' } }
+        };
+      }
+      await orderService.fail(order.orderId, token, 'upstream_' + out.statusCode, order.txnId, order.tracked);
+      settled = true;
+    } else {
+      /* 图已拿到：先投递，再结算成功。投递失败（关页/断网）就退款，不让用户白花钱 */
+      if (!res.writableEnded && !res.destroyed) {
+        try { res.write('data: ' + JSON.stringify(out) + '\n\n'); delivered = true; } catch (_) {}
+      }
+      if (delivered) {
+        await orderService.succeed(order.orderId, token, '');
+        settled = true;
+      } else {
+        await orderService.fail(order.orderId, token, 'client_gone', order.txnId, order.tracked);
+        settled = true;
+      }
+    }
   } catch (err) {
-    out = { statusCode: err.status || 502, data: { error: { message: err.message } } };
-  }
-
-  /* 上游失败（含超时、服务商报错）：退回本次扣费，RPC 幂等 */
-  if (!out || out.statusCode < 200 || out.statusCode >= 300) {
-    await refundCharge(token, charge.txnId);
-  }
-
-  clearInterval(beat);
-  if (!res.writableEnded) {
-    try { res.end('data: ' + JSON.stringify(out) + '\n\n'); } catch (_) {}
+    /* 兜底：任何没预料到的异常都必须让这一单有结论 */
+    if (!settled) {
+      await orderService.fail(order.orderId, token, 'proxy_error', order.txnId, order.tracked);
+      settled = true;
+    }
+    if (!out) {
+      out = { statusCode: 502, data: { error: { message: '生成服务异常：' + ((err && err.message) || err) } } };
+    }
+  } finally {
+    clearInterval(beat);
+    if (!delivered && !res.writableEnded) {
+      try { res.write('data: ' + JSON.stringify(out) + '\n\n'); } catch (_) {}
+    }
+    if (!res.writableEnded) {
+      try { res.end(); } catch (_) {}
+    }
   }
 }
 
@@ -490,11 +553,18 @@ const PERLER_DIR = path.join(ROOT, 'apps/pixelart/assert/valorant-perler-src/val
    - 主实例（/ 与 /apps/pixelart/）：apinebula 生图后端
    - 经典实例（/pixelart）：val-perler.qq.com 经典后端，独立任务目录 .pixelart-tasks-vp */
 const pixelartGen = require('./apps/pixelart/generate');
-const pixelartMain = pixelartGen.createEngine({ backend: 'apinebula' });
+/* 任务结束 → 生成单结算（成功扣费定格 / 失败自动退款）。
+ * 放在这里而不是引擎里：引擎不知道钱怎么算，也不该知道。 */
+const onPixelartTaskFinish = (taskId, status, orderId) => {
+  if (!orderId) { return null; }   /* 重转等不扣费的任务没有单号 */
+  return settleTaskOrder(orderId, status);
+};
+const pixelartMain = pixelartGen.createEngine({ backend: 'apinebula', onTaskFinish: onPixelartTaskFinish });
 const pixelartVp = pixelartGen.createEngine({
   backend: 'valperler',
   taskRoot: path.join(ROOT, '.pixelart-tasks-vp'),
-  archiveRoot: path.join(ROOT, '.pixelart-archive-vp')
+  archiveRoot: path.join(ROOT, '.pixelart-archive-vp'),
+  onTaskFinish: onPixelartTaskFinish
 });
 
 function pixelartPython() {
@@ -609,7 +679,7 @@ function handlePixelartEnvCheck(res, deep, variant) {
 }
 
 /* 根级「只给服务器看」的文件名（小写比较），不经 HTTP 下发 */
-const SERVER_ONLY_FILES = ['server.js', 'package.json', 'package-lock.json', 'architecture.md', 'readme.md'];
+const SERVER_ONLY_FILES = ['server.js', 'package.json', 'package-lock.json', 'architecture.md', 'readme.md', 'orders.js'];
 
 function serveStatic(req, res) {
   const url = new URL(req.url, 'http://localhost');
@@ -629,7 +699,7 @@ function serveStatic(req, res) {
   /* 服务端文件不下发：server.js 源码暴露全部路由与反代逻辑，deploy/ 里的脚本含服务器
      IP、部署路径与密钥文件名，package.json / 架构文档同理。只放行前端资产。 */
   const firstSeg = ((safePath.split('/').filter(Boolean)[0]) || '').toLowerCase();
-  if (firstSeg === 'deploy' || SERVER_ONLY_FILES.includes(firstSeg)) {
+  if (firstSeg === 'deploy' || firstSeg === 'server' || SERVER_ONLY_FILES.includes(firstSeg)) {
     res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
     return res.end('403 Forbidden');
   }
@@ -718,63 +788,67 @@ function rpcErrorText(r) {
   return String(r.text || '');
 }
 
-async function refundCharge(token, txnId) {
-  if (!txnId) { return; }
-  try { await cloudRpc(token, 'wallet_refund', { p_ref: String(txnId) }); } catch (_) {}
+/* ---------- 拼豆生成：生成单 + 任务结算 ----------
+ * 提交期失败（参数错 / 落盘失败，引擎还回 4xx-5xx）→ 包装层直接 fail 退款；
+ * 任务期失败 / 超时 → 引擎回调 onTaskFinish 结算。两条路都不依赖前端还在页面上，
+ * 这正是「已扣费没拿到图」的第二个窗口（用户关页后失败没人退）。 */
+const taskOrderCtx = new Map();   /* orderId → { token, tracked, txnId, at } */
+
+function pruneOrderCtx() {
+  const now = Date.now();
+  for (const [id, ctx] of taskOrderCtx) {
+    if (now - ctx.at > 2 * 60 * 60 * 1000) { taskOrderCtx.delete(id); }
+  }
 }
 
-/* 服务端扣 1 积分：返回 { txnId, balance } 或 { error: {status, code, message} }。
- * /api/ai 与拼豆 /api/pixelart{,-vp}/generate 共用；扣费用调用者自己的 JWT，
- * 匿名/过期会话在云端 RPC 层就被拒（wallet_uid 守卫），此处只做状态映射。 */
-async function chargeOneCredit(token, ref) {
-  let r;
-  try {
-    r = await cloudRpc(token, 'wallet_consume', { p_credits: -1, p_ref: ref });
-  } catch (err) {
-    return { error: { status: 502, code: 'WALLET_UNAVAILABLE', message: '计费服务连接失败，请稍后重试' } };
+async function settleTaskOrder(orderId, status) {
+  const ctx = taskOrderCtx.get(orderId);
+  if (!ctx) {
+    /* 服务重启后内存里没有这单：状态照常报给前端，钱由 order_reap 补退 */
+    return { refunded: false, known: false };
   }
-  const msg = rpcErrorText(r);
-  if (r.status === 401 || r.status === 403 || /AUTH_REQUIRED/.test(msg)) {
-    return { error: { status: 401, code: 'AUTH_REQUIRED', message: '登录状态已失效，请重新登录后再生成' } };
+  taskOrderCtx.delete(orderId);
+  if (status === 'done') {
+    await orderService.succeed(orderId, ctx.token, '');
+    return { refunded: false, known: true };
   }
-  if (/INSUFFICIENT_BALANCE/.test(msg)) {
-    return { error: { status: 402, code: 'INSUFFICIENT_BALANCE', message: '积分不足：免费体验已用完，请充值或输入兑换码。' } };
-  }
-  if (r.status !== 200) {
-    return { error: { status: 502, code: 'WALLET_UNAVAILABLE', message: '计费服务暂不可用，请稍后重试' } };
-  }
-  const row = Array.isArray(r.data) ? r.data[0] : r.data;
-  if (!row || row.txn_id == null) {
-    return { error: { status: 502, code: 'WALLET_UNAVAILABLE', message: '计费服务返回异常，请稍后重试' } };
-  }
-  return { txnId: String(row.txn_id), balance: row.balance };
+  const r = await orderService.fail(orderId, ctx.token, 'task_failed', ctx.txnId, ctx.tracked);
+  return { refunded: !!(r && r.refunded), known: true };
 }
 
-/* 拼豆生成接口的强制计费包装：先验身份并扣 1 分，再放行引擎。
- * 引擎返回 4xx/5xx（参数错误、落盘失败等提交期失败）→ 自动退款；
- * 返回 200 即已创建后台任务，txnId/余额经响应头交给前端，任务期失败由
- * 前端凭 txnId 发起退款（退款对用户有利，放前端不影响营收安全；
- * 连接中断场景归「生成单」重构彻底解决）。 */
+/* 拼豆生成接口的强制计费包装：先建单扣 1 分，再放行引擎。
+ * 响应头带 X-Order-Id（前端凭它查询/续接），余额同步回写顶部积分 chip。 */
 async function handlePixelartGenerate(req, res, engine) {
   const bearer = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''));
   if (!bearer) {
     return sendJson(res, 401, { error: { code: 'AUTH_REQUIRED', message: '生成需要登录，请先登录后再试' } });
   }
   const token = bearer[1];
-  const chargeRef = 'pxgen-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
-  const charge = await chargeOneCredit(token, chargeRef);
-  if (charge.error) {
-    return sendJson(res, charge.error.status, { error: { code: charge.error.code, message: charge.error.message } });
+  const order = await orderService.create({
+    token: token,
+    product: 'pixelart',
+    meta: { backend: engine.backend }
+  });
+  if (order.error) {
+    return sendJson(res, order.error.status, { error: { code: order.error.code, message: order.error.message } });
   }
-  /* 包装 writeHead：成功响应附上扣费凭据；同时记录引擎实际响应码用于退款判定 */
+
+  pruneOrderCtx();
+  taskOrderCtx.set(order.orderId, {
+    token: token, tracked: order.tracked, txnId: order.txnId, at: Date.now()
+  });
+  /* 引擎把单号记到任务上，任务结束（成功/失败/超时）回调本服务结算 */
+  req.orderId = order.orderId;
+
   let statusCode = 200;
   const origWriteHead = res.writeHead.bind(res);
   res.writeHead = function (code, headers) {
     statusCode = code;
     if (code === 200) {
       headers = Object.assign({}, headers || {}, {
-        'X-Wallet-Txn-Id': charge.txnId,
-        'X-Wallet-Balance': charge.balance == null ? '' : String(charge.balance)
+        'X-Order-Id': order.orderId,
+        'X-Wallet-Txn-Id': order.txnId,
+        'X-Wallet-Balance': order.balance == null ? '' : String(order.balance)
       });
     }
     return origWriteHead(code, headers);
@@ -787,8 +861,38 @@ async function handlePixelartGenerate(req, res, engine) {
     }
     throw err; /* 头已发出，只能让连接以错误收场 */
   } finally {
-    if (statusCode >= 400) { await refundCharge(token, charge.txnId); }
+    if (statusCode >= 400) {
+      taskOrderCtx.delete(order.orderId);
+      await orderService.fail(order.orderId, token, 'submit_' + statusCode, order.txnId, order.tracked);
+    }
   }
+}
+
+/* 登录后的补退：把本人被遗弃的 pending 单结掉（关页 / 崩溃 / 记账丢失都会留单）。
+ * 前端在登录态建立后调用，非关键路径，失败静默。 */
+async function handleOrderSettle(req, res) {
+  const bearer = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''));
+  if (!bearer) {
+    return sendJson(res, 401, { error: { code: 'AUTH_REQUIRED', message: '需要登录' } });
+  }
+  const r = await orderService.reap(bearer[1]);
+  return sendJson(res, 200, {
+    refunded: r.refunded || 0,
+    balance: r.balance == null ? null : r.balance
+  });
+}
+
+/* 单据查询（前端排查 / 断线续接用） */
+async function handleOrderGet(req, res, fullUrl) {
+  const bearer = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''));
+  if (!bearer) {
+    return sendJson(res, 401, { error: { code: 'AUTH_REQUIRED', message: '需要登录' } });
+  }
+  const id = String(fullUrl.searchParams.get('id') || '');
+  if (!id) { return sendJson(res, 400, { error: { message: '缺少单据号' } }); }
+  const row = await orderService.get(id, bearer[1]);
+  if (!row) { return sendJson(res, 404, { error: { message: '单据不存在' } }); }
+  return sendJson(res, 200, { order: row });
 }
 
 function proxyCloud(req, res) {
@@ -900,6 +1004,13 @@ const server = http.createServer((req, res) => {
   if (pathOnly === '/api/admin/sync-key') {
     if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
     return handleAdminSyncKey(req, res);
+  }
+  if (pathOnly === '/api/orders/settle') {
+    if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
+    return handleOrderSettle(req, res);
+  }
+  if (pathOnly === '/api/orders/get') {
+    return handleOrderGet(req, res, fullUrl);
   }
   if (pathOnly === '/api/pixelart/env-check') {
     if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }

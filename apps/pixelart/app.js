@@ -1,8 +1,8 @@
 /* =========================================================
  * 点豆（原拼豆大师） · 产品层逻辑
  * - 平台层接入：登录 / 积分钱包 / 支付，全部复用 window.Platform
- * - 核心流程：上传图 → 选主体/画风 → 扣 1 积分 → SSE 心跳流跟踪任务（降级轮询）→ 打开图纸
- * - 生成失败自动退回积分（平台层 wallet.refund）
+ * - 核心流程：上传图 → 选主体/画风 → 服务端建单扣 1 积分 → SSE 心跳流跟踪任务（降级轮询）→ 打开图纸
+ * - 失败退款全部在服务端完成（生成单 order_fail，幂等）；前端只做补退触发与文案
  * ========================================================= */
 (function () {
   'use strict';
@@ -69,7 +69,8 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     lastTaskId: null,
     regenActive: false,   /* 本轮观察的是「一键重转」任务（不扣积分，文案不同） */
     recent: [],           /* 最近生成：[{ id, thumb, style, time }]，最多 RECENT_MAX 条 */
-    lastTxnId: null
+    lastTxnId: null,
+    lastOrderId: null     /* 生成单号：服务端建单扣费时下发，用于对账/补退排查 */
   };
 
   /* ---------- 产品侧提示（平台层弹窗内提示走 showHint，工作台提示走 studioMsg） ---------- */
@@ -422,9 +423,9 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     $('genStatusText').textContent = '正在提交任务…';
     var startedAt = Math.floor(Date.now() / 1000);
 
-    /* 扣费在服务端完成（先扣后放行，前端绕不过）：前端只带令牌提交，
-       凭响应头 X-Wallet-Txn-Id / X-Wallet-Balance 记账与刷新积分 chip。
-       任务期失败由 onTaskFailed 凭 Store.lastTxnId 退款。 */
+    /* 扣费在服务端完成（生成单：先建单再扣费，失败自动退款，前端绕不过）：
+       前端只带令牌提交，凭响应头 X-Order-Id / X-Wallet-Balance 记账与刷新积分 chip。
+       任务期失败的退款由服务端在任务收尾时完成，前端不再自己退——关掉页面也会退。 */
     getAuthToken().then(function (token) {
       var headers = { 'Content-Type': 'application/json' };
       if (token) { headers.Authorization = 'Bearer ' + token; }
@@ -439,6 +440,8 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
         })
       });
     }).then(function (res) {
+      var orderId = res.headers && res.headers.get ? res.headers.get('X-Order-Id') : null;
+      if (orderId) { Store.lastOrderId = orderId; }
       var txn = res.headers && res.headers.get ? res.headers.get('X-Wallet-Txn-Id') : null;
       if (txn) { Store.lastTxnId = txn; }
       var bal = res.headers && res.headers.get ? res.headers.get('X-Wallet-Balance') : null;
@@ -491,6 +494,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     studioMsg('');
     setGenerating(true);
     Store.lastTxnId = null;   /* 重转不扣积分，失败也无需退回 */
+    Store.lastOrderId = null;
     Store.regenActive = true;
     $('genDone').hidden = true;
     $('genStatusText').textContent = '正在重转图纸（合并近色，不重新生图）…';
@@ -588,8 +592,24 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
       studioMsg('重转失败：' + (st.error || '未知错误').slice(0, 160) + '（未扣积分，原图纸不受影响）', true);
       return;
     }
-    wallet.refund(Store.lastTxnId);
-    studioMsg('生成失败：' + (st.error || '未知错误').slice(0, 160) + '（1 积分已退回）', true);
+    /* 退款由服务端在任务收尾时完成（order_fail 与状态变更同事务、幂等），
+       前端只负责如实描述结果：refunded=true 说明钱已经回来了。 */
+    var reason = (st.error || '未知错误').slice(0, 160);
+    studioMsg('生成失败：' + reason + (st.refunded ? '（1 积分已退回）' : '（积分将自动退回，可在「我的 → 积分明细」核对）'), true);
+    if (!st.refunded) {
+      /* 服务端没来得及结算（进程重启 / 内存里没这单）：立刻触发一次补退 */
+      settleOrders();
+    }
+  }
+
+  /* 补退入口：把本人被遗弃的 pending 单结掉（服务端幂等，失败静默） */
+  function settleOrders() {
+    if (!auth || typeof auth.settleStaleOrders !== 'function') { return; }
+    auth.settleStaleOrders().then(function (r) {
+      if (r && r.refunded > 0) {
+        studioMsg('已退回 ' + r.refunded + ' 积分（余额 ' + r.balance + '）');
+      }
+    });
   }
 
   /* SSE 流：每 2s 一行 ": wait Ns" 心跳（驱动阶段提示），状态变化推 event: status */
@@ -651,8 +671,10 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
       $('genStatusText').textContent = stageText(sec);
       if (polls > GEN_POLL_MAX) {
         setGenerating(false);
-        studioMsg('生成超时，积分将在确认失败后自动退回；也可联系管理员处理', true);
-        wallet.refund(Store.lastTxnId);
+        /* 只是前端不再等：任务在服务端还会继续，最终失败会自动退款，
+           这里顺手触发一次补退（幂等），并如实说明 */
+        studioMsg('等待超时，图纸仍在后台生成；若最终失败，积分会自动退回（可在「我的」核对）', true);
+        settleOrders();
         return;
       }
       fetch(PIXELART_API + '/task?id=' + encodeURIComponent(taskId))
