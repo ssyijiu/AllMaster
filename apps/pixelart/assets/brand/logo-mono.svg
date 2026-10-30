@@ -1,5 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
-  <!-- 点豆 Logo v2 无底单色变体：水印 / 打印 / 单色场合，「点」用点缀色珊瑚 -->
-  <path d="M32 26 H44 C 60 26 70 35 70 48 C 70 61 60 70 44 70 H32" fill="none" stroke="#1F1D1A" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="80" cy="76" r="7" fill="#FF6B5E"/>
+  <!-- 点豆 Logo v3 无底单色变体：水印 / 打印 / 单色场合，「点」用点缀色珊瑚（几何同 logo.svg） -->
+  <g transform="translate(-2.4 2.1) scale(0.9)">
+    <path d="M32 26 H44 C 60 26 70 35 70 48 C 70 61 60 70 44 70 H32" fill="none" stroke="#1F1D1A" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="80" cy="76" r="7" fill="#FF6B5E"/>
+  </g>
 </svg>

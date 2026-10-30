@@ -1,6 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
-  <!-- 点豆 DotBeads Logo v2：豆黄圆角方 + 一笔写成的艺术化 D + 右下角离位的「点」（用户定稿 2026-10-29） -->
+  <!-- 点豆 DotBeads Logo v3（当前主用版）：豆黄圆角方 + 一笔写成的艺术化 D + 右下角离位的「点」。
+       v3 相对 v2 的修正：整体按 bbox 中心对齐画布中心并等比缩至 90%，确保用作圆形头像 / 圆角 App 图标时
+       「点」不会被切边（v2 时点最远点 49.5 > 内切圆 48）。几何与 assets/brand/logo-v3.svg 一致。 -->
   <rect width="96" height="96" rx="22" fill="#FFD02F"/>
-  <path d="M32 26 H44 C 60 26 70 35 70 48 C 70 61 60 70 44 70 H32" fill="none" stroke="#1F1D1A" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="80" cy="76" r="7" fill="#1F1D1A"/>
+  <g transform="translate(-2.4 2.1) scale(0.9)">
+    <path d="M32 26 H44 C 60 26 70 35 70 48 C 70 61 60 70 44 70 H32"
+          fill="none" stroke="#1F1D1A" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="80" cy="76" r="7" fill="#1F1D1A"/>
+  </g>
 </svg>
