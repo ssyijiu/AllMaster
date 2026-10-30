@@ -121,7 +121,16 @@
       if (!res || res.error) { Store.state.error = '云端列表读取失败'; return []; }
       /* 条目字段不稳定（可能是完整 key，也可能只有文件名），统一由平台层归一化 */
       var keys = Platform.storageListKeys(prefix, res);
-      if (!keys.length) { return []; }
+      if (!keys.length) {
+        /* 有数据却一条都认不出来：说明返回结构又变了。绝不能静默当空态，
+           否则线上故障会被伪装成「还没有作品」。 */
+        var raw = Platform.storageItems(res);
+        if (raw.length) {
+          Store.state.error = '作品列表格式无法识别';
+          try { console.warn('[my] list 条目未识别：' + JSON.stringify(raw[0]).slice(0, 300)); } catch (_) {}
+        }
+        return [];
+      }
       return Platform.storageSigned(cloud, keys, 3600).then(function (signed) {
         if (!signed.length) { Store.state.error = '作品图片地址生成失败'; return []; }
         var out = [];
@@ -195,7 +204,15 @@
     })).then(function (res) {
       if (!res || res.error) { return []; }
       var keys = Platform.storageListKeys(prefix, res).filter(function (k) { return /\.json$/i.test(k); });
-      if (!keys.length) { return []; }
+      if (!keys.length) {
+        /* keys 被 .json 过滤空了可能只是目录里没有作品行，不算故障；
+           但如果是「有条目、全被过滤」，通常是云端换了命名，留个诊断 */
+        var raw = Platform.storageItems(res);
+        if (raw.length) {
+          try { console.warn('[my] pixelart 条目未识别：' + JSON.stringify(raw[0]).slice(0, 200)); } catch (_) {}
+        }
+        return [];
+      }
       /* 只下载要展示的那些（最近 30 条）的元数据；被挤出保留期的条目
          时间在文件名里就有，清理时不需要内容，省掉几十次下载 */
       var shown = keys.slice(0, WORK_LIMIT);

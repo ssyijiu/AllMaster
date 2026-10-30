@@ -66,10 +66,35 @@
    * 于是**一次签名请求都不会发出**，页面永远显示“没有作品”。
    * 统一在这里归一化：能识别的绝对 key 原样保留，否则按 prefix + basename 拼。
    * ========================================================= */
+  /* 列表响应的「数组」可能被包在任何一层：{items}/{entries}/{objects}/
+   * {files}/{rows}/{list}/{data}。2026-10-31 又踩了一次：只认 data.items，
+   * 服务端回的是 data.entries 时整页静默空态。这里统一逐层解包。 */
+  var LIST_KEYS = ['items', 'entries', 'objects', 'files', 'rows', 'list', 'data'];
+
+  Platform.storageItems = function (res) {
+    var d = res;
+    for (var i = 0; i < 5; i++) {
+      if (Array.isArray(d)) { return d; }
+      if (!d || typeof d !== 'object') { return []; }
+      var next = null;
+      for (var k = 0; k < LIST_KEYS.length; k++) {
+        var v = d[LIST_KEYS[k]];
+        if (Array.isArray(v) || (v && typeof v === 'object')) { next = v; break; }
+      }
+      if (!next) { return []; }
+      d = next;
+    }
+    return Array.isArray(d) ? d : [];
+  };
+
   Platform.storageItemKey = function (prefix, item) {
     if (!item) { return ''; }
-    var raw = item.path || item.name || item.key || '';
-    raw = String(raw).replace(/^\/+/, '');
+    /* 也允许条目就是一个字符串（路径本身） */
+    var raw = (typeof item === 'string')
+      ? item
+      : (item.path || item.objectKey || item.object_key || item.filePath ||
+         item.file_path || item.key || item.name || '');
+    raw = String(raw || '').replace(/^\/+/, '');
     if (!raw) { return ''; }
     if (raw.indexOf('users/') === 0 || raw.indexOf('shared/') === 0) { return raw; }
     var base = raw.split('/').pop();
@@ -81,14 +106,18 @@
 
   /* 列表响应 → 文件 key 数组（跳过子目录占位项、去重） */
   Platform.storageListKeys = function (prefix, res) {
-    var data = res && res.data;
-    var items = (data && data.items) ? data.items : data;
-    if (!items || typeof items.length !== 'number') { return []; }
+    var items = Platform.storageItems(res);
+    if (!items.length) { return []; }
     var out = [], seen = {};
     for (var i = 0; i < items.length; i++) {
       var it = items[i];
       if (!it) { continue; }
-      if (it.type === 'folder') { continue; }
+      if (typeof it === 'string') {
+        var sk = Platform.storageItemKey(prefix, it);
+        if (sk && !seen[sk]) { seen[sk] = 1; out.push(sk); }
+        continue;
+      }
+      if (it.type === 'folder' || it.isFolder === true || it.is_folder === true) { continue; }
       /* 子目录占位项：id 为 null 且没有 metadata；带 metadata 的才是文件 */
       if (Object.prototype.hasOwnProperty.call(it, 'id') && it.id === null && !it.metadata) { continue; }
       var key = Platform.storageItemKey(prefix, it);
@@ -107,16 +136,18 @@
     return Promise.resolve(cloud.storage.createSignedUrls(keys, ttl || 3600))
       .then(function (res) {
         if (!res || res.error) { return []; }
-        var list = (res.data && res.data.items) ? res.data.items : res.data;
-        if (!list || typeof list.length !== 'number') { return []; }
+        var list = Platform.storageItems(res);
+        if (!list.length) { return []; }
         var out = [];
-        for (var i = 0; i < keys.length; i++) {
+        for (var i = 0; i < list.length; i++) {
           var e = list[i];
-          var url = e && (e.signedUrl || e.signed_url || e.url || (typeof e === 'string' ? e : null));
+          var url = typeof e === 'string'
+            ? e
+            : (e && (e.signedUrl || e.signed_url || e.url || e.signedURL));
           if (!url) { continue; }
-          var p = (e && e.path) || keys[i];
-          if (p && p.indexOf('users/') !== 0 && p.indexOf('shared/') !== 0) { p = keys[i]; }
-          out.push({ path: p, url: url });
+          var p = (e && typeof e === 'object' && (e.path || e.key)) || keys[i] || keys[0];
+          if (p && p.indexOf('users/') !== 0 && p.indexOf('shared/') !== 0) { p = keys[i] || p; }
+          out.push({ path: p, url: String(url) });
         }
         return out;
       })

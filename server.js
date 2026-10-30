@@ -951,6 +951,40 @@ async function handleOrderHealth(req, res, fullUrl) {
   return sendJson(res, 200, { snapshot: r.snapshot, summary: r.summary });
 }
 
+/* 云端存储列表响应结构探针（只记「结构」，不记文件内容）
+ * 2026-10-31：/my 一直空态，前端解析与云端返回结构对不上时是**静默**的，
+ * 只有把结构的真实形态打出来才能定位。输出形如：
+ *   [cloud] list users/<uid>/history/ -> 200 obj{entries,hasNext} array(100) item0{name,id,metadata}
+ */
+function describeCloudListBody(text) {
+  if (!text) { return 'empty-body'; }
+  let v;
+  try { v = JSON.parse(text); } catch (_) { return 'non-json len=' + text.length; }
+  const parts = [];
+  let cur = v;
+  for (let d = 0; d < 3; d++) {
+    if (Array.isArray(cur)) { break; }
+    if (!cur || typeof cur !== 'object') { break; }
+    parts.push('obj{' + Object.keys(cur).slice(0, 8).join(',') + '}');
+    const arrKey = ['items', 'entries', 'objects', 'files', 'rows', 'data']
+      .find((k) => Array.isArray(cur[k]));
+    if (!arrKey) { cur = null; break; }
+    cur = cur[arrKey];
+  }
+  if (Array.isArray(cur)) {
+    parts.push('array(' + cur.length + ')');
+    const f = cur[0];
+    if (f && typeof f === 'object') {
+      parts.push('item0{' + Object.keys(f).slice(0, 10).join(',') + '}');
+    } else if (f !== undefined) {
+      parts.push('item0=' + typeof f);
+    }
+  } else if (typeof cur === 'string') {
+    parts.push('string len=' + cur.length);
+  }
+  return parts.join(' ') || 'scalar';
+}
+
 function proxyCloud(req, res) {
   let target;
   try {
@@ -975,6 +1009,14 @@ function proxyCloud(req, res) {
   delete headers.upgrade;
   delete headers['accept-encoding'];
 
+  /* 列表接口额外打一行结构探针：前缀、状态码、JSON 外层键与首条字段名。
+     请求体必须在 pipe 之前开始收，否则回调里再挂监听已经流过去了。 */
+  const isListPath = /\/storage\/v1\/object\/list\//.test(target.pathname);
+  let listReqBody = '';
+  if (isListPath) {
+    req.on('data', (c) => { if (listReqBody.length < 2000) { listReqBody += c.toString('utf8'); } });
+  }
+
   const up = https.request({
     protocol: 'https:',
     hostname: target.hostname,
@@ -984,6 +1026,15 @@ function proxyCloud(req, res) {
     headers: headers,
     timeout: 60000
   }, (upRes) => {
+    if (isListPath) {
+      let resBody = '';
+      upRes.on('data', (c) => { if (resBody.length < 400000) { resBody += c.toString('utf8'); } });
+      upRes.on('end', () => {
+        let prefix = '';
+        try { prefix = String(JSON.parse(listReqBody).prefix || ''); } catch (_) {}
+        console.warn('[cloud] list ' + prefix + ' -> ' + (upRes.statusCode || 0) + ' ' + describeCloudListBody(resBody));
+      });
+    }
     res.writeHead(upRes.statusCode || 502, upRes.headers);
     upRes.pipe(res);
   });
