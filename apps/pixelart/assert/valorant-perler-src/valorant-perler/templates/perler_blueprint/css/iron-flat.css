@@ -2,10 +2,10 @@
 /* 开关按钮「模拟烫豆」：画布右上「镜像」正下方，和镜像同属「换个看法看图纸」。
  * 外观复用 .mirror-btn（同底色、同字号、同宽 = 两个按钮成一组，不抢画面）；只用一道暖色细边 + 暖色字区分出它是烫豆，
  * 开启态整块填暖橙。宽度由 .canvas-tools 统一（见 stage.css）。平面与 3D视角 都可见（共用一条控制条）。 */
-#ironBtn{display:none; color:#ffb27a; border-color:rgba(255,138,61,.45)}
+#ironBtn{display:none; color:var(--txt2); border-color:rgba(240,187,0,.55)}
 #ironBtn.show{display:block}
-#ironBtn:hover{color:#ffc79e; border-color:#ff8a3d}
-#ironBtn.on, #ironBtn.on:hover{background:#ff8a3d; border-color:#ff8a3d; color:#fff} /* 开启：与「镜像」开启态同一套路，整块填色表示按下；用烫豆暖橙，与烫法选项的选中色一致 */
+#ironBtn:hover{color:var(--txt); border-color:#F0BB00}
+#ironBtn.on, #ironBtn.on:hover{background:var(--acc); border-color:var(--acc); color:#1F1D1A} /* 开启：与「镜像」开启态同一套路，整块填色表示按下；豆黄底墨字，与点豆选中色一致 */
 #view-grid .zoomctl{top:92px}
 /* 控制条显示（基础样式共享 .meltbar，见 view-3d.css） */
 body.ironon #ironBar{display:flex}
@@ -27,11 +27,11 @@ body.ironon .hud, body.ironon.editing .hud{bottom:40px}
 /* 烫法切换：控制条右端一组药丸按钮，选中项实心橙底；平面与 3D视角 都显示 */
 #ironStyles{display:flex; gap:5px; flex:none}
 #ironStyles button{
-  border:1px solid rgba(255,178,122,.4); background:rgba(255,138,61,.10); color:#ffd0a8; cursor:pointer;
+  border:1px solid rgba(240,187,0,.45); background:rgba(240,187,0,.10); color:var(--txt2); cursor:pointer;
   border-radius:20px; padding:2px 10px; line-height:1.3; white-space:nowrap;
   font-family:var(--font-d); font-weight:700; font-size:10.5px; letter-spacing:.1em;
   transition:all .15s;
 }
-#ironStyles button:hover{background:rgba(255,138,61,.18); color:#ffc79e}
-#ironStyles button.on{background:#ff8a3d; border-color:#ff8a3d; color:#fff; box-shadow:0 0 8px rgba(255,138,61,.35)}
+#ironStyles button:hover{background:rgba(240,187,0,.18); color:var(--txt)}
+#ironStyles button.on{background:var(--acc); border-color:var(--acc); color:#1F1D1A; box-shadow:0 0 8px rgba(255,208,47,.35)}
 

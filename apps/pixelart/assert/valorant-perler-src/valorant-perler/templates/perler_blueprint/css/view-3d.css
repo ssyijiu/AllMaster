@@ -10,7 +10,7 @@
 .modeseg button.on{color:var(--txt)}
 .modeseg button:disabled{opacity:.55; cursor:not-allowed}
 /* 玩家还没进过 3D：「3D」按钮带一圈呼吸光，点过一次后本机不再出现 */
-body:not(.v3-tried) .modeseg button[data-mode="3d"]:not(.on):not(:disabled){color:#fff; animation:v3Lure 1.8s ease-in-out infinite}
+body:not(.v3-tried) .modeseg button[data-mode="3d"]:not(.on):not(:disabled){color:var(--txt); animation:v3Lure 1.8s ease-in-out infinite}
 @keyframes v3Lure{0%,100%{text-shadow:0 0 0 rgba(255,208,47,0); box-shadow:inset 0 0 0 1px rgba(255,208,47,.35)} 50%{text-shadow:0 0 8px rgba(255,208,47,.9); box-shadow:inset 0 0 0 1px rgba(255,208,47,.95), 0 0 10px rgba(255,208,47,.55)}}
 @media (prefers-reduced-motion:reduce){ body:not(.v3-tried) .modeseg button[data-mode="3d"]{animation:none; box-shadow:inset 0 0 0 1px rgba(255,208,47,.9)} }
 /* 「平面｜3D」共用一个「视角」后缀：放在两个按钮外侧，不可点，读作「平面视角 / 3D 视角」 */
@@ -46,12 +46,12 @@ body:not(.v3-tried) .modeseg button[data-mode="3d"]:not(.on):not(:disabled){colo
 }
 .meltbar button:hover{color:var(--txt)}
 /* 播放：图标 + 两个字，垫一块淡暖色底让它读得出是按钮，不加边框、不抢烫法按钮 */
-.meltbar button.heat{color:#ffb27a; display:flex; align-items:center; gap:4px; height:22px; padding:0 9px 0 7px;
-  background:rgba(255,138,61,.12); border-radius:11px; font-size:10.5px; letter-spacing:.1em}
-.meltbar button.heat:hover{color:#ffc79e; background:rgba(255,138,61,.22)}
+.meltbar button.heat{color:var(--txt2); display:flex; align-items:center; gap:4px; height:22px; padding:0 9px 0 7px;
+  background:rgba(240,187,0,.14); border-radius:11px; font-size:10.5px; letter-spacing:.1em}
+.meltbar button.heat:hover{color:var(--txt); background:rgba(240,187,0,.24)}
 .meltbar button.heat .ico{display:flex; width:11px; height:11px; align-items:center; justify-content:center}
 .meltbar button.heat svg{display:block}
-.meltbar input[type=range]{flex:1 1 40px; min-width:24px; width:auto; height:14px; margin:0; accent-color:#ff8a3d}
+.meltbar input[type=range]{flex:1 1 40px; min-width:24px; width:auto; height:14px; margin:0; accent-color:#F0BB00}
 body.mode3d #v3Wrap{display:block}
 /* 3D视角 操作提示：底部居中小字，转动过镜头（.v3-moved）或打开烫豆控制条后收起 */
 #v3Hint{position:absolute; left:50%; bottom:14px; transform:translateX(-50%); z-index:5; display:none; pointer-events:none;
