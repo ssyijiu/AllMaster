@@ -859,19 +859,11 @@
         st.currentResultUrl = url;
         setResultSuccess(url);
         updateSteps();
-        return imageService.makeThumbnail(url).then(function (thumb) {
-          Store.addHistory({
-            src: url, thumb: thumb,
-            styleName: style.name,
-            mode: 'ai', time: Date.now()
-          });
-          renderHistory();
-        }).catch(function () { /* 缩略图生成失败不影响结果展示 */ });
-      }).then(function () {
-        /* 登录用户：结果图云同步（任何失败都静默，不影响本地展示） */
-        return syncResultToCloud(st.currentResultUrl, style).then(function (ok) {
-          if (ok) { showHint('头像已同步到云端历史。'); }
-        }).catch(function () { return false; });
+        /* 图片已经可见 = 这次生成结束了：立刻归还按钮。
+         * 2026-10-30 实测问题：按钮复位原先挂在缩略图 + 云同步之后，1–2MB 原图
+         * 在移动网络上传几十秒甚至一直不返回，按钮就永远停在「生成中」。 */
+        finishGenerating();
+        persistResultInBackground(url, style);
       }).catch(function (err) {
         /* 退费由服务端在生成失败时自动完成（RPC 幂等），前端不再单独退款 */
         if (err && err.authRequired) {
@@ -879,14 +871,58 @@
           showHint('登录状态已失效，请重新登录后再生成（本次未扣积分）', true);
           openLogin();
           updateSteps();
+          finishGenerating();
           return;
         }
         setResultError(aiService.explainError(err));
         if (err && err.insufficient) { openWallet(err.message); }
         updateSteps();
-      }).then(function () {
-        aiService.onProgress = null;
-        setGenerating(false);
+        finishGenerating();
+      });
+    }
+
+    /* 生成结束（成功或失败）：清进度回调、清「已等待 N 秒」提示、复位按钮与风格网格 */
+    function finishGenerating() {
+      aiService.onProgress = null;
+      showHint('');
+      setGenerating(false);
+    }
+
+    /* 带超时的 Promise 包装：超时按失败（resolve null）处理，绝不让人无限等。
+     * 用于后台上传这类可能长时间挂起、且失败也不影响已展示结果的动作。 */
+    function withTimeout(promise, ms) {
+      return new Promise(function (resolve) {
+        var settled = false;
+        var timer = setTimeout(function () {
+          if (settled) { return; }
+          settled = true;
+          resolve(null);
+        }, ms);
+        Promise.resolve(promise).then(function (v) {
+          if (settled) { return; }
+          settled = true; clearTimeout(timer); resolve(v);
+        }, function () {
+          if (settled) { return; }
+          settled = true; clearTimeout(timer); resolve(null);
+        });
+      });
+    }
+
+    /* 结果落盘（后台）：本地缩略图历史 + 云端同步。任何失败都静默，不阻塞交互 */
+    function persistResultInBackground(url, style) {
+      withTimeout(imageService.makeThumbnail(url), 8000).then(function (thumb) {
+        Store.addHistory({
+          src: url, thumb: thumb,
+          styleName: style.name,
+          mode: 'ai', time: Date.now()
+        });
+        renderHistory();
+      });
+
+      if (!Store.state.user) { return; }
+      withTimeout(syncResultToCloud(url, style), 25000).then(function (ok) {
+        /* 用户可能已经开始下一次生成，别覆盖它正在显示的提示 */
+        if (ok && !Store.state.generating) { showHint('已保存到「我的作品」。'); }
       });
     }
 
