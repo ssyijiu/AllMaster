@@ -10,6 +10,22 @@ APP_PORT="${APP_PORT:-8080}"
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
+
+# —— 发布前置校验：本脚本打包的是「工作树」而不是 git HEAD，未提交的改动会被静默带上生产 ——
+# 2026-10-30 事故：block_cleanup.py 的 grid_snap()（3px 方格吸附）未提交，却被 03:35 的发布
+# 一起带到两台机器，两小时后才在 review 时发现，期间生产一直在跑未 review 的算法改动。
+DIRTY="$(git status --porcelain --untracked-files=normal 2>/dev/null | grep -v '\.DS_Store$' || true)"
+if [ -n "$DIRTY" ]; then
+  echo "==> 0/4 工作区检查：发现未提交改动，以下内容会随 tar 一起上线"
+  echo "$DIRTY" | sed 's/^/      /'
+  if [ "${ALLOW_DIRTY:-0}" != "1" ]; then
+    echo "    已中止。若确认要连这些未提交改动一起发布（含他人进行中的代码），执行："
+    echo "      ALLOW_DIRTY=1 bash deploy/push.sh"
+    exit 1
+  fi
+  echo "    ALLOW_DIRTY=1 → 按原样发布"
+fi
+
 echo "==> 1/4 打包 $ROOT"
 tar czf /tmp/allmaster.tgz \
   --exclude='.git' --exclude='.workbuddy' --exclude='node_modules' \
