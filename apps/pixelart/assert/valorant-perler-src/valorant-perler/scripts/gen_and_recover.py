@@ -41,9 +41,9 @@ SUBJECT_DESC_DIR = IMAGE_PROMPTS / "04-subject_description"
 # 画风库：目录名 → 可用的叫法。每个目录里 art_style.md 是画风正文；
 # 有 subject_description.md 的画风在人物主体没写描述时用它替换人物默认描述。
 ART_STYLES = {
-    # 官方同款：对标参照后端 val-perler 的人物观感（约 3 头身 + 统一粗深色描边 + 五官简化），
-    # 是人物主体的默认画风；想要按原图还原的玩家改选「还原」。
-    "official": ("官方同款", "官方", "经典款", "像素小人"),
+    # 卡通（对外名，2026-10-30 前叫「官方同款」）：三头身小人人形模板 + 统一粗深色描边 + 五官色块化，
+    # 是人物主体的默认画风；想要按原图还原的玩家改选「还原」。官方同款保留为兼容别名（历史任务记录匹配用）。
+    "official": ("卡通", "官方同款", "官方", "经典款", "像素小人"),
     "original": ("还原",),
     "chibi": ("Q版", "q版", "手绘小人", "简笔小人", "手绘表情包"),
     "mini-sticker": ("贴纸", "迷你贴纸"),
@@ -55,7 +55,7 @@ ART_STYLES = {
 CHARACTER_ONLY_STYLES = {s["id"] for s in json.loads(
     (SCRIPTS.parent / "assets" / "style_guide.json").read_text(encoding="utf-8"))["styles"]
     if s.get("scope") == "character" and s["id"] != "original"}
-DEFAULT_ART_STYLE = "official"        # 人物默认走「官方同款」（对标参照后端观感）
+DEFAULT_ART_STYLE = "official"        # 人物默认走「卡通」（三头身模板画风）
 DEFAULT_ART_STYLE_PROP = "original"    # 道具默认仍是「还原」（与参照端行为一致）
 PALETTE_CSV = SCRIPTS / "palette_mard221.csv"
 IMAGE_RENDER = SCRIPTS / IMAGE_SCRIPT_NAME
@@ -141,8 +141,8 @@ def art_style_name(value: str) -> str | None:
 def resolve_art_style(value: str | None, subject: str = "character") -> tuple[str, dict]:
     """--art-style 的取值 → (运行记录.json 里记录的画风, art_style slot)。
 
-    None 取默认画风：人物 =「官方同款」（对标参照端观感），道具 =「还原」
-    —— 因为「官方同款」是 character 限定画风，道具沿用它会直接被闸门拦下。
+    None 取默认画风：人物 =「卡通」（三头身模板画风），道具 =「还原」
+    —— 因为「卡通」是 character 限定画风，道具沿用它会直接被闸门拦下。
     库里的名字读对应正文；其他文字套进 custom.md 当作自定义画风。
     """
     if value is None:

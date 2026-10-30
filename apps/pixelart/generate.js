@@ -545,7 +545,7 @@ function createEngine(options) {
       try {
         thumb = 'data:image/png;base64,' + fs.readFileSync(path.join(PERLER_DIR, 'assets', 'style-picker', s.id + '.png')).toString('base64');
       } catch (_) { /* 缩略图缺失时前端降级为首字母块 */ }
-      return { id: s.id, label: s.label, scope: s.scope || 'all', thumb: thumb };
+      return { id: s.id, label: s.label, tip: s.tip || '', scope: s.scope || 'all', thumb: thumb };
     });
     return sendJson(res, 200, { styles: styles, hint: guide.hint || '' });
   }

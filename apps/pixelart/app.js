@@ -60,8 +60,8 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     /* 工作台状态 */
     imgDataUrl: null,     /* 处理后的 dataURL（≤1024px PNG） */
     subject: 'character', /* character | prop */
-    styles: [],           /* [{id,label,scope,thumb}] */
-    styleId: 'official',   /* 人物默认「官方同款」（对标参照后端观感）；道具侧会自动回落到「还原」 */
+    styles: [],           /* [{id,label,tip,scope,thumb}] */
+    styleId: 'official',   /* 人物默认「卡通」（原「官方同款」，三头身模板画风）；道具侧会自动回落到「还原」 */
     generating: false,
     pollTimer: null,
     watchToken: 0,        /* SSE 观察轮次：每轮生成 +1，回调对不上号即视为已取消 */
@@ -107,7 +107,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
       var art = s.thumb
         ? '<img src="' + s.thumb + '" alt="' + s.label + '画风预览" />'
         : '<span class="style-letter">' + s.label.charAt(0) + '</span>';
-      return '<button type="button" class="style-card' + (s.id === Store.styleId ? ' cur' : '') + '" data-sid="' + s.id + '" title="' + s.label + '">'
+      return '<button type="button" class="style-card' + (s.id === Store.styleId ? ' cur' : '') + '" data-sid="' + s.id + '" title="' + (s.tip || s.label) + '">'
         + '<span class="card-art">' + art
         + '<span class="card-check"><svg class="icon icon-12" aria-hidden="true"><use href="#i-check"/></svg></span></span>'
         + '<span class="card-name">' + s.label + '</span></button>';
