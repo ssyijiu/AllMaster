@@ -274,6 +274,14 @@ async function handleAi(req, res) {
     return sendJson(res, 400, { error: { message: (err && err.message) || '请求解析失败' } });
   }
 
+  /* —— 身份（先判，未登录不该走到 Key/参数校验的分支）—— */
+  const authHeader = String(req.headers.authorization || '');
+  const bearer = /^Bearer\s+(.+)$/i.exec(authHeader);
+  if (!bearer) {
+    return sendJson(res, 401, { error: { code: 'AUTH_REQUIRED', message: '生成需要登录，请先登录后再试' } });
+  }
+  const token = bearer[1];
+
   const aiCfg = readDotJson(AI_CONFIG_FILE) || {};
   const keys = aiCfg.providerKeys || {};
   const apiKey = (payload.providerId && keys[payload.providerId]) || payload.apiKey || '';
@@ -288,11 +296,36 @@ async function handleAi(req, res) {
     return sendJson(res, err.status || 400, { error: { message: err.message } });
   }
 
+  /* —— 计费（服务端把关，前端无法跳过）—— */
+  const chargeRef = 'gen-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
+  let charge;
+  try {
+    const r = await cloudRpc(token, 'wallet_consume', { p_credits: -1, p_ref: chargeRef });
+    const msg = rpcErrorText(r);
+    if (r.status === 401 || r.status === 403 || /AUTH_REQUIRED/.test(msg)) {
+      return sendJson(res, 401, { error: { code: 'AUTH_REQUIRED', message: '登录状态已失效，请重新登录后再生成' } });
+    }
+    if (/INSUFFICIENT_BALANCE/.test(msg)) {
+      return sendJson(res, 402, { error: { code: 'INSUFFICIENT_BALANCE', message: '积分不足：免费体验已用完，请充值或输入兑换码。' } });
+    }
+    if (r.status !== 200) {
+      return sendJson(res, 502, { error: { code: 'WALLET_UNAVAILABLE', message: '计费服务暂不可用，请稍后重试' } });
+    }
+    const row = Array.isArray(r.data) ? r.data[0] : r.data;
+    if (!row || row.txn_id == null) {
+      return sendJson(res, 502, { error: { code: 'WALLET_UNAVAILABLE', message: '计费服务返回异常，请稍后重试' } });
+    }
+    charge = { txnId: String(row.txn_id), balance: row.balance };
+  } catch (err) {
+    return sendJson(res, 502, { error: { code: 'WALLET_UNAVAILABLE', message: '计费服务连接失败，请稍后重试' } });
+  }
+
   /* SSE 心跳流：边等上游边每 2 秒写心跳，最后一行 data: 携带真实结果 */
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-store',
     'X-Accel-Buffering': 'no',
+    'X-Wallet-Balance': charge.balance == null ? '' : String(charge.balance),
     Connection: 'keep-alive'
   });
   const startedAt = Date.now();
@@ -309,6 +342,11 @@ async function handleAi(req, res) {
     out = { statusCode: r.statusCode, data: r.data };
   } catch (err) {
     out = { statusCode: err.status || 502, data: { error: { message: err.message } } };
+  }
+
+  /* 上游失败（含超时、服务商报错）：退回本次扣费，RPC 幂等 */
+  if (!out || out.statusCode < 200 || out.statusCode >= 300) {
+    await refundCharge(token, charge.txnId);
   }
 
   clearInterval(beat);
@@ -644,6 +682,62 @@ function serveStatic(req, res) {
  */
 const CLOUD_UPSTREAM = process.env.CLOUD_UPSTREAM || 'https://ai-avatar-studio-50356.app.workbuddy.host';
 const CLOUD_ORIGIN = new URL(CLOUD_UPSTREAM).origin;
+const CLOUD_PUBLISHABLE_KEY = 'wbpk_eoMql05K7PT2JgZUKFFOo9_9vLkFanCYcm67RRrIgxoEnsGnDS52YEM';
+
+/* ---------- 服务端计费：用调用者自己的 JWT 调云端钱包 RPC ----------
+ * 为什么必须放在服务端：/api/ai 是唯一消耗服务商 Key 的出口，前端扣费可被绕过
+ * （2026-10-30 事故：会话过期 → 云端自动降级为匿名会话 → 扣费打在共享 anon 账本上，
+ *  界面照样显示「已登录 -2」，生成照跑）。改为「先扣后放行 + 失败退款」。
+ */
+function cloudRpc(token, fn, params) {
+  return new Promise((resolve, reject) => {
+    const body = Buffer.from(JSON.stringify(params || {}), 'utf8');
+    const u = new URL('/.cloud/database/rest/rpc/' + fn, CLOUD_UPSTREAM);
+    const req = https.request({
+      protocol: 'https:',
+      hostname: u.hostname,
+      port: u.port || 443,
+      path: u.pathname + u.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': body.length,
+        Authorization: 'Bearer ' + token,
+        'x-wb-webapp-access-key': CLOUD_PUBLISHABLE_KEY,
+        Origin: CLOUD_ORIGIN,
+        Referer: CLOUD_ORIGIN + '/'
+      },
+      timeout: 15000
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch (_) { data = null; }
+        resolve({ status: res.statusCode || 0, data: data, text: text });
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('wallet rpc timeout')));
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+function rpcErrorText(r) {
+  if (!r) { return ''; }
+  const d = r.data;
+  if (d && typeof d === 'object') {
+    return String(d.message || (d.error && d.error.message) || d.hint || '');
+  }
+  return String(r.text || '');
+}
+
+async function refundCharge(token, txnId) {
+  if (!txnId) { return; }
+  try { await cloudRpc(token, 'wallet_refund', { p_ref: String(txnId) }); } catch (_) {}
+}
 
 function proxyCloud(req, res) {
   let target;

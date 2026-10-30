@@ -172,6 +172,14 @@
           if (msg.indexOf('CODE_INVALID') !== -1) { err.message = '兑换码无效或已被使用'; }
           throw err;
         });
+      },
+      /* 服务端扣费后回写余额（/api/ai 响应头 X-Wallet-Balance） */
+      applyBalance: function (n) {
+        var v = typeof n === 'number' ? n : parseInt(n, 10);
+        if (typeof n === 'number' || (typeof n === 'string' && n !== '' && !isNaN(v))) {
+          walletService.balance = v;
+          walletService.renderChip();
+        }
       }
     };
 
@@ -363,8 +371,18 @@
       }).catch(function () {});
     }
 
+    /* 云端在「未登录 / 会话过期」时会自动建匿名会话：sub='anon'、is_anonymous=true。
+     * 匿名会话不是登录态。若把它当成已登录，钱包 RPC 会打在共享的 anon 账本上
+     * （2026-10-30 事故：界面显示「已登录 · 积分 -2」，生成照跑，实际扣的是所有人
+     *  公共的那份余额，额度墙形同虚设）。 */
+    function sessionUser(session) {
+      var u = session && session.user ? session.user : null;
+      if (!u || u.isAnonymous || u.id === 'anon') { return null; }
+      return u;
+    }
+
     function applySession(session) {
-      Store.state.user = session && session.user ? session.user : null;
+      Store.state.user = sessionUser(session);
       renderAuthUI();
       /* 登录：初始化积分钱包并处理支付回跳；退出：隐藏钱包并清零余额 */
       if (Store.state.user) {
@@ -373,6 +391,37 @@
         walletService.balance = null;
         els.btnWallet.hidden = true;
       }
+    }
+
+    /* 复核会话：关键操作（生成）前调用。会话过期 / 被撤销 / 只剩匿名会话时
+     * 一律按未登录处理，并清理界面上的「已登录 + 积分」假象。
+     * 网络异常不误踢（继续用内存里的登录态，服务端仍会把关）。 */
+    function ensureAuth() {
+      var cloud = cloudService.getClient();
+      if (!cloud || !cloud.auth || !cloud.auth.getSession) {
+        return Promise.resolve(Store.state.user || null);
+      }
+      return Promise.resolve(cloud.auth.getSession()).then(function (res) {
+        var u = sessionUser(res && res.data ? res.data : null);
+        if (!u) {
+          if (Store.state.user) {
+            applySession(null);
+            onSignOut();
+          }
+          return null;
+        }
+        if (!Store.state.user || Store.state.user.id !== u.id) { applySession({ user: u }); }
+        return u;
+      }).catch(function () { return Store.state.user || null; });
+    }
+
+    /* 当前 access token：/api/ai 由服务端按此校验身份并扣费，前端不再自己扣 */
+    function getAuthToken() {
+      var cloud = cloudService.getClient();
+      if (!cloud || !cloud.auth || !cloud.auth.getAccessToken) { return Promise.resolve(''); }
+      return Promise.resolve(cloud.auth.getAccessToken())
+        .then(function (t) { return t || ''; })
+        .catch(function () { return ''; });
     }
 
     /* ---------- 登录弹窗 ---------- */
@@ -536,10 +585,16 @@
         onSignOut();
         if (cloud && cloud.auth.signOut) { cloud.auth.signOut().catch(function () {}); }
       });
+      /* 页面重新可见时复核会话：避免标签页放久了，过期会话还挂着「已登录」的假象 */
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) { ensureAuth(); }
+      });
     }
 
     return {
       applySession: applySession,
+      ensureAuth: ensureAuth,
+      getAuthToken: getAuthToken,
       openLogin: openLogin,
       closeLogin: closeLogin,
       openWallet: openWallet,

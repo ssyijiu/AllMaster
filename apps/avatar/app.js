@@ -324,13 +324,21 @@
         };
         if (imageDataUrl) { payload.imageBase64 = imageDataUrl; }
 
-        return fetch('/api/ai', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+        /* 带上登录令牌：服务端据此校验身份并扣费（扣费在服务端做，前端绕不过） */
+        return getAuthToken().then(function (token) {
+          var headers = { 'Content-Type': 'application/json' };
+          if (token) { headers.Authorization = 'Bearer ' + token; }
+          return fetch('/api/ai', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(payload)
+          });
         }).then(function (res) {
+          /* 服务端扣费后的余额，回写顶部积分 chip */
+          var bal = res.headers && res.headers.get ? res.headers.get('X-Wallet-Balance') : null;
+          if (bal !== null && bal !== '') { walletService.applyBalance(bal); }
           var ctype = (res.headers && res.headers.get ? res.headers.get('Content-Type') : '') || '';
-          /* 参数错误等快速失败：普通 JSON 响应 */
+          /* 参数错误 / 未登录 / 积分不足等快速失败：普通 JSON 响应 */
           if (ctype.indexOf('text/event-stream') === -1 || !res.body || !res.body.getReader) {
             return res.json().catch(function () { return {}; }).then(function (body) {
               return { statusCode: res.status, data: body };
@@ -340,9 +348,13 @@
         }).then(function (r) {
           var sc = r && r.statusCode ? r.statusCode : 502;
           if (sc < 200 || sc >= 300) {
-            var msg = (r.data && r.data.error && r.data.error.message) || ('HTTP ' + sc);
+            var info = (r.data && r.data.error) || {};
+            var msg = info.message || ('HTTP ' + sc);
             var err = new Error(msg);
             err.status = sc;
+            err.code = info.code || '';
+            if (err.code === 'INSUFFICIENT_BALANCE') { err.insufficient = true; }
+            if (err.code === 'AUTH_REQUIRED') { err.authRequired = true; }
             throw err;
           }
           return r.data;
@@ -435,6 +447,13 @@
         var status = err && err.status;
         if (err && err.jobLost) {
           return '生成任务已中断（服务重启或任务过期）。请重新点击生成；若服务商已计费，可稍后在服务商后台查看记录。';
+        }
+        /* 平台侧错误优先：这两种不是服务商问题，别误导用户去找管理员 */
+        if (err && err.authRequired) {
+          return '登录状态已失效，请重新登录后再生成（本次未扣积分）。';
+        }
+        if (status === 402 || (err && err.insufficient)) {
+          return (err && err.message) || '积分不足：免费体验已用完，请充值或输入兑换码。';
         }
         if (status === 401 || status === 403) {
           return '鉴权失败（' + status + '）：该风格绑定的服务商 API Key 无效或没有权限，请站点管理员在后台检查配置。';
@@ -819,12 +838,9 @@
       aiService.onProgress = function (elapsed) {
         showHint('生成中… 已等待 ' + elapsed + ' 秒，请勿关闭页面（服务商出图通常需 20~90 秒）');
       };
-      var consumeTxnId = null;
       var run = Promise.resolve()
-        /* 先扣 1 积分（云端账本原子扣减，余额不足在此中止） */
-        .then(function () {
-          return walletService.consume().then(function (r) { consumeTxnId = r.txnId; });
-        })
+        /* 扣费已下沉到服务端 /api/ai：先扣后放行、上游失败自动退。
+         * 前端不再自行扣减（2026-10-30 事故：前端扣费在会话过期后会扣到匿名账户上）。 */
         .then(function () {
           if (pureText) { return null; }
           return st.photoBlob || imageService.resizeImage(st.photoFile, UPLOAD_RESIZE_PX);
@@ -857,8 +873,14 @@
           if (ok) { showHint('头像已同步到云端历史。'); }
         }).catch(function () { return false; });
       }).catch(function (err) {
-        /* 生成未成功：自动退回本次扣减的积分（云端校验幂等） */
-        if (consumeTxnId) { walletService.refund(consumeTxnId); }
+        /* 退费由服务端在生成失败时自动完成（RPC 幂等），前端不再单独退款 */
+        if (err && err.authRequired) {
+          applySession(null);
+          showHint('登录状态已失效，请重新登录后再生成（本次未扣积分）', true);
+          openLogin();
+          updateSteps();
+          return;
+        }
         setResultError(aiService.explainError(err));
         if (err && err.insufficient) { openWallet(err.message); }
         updateSteps();
@@ -962,10 +984,20 @@
       /* 风格选择 */
       els.styleGrid.addEventListener('keydown', handleStyleKeydown);
 
-      /* 生成 / 结果操作 */
-      els.btnGenerate.addEventListener('click', handleGenerate);
-      els.btnAgain.addEventListener('click', handleGenerate);
-      els.btnRetry.addEventListener('click', handleGenerate);
+      /* 生成 / 结果操作：所有入口先复核会话（过期会话不能带着旧登录态继续扣费） */
+      var startGenerate = function () {
+        ensureAuth().then(function (user) {
+          if (!user) {
+            showHint('登录状态已失效，请重新登录后再生成', true);
+            openLogin();
+            return;
+          }
+          handleGenerate();
+        });
+      };
+      els.btnGenerate.addEventListener('click', startGenerate);
+      els.btnAgain.addEventListener('click', startGenerate);
+      els.btnRetry.addEventListener('click', startGenerate);
       els.btnDownload.addEventListener('click', downloadResult);
       els.btnMaximize.addEventListener('click', function () {
         if (Store.state.currentResultUrl) {
@@ -1210,6 +1242,8 @@
     }
   });
   var applySession = auth.applySession;
+  var ensureAuth = auth.ensureAuth;
+  var getAuthToken = auth.getAuthToken;
   var openLogin = auth.openLogin;
   var closeLogin = auth.closeLogin;
   var openWallet = auth.openWallet;
