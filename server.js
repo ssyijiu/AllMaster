@@ -493,7 +493,8 @@ const pixelartGen = require('./apps/pixelart/generate');
 const pixelartMain = pixelartGen.createEngine({ backend: 'apinebula' });
 const pixelartVp = pixelartGen.createEngine({
   backend: 'valperler',
-  taskRoot: path.join(ROOT, '.pixelart-tasks-vp')
+  taskRoot: path.join(ROOT, '.pixelart-tasks-vp'),
+  archiveRoot: path.join(ROOT, '.pixelart-archive-vp')
 });
 
 function pixelartPython() {
@@ -922,6 +923,14 @@ const server = http.createServer((req, res) => {
   if (pathOnly === '/api/pixelart/task/html') {
     return pixelartMain.handleTaskHtml(req, res, fullUrl, sendJson);
   }
+  if (pathOnly === '/api/pixelart/task/cover') {
+    if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
+    return pixelartMain.handleTaskCover(req, res, fullUrl);
+  }
+  if (pathOnly === '/api/pixelart/task/meta') {
+    if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
+    return pixelartMain.handleTaskMeta(req, res, fullUrl, sendJson);
+  }
   if (pathOnly === '/api/pixelart/styles') {
     if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
     return pixelartMain.handleStyles(res, sendJson);
@@ -948,6 +957,14 @@ const server = http.createServer((req, res) => {
   }
   if (pathOnly === '/api/pixelart-vp/task/html') {
     return pixelartVp.handleTaskHtml(req, res, fullUrl, sendJson);
+  }
+  if (pathOnly === '/api/pixelart-vp/task/cover') {
+    if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
+    return pixelartVp.handleTaskCover(req, res, fullUrl);
+  }
+  if (pathOnly === '/api/pixelart-vp/task/meta') {
+    if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
+    return pixelartVp.handleTaskMeta(req, res, fullUrl, sendJson);
   }
   if (pathOnly === '/api/pixelart-vp/styles') {
     if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }

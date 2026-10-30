@@ -1,7 +1,8 @@
 /* 我的作品（平台层共享页 /my）
  * 数据来源：
  *   头像作品 → 云存储 users/<uid>/history/（app.js 生成成功即上传，文件名带时间/模式/画风）
- *   拼豆图纸 → 待接入（P2：users/<uid>/pixelart/）
+ *   拼豆图纸 → 云存储 users/<uid>/pixelart/<ts>-<taskId>.json（元数据）
+ *              + 服务器长期归档 /api/pixelart/task/cover|html?id=（封面与图纸本体）
  *   积分明细 → 云数据库 app_wallet_txns（RLS 只读本人）
  * 展示上限：每个产品最近 30 条 / 90 天（老于 90 天的不显示，物理清理随 P3 落地）
  */
@@ -129,8 +130,73 @@
     }).catch(function () { Store.state.error = '云端读取异常'; return []; });
   }
 
-  /* 拼豆图纸：P2 接入云端留存，当前先给空态文案 */
-  function loadPixelartWorks() { return Promise.resolve([]); }
+  /* ---------- 云端作品：拼豆图纸 ----------
+   * 云端只存一行几百字节的元数据（users/<uid>/pixelart/<ts>-<taskId>.json）；
+   * 封面和图纸都是大文件，留在服务器长期归档，这里用同源接口取（无需签名、长缓存）。 */
+  function pixelartApiBase(v) {
+    return v === '/api/pixelart-vp' ? '/api/pixelart-vp' : '/api/pixelart';
+  }
+
+  function blobText(blob) {
+    if (!blob) { return Promise.resolve(''); }
+    if (typeof blob.text === 'function') { return blob.text(); }
+    return new Promise(function (resolve) {
+      try {
+        var fr = new FileReader();
+        fr.onload = function () { resolve(String(fr.result || '')); };
+        fr.onerror = function () { resolve(''); };
+        fr.readAsText(blob);
+      } catch (_) { resolve(''); }
+    });
+  }
+
+  function mapPixelartRow(prefix, key, meta) {
+    var name = key.slice(prefix.length).replace(/\.json$/i, '');
+    var bits = name.split('-');
+    var ts = parseInt(bits[0], 10) || 0;
+    var taskId = (meta && meta.taskId) || bits[1] || '';
+    var apiBase = pixelartApiBase(meta && meta.apiBase);
+    var label = (meta && meta.styleLabel) || '';
+    return {
+      kind: 'pixelart',
+      path: key,
+      taskId: taskId,
+      apiBase: apiBase,
+      styleLabel: label,
+      notes: (meta && meta.notes) || '',
+      title: (meta && meta.title) || (label ? label + '拼豆图纸' : '拼豆图纸'),
+      time: (meta && meta.createdAt) || ts || Date.now(),
+      src: taskId ? apiBase + '/task/cover?id=' + encodeURIComponent(taskId) : '',
+      openUrl: taskId ? apiBase + '/task/html?id=' + encodeURIComponent(taskId) : ''
+    };
+  }
+
+  function loadPixelartWorks(uid) {
+    var cloud = Platform.cloud.getClient();
+    if (!cloud || !cloud.storage || !uid) { return Promise.resolve([]); }
+    var prefix = AVATAR_PREFIX + uid + '/pixelart/';
+    return Promise.resolve(cloud.storage.list(prefix, {
+      limit: WORK_LIMIT,
+      sortBy: { column: 'created_at', order: 'desc' }
+    })).then(function (res) {
+      if (!res || res.error) { return []; }
+      var keys = Platform.storageListKeys(prefix, res).filter(function (k) { return /\.json$/i.test(k); });
+      if (!keys.length) { return []; }
+      return Promise.all(keys.map(function (key) {
+        var read;
+        try { read = cloud.storage.download(key); } catch (_) { read = null; }
+        return Promise.resolve(read).then(function (r) {
+          if (!r || r.error || !r.data) { return mapPixelartRow(prefix, key, null); }
+          return blobText(r.data).then(function (txt) {
+            var meta = null;
+            try { meta = JSON.parse(txt); } catch (_) { meta = null; }
+            /* 读不到内容也照常显示卡片：文件名里就带着时间与 taskId，图纸仍能打开 */
+            return mapPixelartRow(prefix, key, meta);
+          });
+        }).catch(function () { return mapPixelartRow(prefix, key, null); });
+      }));
+    }).catch(function () { return []; });
+  }
 
   function loadWorks() {
     var user = Store.state.user;
@@ -193,12 +259,13 @@
         return;
       }
       empty.innerHTML = filter === 'pixelart'
-        ? '<b>图纸云端保存即将上线</b>目前图纸在服务器保留 72 小时，期间可在生成页「最近生成」里回看。<br /><a class="btn secondary" style="margin-top:14px;display:inline-block;text-decoration:none;" href="/">去生成一张</a>'
+        ? '<b>还没有拼豆图纸</b>生成完成会自动保存到这里，图纸长期可打开。<br /><a class="btn primary" style="margin-top:14px;display:inline-block;text-decoration:none;" href="/">去生成一张</a>'
         : '<b>还没有作品</b>生成结果会自动保存到这里。<br /><a class="btn primary" style="margin-top:14px;display:inline-block;text-decoration:none;" href="' + (filter === 'avatar' ? '/apps/avatar/' : '/') + '">去生成</a>';
       return;
     }
     empty.hidden = true;
     list.forEach(function (w) {
+      if (w.kind === 'pixelart') { renderPixelartCard(w, grid); return; }
       var card = document.createElement('div');
       card.className = 'work-card';
       card.innerHTML =
@@ -222,6 +289,37 @@
     });
   }
 
+  /* 拼豆卡片：封面 + 点开图纸（图纸本身是交互 HTML，新标签打开） */
+  function renderPixelartCard(w, grid) {
+    var card = document.createElement('div');
+    card.className = 'work-card work-card--pixelart';
+    card.innerHTML =
+      '<button class="work-thumb" type="button" aria-label="打开拼豆图纸"><img alt="拼豆图纸封面" loading="lazy" /></button>' +
+      '<div class="work-meta">' +
+        '<div class="work-title"></div>' +
+        '<div class="work-sub"></div>' +
+      '</div>' +
+      '<div class="work-actions">' +
+        '<button class="btn primary small" type="button" data-act="open">打开图纸</button>' +
+        '<button class="btn ghost small" type="button" data-act="delete">删除</button>' +
+      '</div>';
+    var img = card.querySelector('img');
+    if (w.src) {
+      img.src = w.src;
+      img.addEventListener('error', function () { card.classList.add('no-cover'); });
+    } else {
+      card.classList.add('no-cover');
+    }
+    card.querySelector('.work-title').textContent = w.title || '拼豆图纸';
+    card.querySelector('.work-sub').textContent =
+      (w.notes ? w.notes + ' · ' : '') + fmtTime(w.time);
+    var open = function () { if (w.openUrl) { window.open(w.openUrl, '_blank', 'noopener'); } };
+    card.querySelector('.work-thumb').addEventListener('click', open);
+    card.querySelector('[data-act="open"]').addEventListener('click', open);
+    card.querySelector('[data-act="delete"]').addEventListener('click', function () { deleteWork(w, card); });
+    grid.appendChild(card);
+  }
+
   function openLightbox(src) {
     els.lightboxImg.src = src;
     els.lightbox.hidden = false;
@@ -240,7 +338,10 @@
   function deleteWork(w, card) {
     var cloud = Platform.cloud.getClient();
     if (!cloud || !cloud.storage || !cloud.storage.remove) { return; }
-    if (!window.confirm('删除后不可恢复，确定删除这个作品？')) { return; }
+    var tip = w.kind === 'pixelart'
+      ? '从作品列表移除？图纸在服务器仍保留一段时间，用原链接还能打开。'
+      : '删除后不可恢复，确定删除这个作品？';
+    if (!window.confirm(tip)) { return; }
     card.style.opacity = '0.4';
     Promise.resolve(cloud.storage.remove([w.path])).then(function (res) {
       if (res && res.error) { card.style.opacity = '1'; showHint('删除失败，请稍后重试', true); return; }

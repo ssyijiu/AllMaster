@@ -93,8 +93,8 @@ px.persistRecent();
 const stored2 = JSON.parse(w.localStorage.getItem('pixelart-recent-v1'));
 check('带缩略图条目写入 localStorage', stored2.length === 1 && stored2[0].id === 'c3d4e5f607181920');
 check('渲染出 1 个缩略图按钮', doc.getElementById('recentStrip').children.length === 1);
-check('按钮 title 含 72 小时提示', doc.getElementById('recentStrip').children[0]
-  .getAttribute('title').indexOf('72') > 0);
+check('按钮 title 含点击回看提示', doc.getElementById('recentStrip').children[0]
+  .getAttribute('title').indexOf('点击回看') > 0);
 
 /* ---------- 用例 7：localStorage 脏数据（非 JSON）不崩 ---------- */
 w.localStorage.setItem('pixelart-recent-v1', '{not json');

@@ -301,7 +301,8 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
 
   /* ---------- 最近生成（本地回看入口，最多 6 条） ----------
    * 缩略图取自本次上传图（canvas 压到 200px JPEG），任务 ID 指向图纸页；
-   * 服务端图纸只保留 72 小时，渲染时过滤过期条目（与 TASK_DISK_TTL_MS 对齐）。 */
+   * 服务端图纸已长期归档（P2），这里只过滤本地记录本身的 72 小时窗口；
+     真正长期可用的入口是「我的作品」（/my）。 */
   var RECENT_MAX = 6;
   var RECENT_TTL_MS = 72 * 60 * 60 * 1000;
   var RECENT_LS_KEY = 'pixelart-recent-v1';
@@ -392,7 +393,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
         btn.type = 'button';
         btn.className = 'recent-item';
         btn.title = (r.style ? r.style + ' · ' : '') +
-          new Date(r.time).toLocaleString() + ' · 点击回看图纸（仅保存 72 小时）';
+          new Date(r.time).toLocaleString() + ' · 点击回看图纸（已长期保存）';
         var img = document.createElement('img');
         img.src = r.thumb;
         img.alt = '最近生成的图纸缩略图';
@@ -518,12 +519,64 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
 
   /* ---------- 任务观察：SSE 心跳流（首选） + 轮询（降级） ---------- */
 
+  /* ---------- 云端留存（P2）：作品行写入 users/<uid>/pixelart/ ----------
+   * 只写元数据 JSON（<1KB）：图纸（gzip 后 ~2.3MB）与封面体积大，留在服务器长期归档，
+   * 「我的作品」用 /api/pixelart/task/cover|html?id= 同源取，所以云端存储不背容量包袱。
+   * 整条链路 fire-and-forget + 超时，绝不阻塞 UI
+   * （2026-10-30 头像页「图出来了按钮还在转」的教训：辅助动作不能串在交互主链上）。 */
+  function withTimeout(promise, ms) {
+    return new Promise(function (resolve) {
+      var settled = false;
+      var timer = setTimeout(function () { if (!settled) { settled = true; resolve(null); } }, ms);
+      Promise.resolve(promise).then(function (v) {
+        if (settled) { return; }
+        settled = true; clearTimeout(timer); resolve(v);
+      }, function () {
+        if (settled) { return; }
+        settled = true; clearTimeout(timer); resolve(null);
+      });
+    });
+  }
+
+  function saveWorkToCloud(taskId) {
+    var user = Store.state.user;
+    var cloud = Platform.cloud.getClient();
+    if (!taskId || !user || !user.id || !cloud || !cloud.storage) { return; }
+    var ts = Date.now();
+    var localStyle = styleLabel();
+    var metaP = fetch(PIXELART_API + '/task/meta?id=' + encodeURIComponent(taskId))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; });
+    withTimeout(metaP, 6000).then(function (meta) {
+      var label = (meta && meta.styleLabel) || localStyle;
+      var payload = {
+        kind: 'pixelart',
+        taskId: taskId,
+        styleId: (meta && meta.styleId) || Store.styleId,
+        styleLabel: label,
+        subject: (meta && meta.subject) || Store.subject,
+        notes: (meta && meta.notes) || ($('notesInput') ? $('notesInput').value.trim() : ''),
+        title: (meta && meta.title) || (label ? label + '拼豆图纸' : '拼豆图纸'),
+        colors: (meta && meta.colors) || null,
+        createdAt: ts,
+        apiBase: PIXELART_API
+      };
+      var path;
+      try { path = cloud.storage.userPath(user.id, 'pixelart/' + ts + '-' + taskId + '.json'); } catch (_) { return null; }
+      var blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+      return withTimeout(cloud.storage.upload(path, blob, { contentType: 'application/json' }), 15000);
+    }).catch(function () { /* 留存失败静默：本地「最近生成」仍可回看 72 小时 */ });
+  }
+
   function onTaskDone(taskId) {
+    var wasRegen = Store.regenActive;
     setGenerating(false);
     openTaskHtml(taskId);
     showDone(taskId);
     addRecent(taskId);
     updateSteps();
+    /* 重转是同一张图的另一种切法，不新增作品行（避免列表里堆重复卡片） */
+    if (!wasRegen) { saveWorkToCloud(taskId); }
   }
 
   function onTaskFailed(st) {

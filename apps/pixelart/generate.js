@@ -22,6 +22,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
 
@@ -47,6 +48,79 @@ const TASK_TTL_MS = 2 * 60 * 60 * 1000; // 渲染服务只保留 2 小时，任�
 /* 磁盘任务目录保留时长：过期后 pruneTasks 连盘一起删（tmpdir 时代由系统清理兜底，落仓库后必须自己 GC，
    否则每单 5~10MB 图纸会慢慢吃满 40G 盘）。已完成图纸的分享链接在此窗口内仍可访问。 */
 const TASK_DISK_TTL_MS = (parseInt(process.env.PIXELART_TASK_RETENTION_HOURS, 10) || 72) * 60 * 60 * 1000;
+
+/* ---------- 作品归档（P2：让「我的作品」里的图纸长期可打开） ----------
+ * 任务目录 72h 就 GC，而用户在「我的作品」里点的图纸必须一直能打开，所以生成成功后
+ * 把图纸压一份到长期归档：.pixelart-archive/<taskId>/
+ *   drawing.html.gz  图纸 HTML（gzip：实测 4.5MB → 2.3MB）
+ *   cover.jpg        封面（转换图缩到 640px，约 50KB，给 /my 卡片用）
+ *   meta.json        元数据（画风/主体/备注/时间），重启后靠它恢复任务上下文
+ * 容量策略：云端只存 <1KB 的作品行 JSON，大文件全部留服务器；归档总量上限默认 2GB
+ *   （≈800 张图纸），超限按 mtime 删最旧的整目录——云端作品行还在，卡片仍显示，
+ *   只是点开提示「图纸已归档清理」。磁盘剩余不足 2GB 时直接停止归档，不冒险写满。 */
+const DEFAULT_ARCHIVE_ROOT = process.env.PIXELART_ARCHIVE_ROOT || path.join(ROOT, '.pixelart-archive');
+const ARCHIVE_MAX_BYTES = (parseFloat(process.env.PIXELART_ARCHIVE_MAX_GB) || 2) * 1024 * 1024 * 1024;
+const ARCHIVE_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024;
+const ARCHIVE_COVER_PX = 640;
+
+function dirSize(dir) {
+  let total = 0;
+  let items = [];
+  try { items = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return 0; }
+  for (const it of items) {
+    const p = path.join(dir, it.name);
+    try {
+      if (it.isDirectory()) { total += dirSize(p); }
+      else { total += fs.statSync(p).size; }
+    } catch (_) { /* 单个文件消失不影响整体统计 */ }
+  }
+  return total;
+}
+
+/* 归档 GC：总量超上限时按目录 mtime 从旧到新删，删到 80% 水位为止 */
+function pruneArchive(archiveRoot) {
+  let names = [];
+  try { names = fs.readdirSync(archiveRoot).filter((n) => /^[0-9a-f]{16}$/.test(n)); } catch (_) { return; }
+  if (!names.length) { return; }
+  const entries = [];
+  let total = 0;
+  for (const name of names) {
+    const dir = path.join(archiveRoot, name);
+    const size = dirSize(dir);
+    total += size;
+    let mtime = 0;
+    try { mtime = fs.statSync(dir).mtimeMs; } catch (_) {}
+    entries.push({ name, dir, size, mtime });
+  }
+  if (total <= ARCHIVE_MAX_BYTES) { return; }
+  entries.sort((a, b) => a.mtime - b.mtime);
+  const target = ARCHIVE_MAX_BYTES * 0.8;
+  for (const e of entries) {
+    if (total <= target) { break; }
+    try { fs.rmSync(e.dir, { recursive: true, force: true }); total -= e.size; } catch (_) {}
+  }
+}
+
+function freeBytes() {
+  try {
+    const st = fs.statfsSync(ROOT);
+    return Number(st.bavail) * Number(st.bsize);
+  } catch (_) { return Infinity; }
+}
+
+function readArchivedMeta(archiveRoot, taskId) {
+  try {
+    const raw = fs.readFileSync(path.join(archiveRoot, taskId, 'meta.json'), 'utf8');
+    return JSON.parse(raw.replace(/^\uFEFF/, ''));
+  } catch (_) { return null; }
+}
+
+function readArchivedHtml(archiveRoot, taskId) {
+  try {
+    return zlib.gunzipSync(fs.readFileSync(path.join(archiveRoot, taskId, 'drawing.html.gz'))).toString('utf8');
+  } catch (_) { return null; }
+}
+
 
 function readConfig() { try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch (_) { return {}; } }
 function readAiKeys() { try { return (JSON.parse(fs.readFileSync(AI_CONFIG_FILE, 'utf8')) || {}).providerKeys || {}; } catch (_) { return {}; } }
@@ -187,8 +261,19 @@ async function llmSlots(imageBase64, subject, notes) {
 function findOutputHtml(workDir) {
   const outDir = path.join(workDir, 'output');
   try {
-    const hit = fs.readdirSync(outDir).find((f) => f.endsWith('.html'));
-    return hit ? path.join(outDir, hit) : null;
+    /* 一次任务目录里可能有多份 html（一键重转会再产出一份）：
+       取 mtime 最新的那份，否则重转后可能打开的还是旧图纸。 */
+    const list = fs.readdirSync(outDir).filter((f) => f.endsWith('.html'));
+    if (!list.length) { return null; }
+    let best = null;
+    let bestMs = -1;
+    for (const f of list) {
+      const p = path.join(outDir, f);
+      let ms = 0;
+      try { ms = fs.statSync(p).mtimeMs; } catch (_) {}
+      if (ms > bestMs) { bestMs = ms; best = p; }
+    }
+    return best;
   } catch (_) { return null; }
 }
 
@@ -200,6 +285,7 @@ function createEngine(options) {
   const opts = options || {};
   const backend = opts.backend === 'valperler' ? 'valperler' : 'apinebula';
   const taskRoot = opts.taskRoot || DEFAULT_TASK_ROOT;
+  const archiveRoot = opts.archiveRoot || DEFAULT_ARCHIVE_ROOT;
 
   /* 内存任务表：{ id: { status, error?, htmlPath?, workDir, startedAt } } */
   const tasks = new Map();
@@ -224,6 +310,83 @@ function createEngine(options) {
         } catch (_) {}
       }
     } catch (_) {} // taskRoot 尚不存在等场景静默跳过
+  }
+
+  /* 生成成功后立即归档：图纸 gzip + 封面 + 元数据。任何一步失败都只影响归档，不影响任务本身。 */
+  function archiveWork(id) {
+    const t = resolveTask(id);   /* 兼容「任务目录还在但内存表没了」的补录场景 */
+    if (!t || !t.htmlPath) { return; }
+    if (freeBytes() < ARCHIVE_MIN_FREE_BYTES) { return; }   /* 盘快满了绝不落地 */
+    const dir = path.join(archiveRoot, id);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      /* 图纸：读一次原文，既算大小也压进归档 */
+      const raw = fs.readFileSync(t.htmlPath);
+      fs.writeFileSync(path.join(dir, 'drawing.html.gz'), zlib.gzipSync(raw, { level: 9 }));
+
+      const styleLabel = (findStyle(t.styleId) || {}).label || '';
+      const meta = {
+        taskId: id,
+        kind: 'pixelart',
+        backend,
+        styleId: t.styleId || '',
+        styleLabel,
+        subject: t.subject === 'prop' ? 'prop' : 'character',
+        notes: t.notes || '',
+        title: styleLabel ? styleLabel + '拼豆图纸' : '拼豆图纸',
+        createdAt: t.finishedAt || Date.now(),
+        regenFrom: t.regenFrom || null,
+        htmlBytes: raw.length
+      };
+      /* 运行记录里有色数等统计，能读到就一起存（BOM 要剥掉，python 写的是 utf-8-sig） */
+      try {
+        const rec = JSON.parse(fs.readFileSync(path.join(t.workDir, '.wip', '运行记录.json'), 'utf8').replace(/^\uFEFF/, ''));
+        if (rec && rec.cleanup && rec.cleanup.colors) { meta.colors = rec.cleanup.colors; }
+        if (rec && Array.isArray(rec.boards)) { meta.boards = rec.boards.length; }
+      } catch (_) {}
+      fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
+
+      /* 封面：转换图（拼豆效果图）缩到 640px JPEG，给「我的作品」卡片用 */
+      const conv = path.join(t.workDir, '.wip', '转换图', '转换图.png');
+      if (fs.existsSync(conv)) { makeCover(conv, dir); }
+      pruneArchive(archiveRoot);
+    } catch (_) { /* 归档失败不影响生成结果，图纸仍在任务目录里（72h 内可看） */ }
+  }
+
+  /* 封面缩图：优先 python(Pillow)，失败就原样拷 PNG（封面接口两种都认） */
+  function makeCover(convPath, dir) {
+    const out = path.join(dir, 'cover.jpg');
+    const script = [
+      'import sys',
+      'from PIL import Image',
+      'im = Image.open(sys.argv[1])',
+      'bg = Image.new("RGBA", im.size, (255, 255, 255, 255))',
+      'bg.alpha_composite(im.convert("RGBA"))',
+      'im = bg.convert("RGB")',
+      'im.thumbnail((' + ARCHIVE_COVER_PX + ', ' + ARCHIVE_COVER_PX + '))',
+      'im.save(sys.argv[2], "JPEG", quality=85)'
+    ].join('\n');
+    execFile(pythonExe(), ['-c', script, convPath, out], { timeout: 20000 }, (err) => {
+      if (err) {
+        try { fs.copyFileSync(convPath, path.join(dir, 'cover.png')); } catch (_) {}
+      }
+    });
+  }
+
+  /* 任务完成后收尾：判 done/failed → 成功即归档 */
+  function finishTask(id, code, stderrTail, stdoutTail) {
+    const t = tasks.get(id);
+    if (!t) { return; }
+    t.finishedAt = Date.now();
+    const html = findOutputHtml(t.workDir);
+    if (code === 0 && html) {
+      t.status = 'done';
+      t.htmlPath = html;
+      try { archiveWork(id); } catch (_) {}
+    } else {
+      t.status = 'failed';
+      t.error = ('退出码 ' + code + ' ' + stderrTail + ' ' + stdoutTail).slice(-600).trim();
+    }
   }
 
   function startTask(id, workDir, imagePath, promptPath, subject, styleId) {
@@ -282,15 +445,7 @@ function createEngine(options) {
     child.stderr.on('data', (d) => { stderrTail = (stderrTail + d).slice(-4000); });
     child.on('close', (code) => {
       clearTimeout(timer);
-      t.finishedAt = Date.now();
-      const html = findOutputHtml(workDir);
-      if (code === 0 && html) {
-        t.status = 'done';
-        t.htmlPath = html;
-      } else {
-        t.status = 'failed';
-        t.error = ('退出码 ' + code + ' ' + stderrTail + ' ' + stdoutTail).slice(-600).trim();
-      }
+      finishTask(id, code, stderrTail, stdoutTail);
     });
     child.on('error', (err) => {
       clearTimeout(timer);
@@ -299,18 +454,30 @@ function createEngine(options) {
     });
   }
 
-  /* 内存查不到时从磁盘恢复已完成任务（重启/TTL 后兜底，四个任务接口共用） */
+  /* 内存查不到时从磁盘/归档恢复已完成任务（重启、任务目录 72h GC 后兜底，四个任务接口共用） */
   function resolveTask(id) {
     let t = tasks.get(id);
-    if (!t && id && /^[0-9a-f]{16}$/.test(id)) {
-      const workDir = path.join(taskRoot, id);
-      const html = findOutputHtml(workDir);
-      if (html) {
-        t = { status: 'done', htmlPath: html, workDir, startedAt: 0, recovered: true };
-        tasks.set(id, t);
-      }
-    }
-    return t || null;
+    if (t) { return t; }
+    if (!id || !/^[0-9a-f]{16}$/.test(id)) { return null; }
+    const workDir = path.join(taskRoot, id);
+    const html = findOutputHtml(workDir);
+    const meta = readArchivedMeta(archiveRoot, id);
+    const archived = html ? false : !!readArchivedHtml(archiveRoot, id);
+    if (!html && !archived) { return null; }
+    t = {
+      status: 'done',
+      htmlPath: html || '',
+      workDir,
+      startedAt: 0,
+      recovered: true,
+      /* 任务目录被 GC 后内存表也早没了：画风/备注只能从归档 meta 里捞回来
+         （下发图纸要注入导出文件名，一键重转也要用） */
+      styleId: (meta && meta.styleId) || '',
+      subject: (meta && meta.subject === 'prop') ? 'prop' : 'character',
+      notes: (meta && meta.notes) || ''
+    };
+    tasks.set(id, t);
+    return t;
   }
 
   /* POST /generate { imageBase64, subject, styleId, notes } → { taskId } */
@@ -418,14 +585,20 @@ function createEngine(options) {
     res.on('error', () => { clearInterval(hb); clearTimeout(cap); });
   }
 
-  /* GET /task/html?id= → 单文件图纸 HTML */
+  /* GET /task/html?id= → 单文件图纸 HTML（任务目录没了就读长期归档，图纸永久可打开） */
   function handleTaskHtml(req, res, fullUrl, sendJson) {
     const id = String(fullUrl.searchParams.get('id') || '');
     const t = resolveTask(id);
-    if (!t || t.status !== 'done' || !t.htmlPath) {
+    if (!t || t.status !== 'done') {
       return sendJson(res, 404, { error: { message: '任务未完成或不存在' } });
     }
-    try { fs.statSync(t.htmlPath); } catch (_) {
+    /* 原文：优先任务目录（还带着 .wip 现场），其次归档（gzip） */
+    let source = null;
+    if (t.htmlPath) {
+      try { source = fs.readFileSync(t.htmlPath, 'utf8'); } catch (_) { source = null; }
+    }
+    if (source == null) { source = readArchivedHtml(archiveRoot, id); }
+    if (source == null) {
       return sendJson(res, 410, { error: { message: '图纸文件已清理' } });
     }
     /* 图纸页里「导出」的下载文件名要带 任务 ID + 后端标识 + 画风 + 备注
@@ -441,7 +614,7 @@ function createEngine(options) {
     const SEG_PATCH = "${window.PIXELART_SEG || ''}";   // 旧图纸补丁用（画风_备注片段）
     let body;
     try {
-      let html = fs.readFileSync(t.htmlPath, 'utf8');
+      let html = source;
       const inject = '<script>window.PIXELART_TASK_ID=' + jsStr(id) +
         ';window.PIXELART_BACKEND=' + jsStr(BACKEND_TAG) +
         ';window.PIXELART_STYLE=' + jsStr(styleLabel) +
@@ -537,6 +710,57 @@ function createEngine(options) {
     startRegenTask(newId, workDir, effectImage, promptPath, t.styleId);
   }
 
+  /* GET /task/cover?id= → 作品封面（归档的 640px JPEG；没有则回落到任务目录的转换图 PNG）
+     「我的作品」卡片直接 <img src> 引用，同源、无需签名，长缓存。 */
+  function handleTaskCover(req, res, fullUrl) {
+    const id = String(fullUrl.searchParams.get('id') || '');
+    if (!/^[0-9a-f]{16}$/.test(id)) {
+      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+      return res.end(JSON.stringify({ error: { message: '缺少任务 id' } }));
+    }
+    const candidates = [
+      path.join(archiveRoot, id, 'cover.jpg'),
+      path.join(archiveRoot, id, 'cover.png'),
+      path.join(taskRoot, id, '.wip', '转换图', '转换图.png')
+    ];
+    for (const file of candidates) {
+      let size = 0;
+      try { size = fs.statSync(file).size; } catch (_) { continue; }
+      const type = /\.png$/i.test(file) ? 'image/png' : 'image/jpeg';
+      res.writeHead(200, {
+        'Content-Type': type,
+        'Content-Length': size,
+        'Cache-Control': 'public, max-age=604800'
+      });
+      return fs.createReadStream(file).pipe(res);
+    }
+    res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+    return res.end(JSON.stringify({ error: { message: '封面不存在或已清理' } }));
+  }
+
+  /* GET /task/meta?id= → 作品元数据（前端写「我的作品」行时取画风/备注/标题） */
+  function handleTaskMeta(req, res, fullUrl, sendJson) {
+    const id = String(fullUrl.searchParams.get('id') || '');
+    if (!/^[0-9a-f]{16}$/.test(id)) {
+      return sendJson(res, 400, { error: { message: '缺少任务 id' } });
+    }
+    const meta = readArchivedMeta(archiveRoot, id);
+    if (meta) { return sendJson(res, 200, meta); }
+    const t = tasks.get(id);
+    if (t && t.status === 'done') {
+      const styleLabel = (findStyle(t.styleId) || {}).label || '';
+      return sendJson(res, 200, {
+        taskId: id, kind: 'pixelart', backend,
+        styleId: t.styleId || '', styleLabel,
+        subject: t.subject === 'prop' ? 'prop' : 'character',
+        notes: t.notes || '',
+        title: styleLabel ? styleLabel + '拼豆图纸' : '拼豆图纸',
+        createdAt: t.finishedAt || t.startedAt || Date.now()
+      });
+    }
+    return sendJson(res, 404, { error: { message: '任务不存在或未归档' } });
+  }
+
   /* GET /styles → 画风列表（缩略图服务端读 assert 资产转 base64，前端无需直访 assert 目录） */
   function handleStyles(res, sendJson) {
     const guide = loadStyleGuide();
@@ -550,7 +774,13 @@ function createEngine(options) {
     return sendJson(res, 200, { styles: styles, hint: guide.hint || '' });
   }
 
-  return { backend, taskRoot, handleGenerate, handleTaskStatus, handleTaskStream, handleTaskHtml, handleStyles, handleRegen };
+  return {
+    backend, taskRoot, archiveRoot,
+    handleGenerate, handleTaskStatus, handleTaskStream, handleTaskHtml,
+    handleTaskCover, handleTaskMeta, handleStyles, handleRegen,
+    /* 手动归档（补录历史作品 / 运维脚本用）：返回归档后的 meta，失败返回 null */
+    archiveTask: (id) => { archiveWork(id); return readArchivedMeta(archiveRoot, id); }
+  };
 }
 
 module.exports = { createEngine, loadStyleGuide };

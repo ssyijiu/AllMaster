@@ -152,6 +152,25 @@ body {
 }
 .work-actions .btn { flex: 1; }
 
+/* 拼豆图纸：效果图多为方形透明底，用 contain 完整显示，别裁掉边缘 */
+.work-card--pixelart .work-thumb { background: #fafaf7; }
+.work-card--pixelart .work-thumb img { object-fit: contain; padding: 6px; }
+.work-card--pixelart .work-thumb::after {
+  content: '图纸';
+  position: absolute; right: 8px; bottom: 8px;
+  font-size: var(--text-xs); color: var(--meta);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--border-soft); border-radius: 999px;
+  padding: 1px 8px; pointer-events: none;
+}
+.work-card--pixelart .work-thumb { position: relative; }
+.work-card--pixelart.no-cover .work-thumb::before {
+  content: '封面待生成';
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--text-xs); color: var(--meta);
+}
+
 /* ---------- 空态 ---------- */
 .empty {
   border: 1px dashed var(--border);
