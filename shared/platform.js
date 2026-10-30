@@ -89,7 +89,8 @@
       var it = items[i];
       if (!it) { continue; }
       if (it.type === 'folder') { continue; }
-      if (Object.prototype.hasOwnProperty.call(it, 'id') && it.id === null) { continue; }
+      /* 子目录占位项：id 为 null 且没有 metadata；带 metadata 的才是文件 */
+      if (Object.prototype.hasOwnProperty.call(it, 'id') && it.id === null && !it.metadata) { continue; }
       var key = Platform.storageItemKey(prefix, it);
       if (!key || seen[key]) { continue; }
       seen[key] = 1;
