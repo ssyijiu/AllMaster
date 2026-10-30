@@ -9,7 +9,7 @@
  * 编辑中也能开：落笔照常改格子，播放中会先停住，新豆按当前熔化度显示（edPointerDown 钩子，平面与 3D 同一行为）。
  * 切到原图/转换图会退出预览。 */
 
-const IRON_TABLE = [245, 242, 234], IRON_TABLE_HEX = '#F5F2EA'; // 画布底色（base.css --paper）：烫后成品放在它上面
+const IRON_TABLE = [255, 255, 255], IRON_TABLE_HEX = '#FFFFFF'; // 画布底色（base.css --paper）：烫后成品放在它上面
 const IRON_HOLE = 0.14; // 孔半径与 3D uHole 一致
 const ironFr = x => x - Math.floor(x);
 /* 与 3D 着色器 cellMelt 同式（不含编辑重烫） */

@@ -1,23 +1,21 @@
 :root{
-  --bg:#0F1923; --panel:#141F2A; --panel2:#1B2937; --line:#2A3B4D; --line2:#46586A;
-  --red:#FF4655; --red-dk:#C8323F; --teal:#00C8C8;
-  --txt:#ECE8E1; --txt2:#8FA3B3; --txt3:#5B6B7A;
-  --paper:#F5F2EA; --paper-dk:#EAE6DC; --paper-line:#C9C2B2;
-  --font-d:"Rajdhani","DIN Alternate","Bahnschrift","Noto Sans SC","PingFang SC",system-ui,sans-serif;
-  --font-b:"Noto Sans SC","PingFang SC","Rajdhani",system-ui,sans-serif;
-  --cut:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px);
-  --cut-sm:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px);
-  --cut-tr:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%);
+  /* 点豆 DotBeads 浅色主题（2026-10-30 设计稿「05 图纸编辑器 · 换肤 / 06 导出图纸弹窗 · 换肤」）
+   * 墨 #1F1D1A（主行动/选中）、豆黄 #FFD02F（点缀/当前步/开启态）、浅灰面板 #F2F3F6、描边 #E5E7EC。
+   * 兼容旧变量名：--red 现在指墨色主行动，--teal 指可读琥珀（文字级强调）；黄色填充用 --acc。 */
+  --bg:#F2F3F6; --panel:#FFFFFF; --panel2:#F7F8FA; --line:#E5E7EC; --line2:#D3D7DE;
+  --red:#1F1D1A; --red-dk:#3A3730; --teal:#F0BB00;
+  --acc:#FFD02F; --acc-soft:#FFFDF4; --acc-chip:#FFF4C4;
+  --txt:#1F1D1A; --txt2:#5F6478; --txt3:#9AA0AE;
+  --paper:#FFFFFF; --paper-dk:#F7F8FA; --paper-line:#E5E7EC;
+  --font-d:"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --font-b:"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --cut:none; --cut-sm:none; --cut-tr:none;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden}
 html{-webkit-text-size-adjust:100%; text-size-adjust:100%} /* iOS / 微信内置浏览器不自动放大文字，字号以 CSS 为准 */
 body{
   background:var(--bg); color:var(--txt); font-family:var(--font-b); font-size:14px;
-  background-image:
-    repeating-linear-gradient(45deg, rgba(255,255,255,.012) 0 2px, transparent 2px 8px),
-    radial-gradient(1200px 500px at 80% -10%, rgba(255,70,85,.07), transparent 60%),
-    radial-gradient(900px 500px at 0% 110%, rgba(0,200,200,.05), transparent 60%);
   display:flex; flex-direction:column;
 }
 
@@ -25,36 +23,37 @@ body{
 header{
   height:58px; flex:none; display:flex; align-items:center; gap:16px;
   padding:0 18px; border-bottom:1px solid var(--line);
-  background:linear-gradient(180deg, rgba(255,255,255,.03), transparent);
+  background:var(--panel);
 }
 .title-block{min-width:0}
-.title-block h1{font-family:var(--font-d); font-size:17px; letter-spacing:.08em; font-weight:700; white-space:nowrap}
-.title-block h1 em{color:var(--teal); font-style:normal}
+.title-block h1{font-family:var(--font-d); font-size:16px; letter-spacing:.01em; font-weight:700; white-space:nowrap}
+.title-block h1 em{color:var(--txt2); font-style:normal}
 /* [TITLE] 标题行：标题 + 铅笔；改名时标题变输入框 */
 .title-row{display:flex; align-items:center; gap:6px; min-width:0}
 .title-row h1{min-width:0; overflow:hidden; text-overflow:ellipsis}
-#titleEdit{flex:none; width:24px; height:24px; border:1px solid transparent; background:transparent; color:var(--txt3); cursor:pointer; font-size:14px; line-height:1; padding:0}
-#titleEdit:hover{color:var(--teal); border-color:var(--line2)}
+#titleEdit{flex:none; width:24px; height:24px; border:1px solid transparent; background:transparent; color:var(--txt3); cursor:pointer; font-size:14px; line-height:1; padding:0; border-radius:7px}
+#titleEdit:hover{color:var(--txt); border-color:var(--line)}
 #taskTitleIn{
-  min-width:0; width:min(320px, 50vw); background:var(--panel2); border:1px solid var(--teal); color:var(--txt); outline:none;
-  font-family:var(--font-d); font-size:15px; font-weight:700; letter-spacing:.04em; padding:3px 6px;
+  min-width:0; width:min(320px, 50vw); background:var(--panel); border:1px solid var(--acc); color:var(--txt); outline:none;
+  font-family:var(--font-d); font-size:15px; font-weight:700; padding:3px 8px; border-radius:8px;
 }
-.title-block .sub{font-size:11px; color:var(--txt2); letter-spacing:.1em; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.title-block .sub{font-size:11px; color:var(--txt3); letter-spacing:.02em; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .spacer{flex:1}
 .btn{
-  appearance:none; border:1px solid var(--line); background:var(--panel2); color:var(--txt);
-  font-family:var(--font-d); font-size:13px; letter-spacing:.1em; font-weight:600;
-  padding:9px 16px; cursor:pointer; white-space:nowrap;
+  appearance:none; border:1px solid var(--line); background:var(--panel); color:var(--txt);
+  font-family:var(--font-d); font-size:13px; letter-spacing:.02em; font-weight:600;
+  padding:9px 16px; cursor:pointer; white-space:nowrap; border-radius:10px;
   transition:background .15s,color .15s,border-color .15s;
 }
-.btn:hover{background:var(--red); border-color:var(--red); color:#fff}
+.btn:hover{background:var(--panel2); border-color:var(--line2); color:var(--txt)}
 .btn.primary{background:var(--red); border-color:var(--red); color:#fff}
-.btn.primary:hover{filter:brightness(1.12)}
-/* 顶栏导出 / 保存：游戏菜单按钮的光效——上亮下深的竖向渐变、发亮细边、内侧一圈柔光、外侧淡红晕 */
+.btn.primary:hover{background:var(--red-dk); border-color:var(--red-dk)}
+/* 顶栏导出 / 保存：墨底白字主按钮（设计稿） */
 #flowExpBtn, #edSave{
-  background:linear-gradient(180deg,#FF7A85 0%,#FF4655 55%,#E8384A 100%); border-color:#FFA3AB;
-  box-shadow:inset 0 0 0 1px rgba(255,255,255,.18), inset 0 1px 0 rgba(255,255,255,.35), inset 0 -8px 14px -8px rgba(160,20,40,.45), 0 0 10px rgba(255,70,85,.45);
-  text-shadow:0 1px 1px rgba(120,10,25,.35);
+  background:var(--red); border-color:var(--red); color:#fff; box-shadow:0 2px 8px rgba(31,29,26,.18);
 }
-#flowExpBtn:hover, #edSave:hover{filter:brightness(1.1); box-shadow:inset 0 0 0 1px rgba(255,255,255,.22), inset 0 1px 0 rgba(255,255,255,.4), inset 0 -8px 14px -8px rgba(160,20,40,.45), 0 0 16px rgba(255,70,85,.65)}
+#flowExpBtn:hover, #edSave:hover{background:var(--red-dk); border-color:var(--red-dk); box-shadow:0 2px 10px rgba(31,29,26,.24)}
 
+/* 品牌小标：豆黄圆角方块 + 一笔 D + 离位小豆（与官网 logo v2 同款） */
+.brand-logo{flex:none; width:26px; height:26px; display:flex; align-items:center; justify-content:center; border-radius:9px; background:var(--acc)}
+.brand-logo svg{display:block}

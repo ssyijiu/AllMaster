@@ -526,7 +526,7 @@ canvas.addEventListener('mouseleave', () => {
 function edDrawPreviewOutline(s) {
   if (!ed.on && edBrowseHint !== null) { // 浏览态：可单击编辑的格子
     const i = edBrowseHint % GW, j = (edBrowseHint / GW) | 0;
-    ctx.save(); ctx.strokeStyle = '#00C8C8'; ctx.lineWidth = 2.5;
+    ctx.save(); ctx.strokeStyle = '#F0BB00'; ctx.lineWidth = 2.5;
     ctx.strokeRect(state.ox + (state.mirror ? GW - 1 - i : i) * s + 1, state.oy + j * s + 1, s - 2, s - 2);
     ctx.restore(); return;
   }
@@ -546,7 +546,7 @@ function edDrawPreviewOutline(s) {
   }
   // 两遍描边：先宽的白底（深浅格子上都托得出来），再红线；单格预览（橡皮 / 取色 / 画笔）再往外扩半格，不被格线吃掉
   ctx.strokeStyle = 'rgba(255,255,255,.95)'; ctx.lineWidth = lw + 2.5; ctx.stroke();
-  ctx.strokeStyle = '#FF4655'; ctx.lineWidth = lw; ctx.stroke();
+  ctx.strokeStyle = '#F0BB00'; ctx.lineWidth = lw; ctx.stroke();
   ctx.restore();
 }
 /* 编辑中这一下操作的即时反馈（如「画笔 · 本次 +20 颗」）；不写操作说明——工具在工具条上亮着，当前色在色块上 */
@@ -859,7 +859,7 @@ function edDrawSel(s) {
     ctx.fillStyle = 'rgba(0,200,200,.12)'; ctx.fill('nonzero');   // 与 edPointInPoly 同一规则：画出来的填充区域 = 会被选中的区域
     ctx.setLineDash([5, 4]);
     ctx.strokeStyle = 'rgba(255,255,255,.95)'; ctx.lineWidth = 4; ctx.stroke();
-    ctx.strokeStyle = '#00C8C8'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.strokeStyle = '#F0BB00'; ctx.lineWidth = 2; ctx.stroke();
   }
   if (ed.sel) {
     const dx = L && L.kind === 'move' ? L.dx : 0, dy = L && L.kind === 'move' ? L.dy : 0;
@@ -881,7 +881,7 @@ function edDrawSel(s) {
     }
     ctx.setLineDash([4, 3]);
     ctx.strokeStyle = 'rgba(255,255,255,.95)'; ctx.lineWidth = 4; ctx.stroke();
-    ctx.strokeStyle = '#00C8C8'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.strokeStyle = '#F0BB00'; ctx.lineWidth = 2; ctx.stroke();
   }
   ctx.restore();
 }

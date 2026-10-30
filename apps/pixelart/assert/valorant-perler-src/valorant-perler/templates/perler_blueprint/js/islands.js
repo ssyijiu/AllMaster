@@ -167,7 +167,7 @@ function islandDrawHover(s) {
     minX = Math.min(minX, x); maxX = Math.max(maxX, x + s);
     minY = Math.min(minY, y); maxY = Math.max(maxY, y + s);
   }
-  ctx.strokeStyle = '#2BD6C4'; ctx.lineWidth = Math.max(1.5, s * 0.12);
+  ctx.strokeStyle = '#F0BB00'; ctx.lineWidth = Math.max(1.5, s * 0.12);
   ctx.setLineDash([Math.max(4, s * 0.5), Math.max(3, s * 0.35)]);
   const pad = ctx.lineWidth;
   ctx.strokeRect(minX - pad, minY - pad, (maxX - minX) + pad * 2, (maxY - minY) + pad * 2);

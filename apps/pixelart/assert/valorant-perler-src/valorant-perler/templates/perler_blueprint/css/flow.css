@@ -25,7 +25,7 @@ main{flex-direction:column}
 .stage{order:0; flex:1; min-height:0}
 #dock{
   order:1; flex:none; width:100%; display:flex; flex-direction:column; min-height:0; position:relative; z-index:8;
-  background:var(--panel); border-top:1px solid var(--line2); box-shadow:0 -8px 24px rgba(0,0,0,.35);
+  background:var(--panel); border-top:1px solid var(--line2); box-shadow:0 -6px 20px rgba(31,29,26,.08);
 }
 #dockBody{flex:1 1 auto; min-width:0; min-height:0; display:flex; flex-direction:column}
 #dock aside{flex:1 1 auto; min-height:0; height:var(--dock-h, 34vh); width:100%; overscroll-behavior:contain; scroll-padding-bottom:74px}   /* [FLOW] 三站等高，内容多在栏内滚；scroll-padding-bottom 让滚动定位的元素避开吸底按钮 */
@@ -80,12 +80,12 @@ body[data-st="plan"] aside > .flow-next, body[data-st="edit"] aside > .flow-next
 #flowNav button[data-st]:hover{color:var(--txt2)}
 #flowNav button b{
   flex:none; width:22px; height:22px; line-height:22px; text-align:center; font-size:12px;
-  border:1px solid var(--line2); clip-path:var(--cut-sm); transition:all .2s;
+  border:1px solid var(--line2); border-radius:50%; transition:all .2s;
 }
 #flowNav button.seen{color:var(--txt2)}
 #flowNav button.seen b{border-color:var(--teal); color:var(--teal)}
-#flowNav button.on{color:var(--txt); background:var(--panel2); box-shadow:inset 0 -3px 0 var(--red)}
-#flowNav button.on b{background:var(--red); border-color:var(--red); color:#fff}
+#flowNav button.on{color:var(--txt); background:var(--panel2); box-shadow:inset 0 -3px 0 var(--acc)}
+#flowNav button.on b{background:var(--acc); border-color:var(--acc); color:var(--txt)}
 /* 编辑栏位置：三个图标并列（左 / 底 / 右），图标里的实块就是栏的位置；窄屏只能钉底部，整组不出现 */
 #navDock{flex:none; display:flex; align-items:center; gap:2px; margin-left:auto; padding:0 4px 0 10px; border-left:1px solid var(--line)}
 #navDock button{
@@ -96,7 +96,7 @@ body[data-st="plan"] aside > .flow-next, body[data-st="edit"] aside > .flow-next
 #navDock svg .o{fill:none; stroke:currentColor; stroke-width:1.2}
 #navDock svg .f{fill:currentColor; opacity:.35}
 #navDock button:hover{color:var(--txt)}
-#navDock button.on{color:var(--teal); background:rgba(0,200,200,.12)}
+#navDock button.on{color:var(--teal); background:rgba(240,187,0,.12)}
 #navDock button.on svg .f{opacity:.9}
 @media (max-width:959px){ #navDock{display:none} }
 
@@ -135,7 +135,7 @@ body[data-st="plan"] aside > .flow-next, body[data-st="edit"] aside > .flow-next
   body[data-nav="right"] #navDock, body[data-nav="left"] #navDock{padding:0 0 0 4px}
   body[data-nav="right"] #navDock button, body[data-nav="left"] #navDock button{width:24px; height:24px}
   body[data-nav="right"] #navDock svg, body[data-nav="left"] #navDock svg{width:16px; height:16px}
-  body[data-nav="right"] #dockHandle, body[data-nav="left"] #dockHandle{align-self:center; width:22px; height:84px; margin:0 -11px 0 0; padding:0; flex-direction:column; border-radius:11px; cursor:pointer; border:1px solid var(--line2); background:var(--panel2); color:var(--txt2); box-shadow:0 2px 8px rgba(0,0,0,.35)}
+  body[data-nav="right"] #dockHandle, body[data-nav="left"] #dockHandle{align-self:center; width:22px; height:84px; margin:0 -11px 0 0; padding:0; flex-direction:column; border-radius:11px; cursor:pointer; border:1px solid var(--line2); background:var(--panel2); color:var(--txt2); box-shadow:0 2px 8px rgba(31,29,26,.14)}
   body[data-nav="right"] #dockHandle::before, body[data-nav="left"] #dockHandle::before{content:none}
   @media (hover:hover){ body[data-nav="right"] #dockHandle:hover, body[data-nav="left"] #dockHandle:hover{color:var(--teal); border-color:var(--teal)} }
   body[data-nav="right"].dock-closed #dockHandle, body[data-nav="left"].dock-closed #dockHandle{background:var(--red); border-color:var(--red); color:#fff}
@@ -303,10 +303,10 @@ body[data-st="plan"] aside > .flow-next, body[data-st="edit"] aside > .flow-next
   .size-card:hover{border-color:var(--line)}
   .size-card.active:hover{border-color:var(--red)}
   .crow:hover{background:transparent}
-  .crow.hl:hover{background:rgba(0,200,200,.08)}
-  .zoomctl button:hover{background:rgba(15,25,35,.88); border-color:var(--line)}
+  .crow.hl:hover{background:rgba(240,187,0,.08)}
+  .zoomctl button:hover{background:rgba(255,255,255,.88); border-color:var(--line)}
   .mirror-btn:hover{border-color:var(--line); color:var(--txt)}
-  .mirror-btn.on:hover{border-color:var(--teal); color:#0B141A}
+  .mirror-btn.on:hover{border-color:var(--teal); color:#1F1D1A}
   #edBar button:hover:not(:disabled){border-color:transparent}
   .viewtab:hover{color:var(--txt2); border-color:var(--line)}
   .viewtab.active:hover{color:var(--bg); border-color:var(--txt)}

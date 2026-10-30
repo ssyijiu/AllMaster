@@ -1,5 +1,5 @@
 /* ===== [VIEW-3D] 图纸的平面 / 3D 两种看法 ===== */
-.modeseg{display:none; align-items:stretch; border:1px solid var(--line); background:rgba(0,0,0,.22)}
+.modeseg{display:none; align-items:stretch; border:1px solid var(--line); background:var(--panel2); border-radius:10px; overflow:hidden}
 .modeseg.show{display:inline-flex}
 .modeseg button{
   position:relative; z-index:1; transition:color .22s;
@@ -7,20 +7,20 @@
   font-family:var(--font-d); font-weight:700; font-size:12px; letter-spacing:.12em; padding:7px 12px;
 }
 .modeseg button:hover:not(:disabled){color:var(--txt)}
-.modeseg button.on{color:#fff}
-.modeseg button:disabled{opacity:.35; cursor:not-allowed}
+.modeseg button.on{color:var(--txt)}
+.modeseg button:disabled{opacity:.55; cursor:not-allowed}
 /* 玩家还没进过 3D：「3D」按钮带一圈呼吸光，点过一次后本机不再出现 */
 body:not(.v3-tried) .modeseg button[data-mode="3d"]:not(.on):not(:disabled){color:#fff; animation:v3Lure 1.8s ease-in-out infinite}
-@keyframes v3Lure{0%,100%{text-shadow:0 0 0 rgba(255,70,85,0); box-shadow:inset 0 0 0 1px rgba(255,70,85,.35)} 50%{text-shadow:0 0 8px rgba(255,120,130,.9); box-shadow:inset 0 0 0 1px rgba(255,70,85,.95), 0 0 10px rgba(255,70,85,.55)}}
-@media (prefers-reduced-motion:reduce){ body:not(.v3-tried) .modeseg button[data-mode="3d"]{animation:none; box-shadow:inset 0 0 0 1px rgba(255,70,85,.9)} }
+@keyframes v3Lure{0%,100%{text-shadow:0 0 0 rgba(255,208,47,0); box-shadow:inset 0 0 0 1px rgba(255,208,47,.35)} 50%{text-shadow:0 0 8px rgba(255,208,47,.9); box-shadow:inset 0 0 0 1px rgba(255,208,47,.95), 0 0 10px rgba(255,208,47,.55)}}
+@media (prefers-reduced-motion:reduce){ body:not(.v3-tried) .modeseg button[data-mode="3d"]{animation:none; box-shadow:inset 0 0 0 1px rgba(255,208,47,.9)} }
 /* 「平面｜3D」共用一个「视角」后缀：放在两个按钮外侧，不可点，读作「平面视角 / 3D 视角」 */
 /* 拨动开关：凹进去的轨道 + 红色矩形滑块，切换时滑过去（宽度与位置由 js 量当前按钮）。
  * 两格等宽（grid 等分、取较宽者），「3D」不因字少而变窄，滑块来回大小不变 */
-.modeseg .modeseg-btns{display:inline-grid; grid-auto-flow:column; grid-auto-columns:1fr; position:relative; margin:2px;
-  background:rgba(0,0,0,.35); box-shadow:inset 0 1px 3px rgba(0,0,0,.55)}
+.modeseg .modeseg-btns{display:inline-grid; grid-auto-flow:column; grid-auto-columns:1fr; position:relative; margin:0;
+  background:transparent; box-shadow:none}
 .modeseg .modeseg-btns button{text-align:center}
-.modeseg .modeseg-knob{position:absolute; top:0; bottom:0; left:0; width:0; background:var(--red);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.28), 0 1px 3px rgba(0,0,0,.45), 0 0 10px rgba(255,70,85,.35);
+.modeseg .modeseg-knob{position:absolute; top:0; bottom:0; left:0; width:0; background:var(--panel);
+  border:1px solid var(--line); box-shadow:0 1px 3px rgba(31,29,26,.12);
   transition:transform .28s cubic-bezier(.3,1.35,.5,1), width .28s cubic-bezier(.3,1.35,.5,1)}
 .modeseg .modeseg-knob.no-anim{transition:none}
 @media (prefers-reduced-motion:reduce){ .modeseg .modeseg-knob, .modeseg button{transition:none} }
@@ -28,15 +28,15 @@ body:not(.v3-tried) .modeseg button[data-mode="3d"]:not(.on):not(:disabled){colo
 .modeseg .modeseg-sep{width:1px; align-self:stretch; margin:6px 4px; background:var(--line)}
 .modeseg .modeseg-suffix{display:flex; align-items:center; padding:0 5px 0 0;
   font-family:var(--font-d); font-weight:500; font-size:10px; letter-spacing:.05em; color:var(--txt3); user-select:none}
-#v3Wrap{position:absolute; inset:0; display:none; background:#0b1118}
+#v3Wrap{position:absolute; inset:0; display:none; background:#EDEFF3}
 #v3Wrap canvas{display:block; touch-action:none}
 /* 烫豆控制条：画布底部一条通栏半透明细条，贴着画布下沿，内容居中限宽；平面与 3D视角 共用。
  * 不做悬浮卡片：底沿本来就空，细条只占 ~30px，不压豆板主体，也不和右上角按钮挤在一起。 */
 .meltbar{
   position:absolute; left:15px; right:15px; bottom:13px; z-index:6; display:none; align-items:center; justify-content:center; gap:10px; /* 相对 .stage：画布容器外边距 14 + 边框 1；下方留白 12 + 边框 1 */
   padding:6px max(10px, calc((100% - 560px)/2));
-  background:rgba(15,25,35,.6); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
-  border-top:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.6); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+  border-top:1px solid rgba(31,29,26,.06);
 }
 
 /* 控制条一行：播放按钮（图标 + 「播放」）｜进度滑条（占剩余宽度，可收窄到很短，不写百分比）｜烫法按钮 */
@@ -55,19 +55,19 @@ body:not(.v3-tried) .modeseg button[data-mode="3d"]:not(.on):not(:disabled){colo
 body.mode3d #v3Wrap{display:block}
 /* 3D视角 操作提示：底部居中小字，转动过镜头（.v3-moved）或打开烫豆控制条后收起 */
 #v3Hint{position:absolute; left:50%; bottom:14px; transform:translateX(-50%); z-index:5; display:none; pointer-events:none;
-  font-size:11px; letter-spacing:.06em; color:var(--txt2); background:rgba(15,25,35,.72); padding:4px 10px; white-space:nowrap}
+  font-size:11px; letter-spacing:.06em; color:var(--txt2); background:rgba(255,255,255,.72); padding:4px 10px; white-space:nowrap}
 body.mode3d:not(.v3-moved):not(.ironon) #v3Hint{display:block}
 /* 镜头预设「俯视｜斜视」：右上按钮组的第一行，两列等分；左右内边距收窄，让两个按钮合起来不超过「模拟烫豆」的宽度 */
 #v3Cam{display:none; grid-template-columns:1fr 1fr; gap:4px}
 #v3Cam .mirror-btn{padding-left:4px; padding-right:4px; min-width:0}
 body.mode3d #v3Cam{display:grid}
 /* [3D-PROGRESS] 进度图例（左上）；编辑与烫豆时不出现 */
-#v3Legend{position:absolute; top:10px; left:10px; z-index:6; display:none; gap:10px; padding:4px 8px; font-size:10.5px; color:var(--txt2); letter-spacing:.04em; background:rgba(15,25,35,.72)}
+#v3Legend{position:absolute; top:10px; left:10px; z-index:6; display:none; gap:10px; padding:4px 8px; font-size:10.5px; color:var(--txt2); letter-spacing:.04em; background:rgba(255,255,255,.72)}
 #v3Legend span{display:inline-flex; align-items:center; gap:4px; white-space:nowrap}
 #v3Legend i{display:inline-block; width:9px; height:9px; border-radius:50%}
-#v3Legend .lg-done{background:#ECE8E1}
+#v3Legend .lg-done{background:#1F1D1A}
 #v3Legend .lg-cur{background:#fff; box-shadow:0 0 6px #fff}
-#v3Legend .lg-todo{background:transparent; border:1.5px solid #4A5866}
+#v3Legend .lg-todo{background:transparent; border:1.5px solid #C3C8D2}
 body.mode3d.v3-prog-live:not(.editing) #v3Legend{display:flex}
 body.mode3d .hud{display:none !important} /* 3D视角 画面里不放悬停坐标之类的文字角标，沉浸看图 */
 body.mode3d.editing .hud.note{display:block !important} /* 编辑中刚做完的那一步仍在左下角轻提示（与平面一致） */

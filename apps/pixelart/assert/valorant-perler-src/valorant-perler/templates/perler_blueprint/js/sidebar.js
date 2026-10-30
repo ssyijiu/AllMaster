@@ -9,7 +9,7 @@ function renderSizes() {
     b.dataset.vk = verCombo(s.key, state.palette, state.budget); // [VERSIONS hook]
     b.title = imgSizeOf(s.key).replace('<br>', '').trim(); // 图案实际占格放进悬停提示，卡面只留尺寸与颗数
     b.innerHTML = `
-      ${s.key === D.defaultSize ? '<div class="badge">推荐</div>' : ''}
+      ${s.key === D.defaultSize ? '<div class="badge">当前</div>' : ''}
       <img src="${thumb(s.key)}" alt="${s.w}×${s.h} 尺寸预览">
       <div class="nm"><span class="n">${s.isCustom ? '自定义 ' : ''}${s.w}×${s.h}</span><span class="meta">(${beadsOf(s.key)}颗)</span></div>`;
     b.onclick = () => { state.size = s.key; parseGrid(); buildColorMap(); loadProgress(); refreshAll(); fitView(); };

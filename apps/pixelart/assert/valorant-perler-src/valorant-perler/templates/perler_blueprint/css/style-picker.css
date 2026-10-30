@@ -29,7 +29,7 @@
 #styleViewer{
   position:fixed; inset:0; z-index:70; display:none; flex-direction:column;
   align-items:center; justify-content:center; gap:12px;
-  background:rgba(4,7,11,.94); padding:24px;
+  background:rgba(31,29,26,.55); backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px); padding:24px;
 }
 #styleViewer.show{display:flex}
 /* 三栏：左栏（原图 + 箭头）与右侧空栏等宽，效果图因此正好居中 */

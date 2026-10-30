@@ -2,45 +2,42 @@
  * 左侧海报预览 + 右侧选项 + 下载。
  * 全部选择器带 ps 前缀，不与图纸页的 #dock / .sw / .seg 冲突。逻辑在 js/poster.js。 */
 #ps{
-  --ink:#0F1923; --ink2:#16202B; --ink3:#1E2B38; --bone:#ECE8E1; --mut:#8B9BB0;
+  --ink:#F7F8FA; --ink2:#FFFFFF; --ink3:#FFFFFF; --bone:#1F1D1A; --mut:#5F6478;
   --gx:clamp(10px,2.4vw,32px); --gap:clamp(10px,2vw,28px); --dockw:248px; --h:38px; --fs:14px; --g:10px;
   position:fixed; left:0; right:0; bottom:0; height:92vh; height:92dvh; z-index:60; color:var(--bone);
   font-family:"PingFang SC","Microsoft YaHei",sans-serif;
-  background:
-    radial-gradient(1200px 700px at 85% -10%, rgba(255,70,85,.10), transparent 60%),
-    radial-gradient(900px 600px at 0% 110%, rgba(70,120,160,.10), transparent 60%),
-    var(--ink);
-  clip-path:polygon(0 22px,22px 0,calc(50% - 96px) 0,calc(50% - 76px) 18px,calc(50% + 76px) 18px,calc(50% + 96px) 0,calc(100% - 22px) 0,100% 22px,100% 100%,0 100%);
+  background:var(--ink);
+  border-radius:20px 20px 0 0; box-shadow:0 -18px 60px rgba(31,29,26,.22);
   transform:translateY(104%); transition:transform .38s cubic-bezier(.2,.8,.2,1); touch-action:none;
   max-width:100vw; overflow:hidden;   /* 横竖屏切换时抽屉内容不得撑宽页面：iOS 会按最宽内容放大布局视口，转回竖屏后比例回不去 */
 }
 #ps *{-webkit-tap-highlight-color:transparent}
 body.ps-open #ps{transform:translateY(0)}
-#psMask{position:fixed; inset:0; z-index:59; background:rgba(4,7,11,.74); opacity:0; pointer-events:none; transition:opacity .32s}
+#psMask{position:fixed; inset:0; z-index:59; background:rgba(31,29,26,.45); opacity:0; pointer-events:none; transition:opacity .32s}
 body.ps-open #psMask{opacity:1; pointer-events:auto}
 #psHead{position:relative; height:66px; display:flex; align-items:center; justify-content:center; touch-action:none; cursor:ns-resize}
-#psHead .grip{position:absolute; top:26px; left:50%; width:38px; height:3px; margin-left:-19px; background:rgba(255,255,255,.22)}
-#psHead h2{font-size:16px; font-weight:700; letter-spacing:.16em; margin-top:24px}
-#psHead h2::before{content:""; display:inline-block; width:6px; height:6px; background:var(--red); transform:rotate(45deg); margin:0 10px 2px 0}
+#psHead .grip{position:absolute; top:26px; left:50%; width:38px; height:3px; margin-left:-19px; background:rgba(31,29,26,.12)}
+#psHead h2{font-size:16px; font-weight:700; letter-spacing:.04em; margin-top:24px}
+#psHead h2::before{content:none}
 #psClose{position:absolute; right:18px; top:20px; width:40px; height:40px; background:none; border:0; cursor:pointer; color:var(--mut)}
 #psClose:hover{color:var(--bone)}
 #psClose svg{width:22px; height:22px}
-#psBody{height:calc(100% - 66px); display:flex; flex-direction:row; align-items:stretch; justify-content:center; gap:var(--gap);
+#psBody{height:calc(100% - 66px); display:flex; flex-direction:row; align-items:stretch; justify-content:center; gap:var(--gap); background:var(--bg);
   padding:0 var(--gx) max(14px,env(safe-area-inset-bottom))}
 #psStageArea{position:relative; flex:none; min-height:0; display:flex; align-items:center; justify-content:center}
 #psStageWrap{width:200px; aspect-ratio:1080/1744; position:relative; flex:none; overflow:hidden;
-  border-radius:6px; box-shadow:0 24px 64px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.06)}
+  border-radius:10px; box-shadow:0 12px 40px rgba(31,29,26,.18), 0 0 0 1px var(--psline)}
 canvas#psStage{width:100%; height:100%; display:block}
 /* 缩放条：小号低存在感，收在图纸面板最右下角（位置由 poster.js 按面板算；缩放只作用在图纸区）。
  * 平时半透明，指针移入预览或刚缩放过时亮起 */
 #psZoom{position:absolute; z-index:2; right:4px; bottom:4px; display:flex; align-items:center; border-radius:999px; overflow:hidden;
-  background:rgba(15,25,35,.45); border:1px solid rgba(255,255,255,.08); opacity:.5; transition:opacity .25s}
-#psStageWrap:hover #psZoom, #psZoom.act, #psZoom:active{opacity:1; background:rgba(15,25,35,.78)}
-#psZoom button{height:18px; min-width:19px; padding:0 3px; background:none; border:0; color:#ECE8E1; font-size:12px; line-height:1; cursor:pointer; user-select:none}
-#psZoom button:hover{background:rgba(255,70,85,.22)}
+  background:rgba(255,255,255,.92); border:1px solid rgba(31,29,26,.14); opacity:.6; transition:opacity .25s}
+#psStageWrap:hover #psZoom, #psZoom.act, #psZoom:active{opacity:1; background:#FFFFFF}
+#psZoom button{height:18px; min-width:19px; padding:0 3px; background:none; border:0; color:#1F1D1A; font-size:12px; line-height:1; cursor:pointer; user-select:none}
+#psZoom button:hover{background:rgba(255,208,47,.22)}
 #psZoom button:disabled{opacity:.3; cursor:default; background:none}
 #psZoom #psZReset{font-size:9.5px; letter-spacing:.02em; min-width:34px; font-family:"DIN Alternate","Bahnschrift",sans-serif;
-  border-left:1px solid rgba(255,255,255,.1); border-right:1px solid rgba(255,255,255,.1)}
+  border-left:1px solid rgba(31,29,26,.12); border-right:1px solid rgba(31,29,26,.12)}
 /* 右侧控制坞：单列；高度不够时自己滚动。
  * 居中用首尾两个伪元素各吃一个 auto 外边距，而不是 justify-content:center：内容超高时 justify 居中会把顶部裁到滚动区外够不着，
  * auto 外边距在超高时自动归零、顶对齐，放得下时同样居中 */
@@ -53,67 +50,67 @@ canvas#psStage{width:100%; height:100%; display:block}
 /* 分档滑块（色号大小）：轨道两端各一个端点，滑钮只停在档位上，换档时滑过去（不瞬移），走过的轨道与端点变红。
  * 刻度与滑钮位置由 JS 按 --n（档数 - 1）和 --i（当前档）算，左右各留半个滑钮宽，首末档不贴边 */
 .ps-step{--n:5; --i:3; --kw:14px; position:relative; flex:none; width:100%; height:28px; cursor:pointer; touch-action:none; outline:none; user-select:none}
-.ps-step::before{content:""; position:absolute; left:calc(var(--kw) / 2); right:calc(var(--kw) / 2); top:50%; height:3px; margin-top:-1.5px; border-radius:2px; background:rgba(255,255,255,.16)}
-.ps-step .fill{position:absolute; left:calc(var(--kw) / 2); top:50%; height:3px; margin-top:-1.5px; border-radius:2px; background:var(--red);
+.ps-step::before{content:""; position:absolute; left:calc(var(--kw) / 2); right:calc(var(--kw) / 2); top:50%; height:3px; margin-top:-1.5px; border-radius:2px; background:rgba(31,29,26,.14)}
+.ps-step .fill{position:absolute; left:calc(var(--kw) / 2); top:50%; height:3px; margin-top:-1.5px; border-radius:2px; background:var(--acc);
   width:calc((100% - var(--kw)) * var(--i) / var(--n)); transition:width .18s cubic-bezier(.3,.7,.3,1)}
-.ps-step .tick{position:absolute; top:50%; width:7px; height:7px; margin:-3.5px 0 0 -3.5px; border-radius:50%; background:#3A4654; transition:background .18s}   /* 只在首末两端各一个，标出起止 */
-.ps-step .tick.on{background:var(--red)}
+.ps-step .tick{position:absolute; top:50%; width:7px; height:7px; margin:-3.5px 0 0 -3.5px; border-radius:50%; background:#D3D7DE; transition:background .18s}   /* 只在首末两端各一个，标出起止 */
+.ps-step .tick.on{background:var(--acc)}
 .ps-step .knob{position:absolute; top:50%; width:var(--kw); height:var(--kw); margin:calc(var(--kw) / -2) 0 0 calc(var(--kw) / -2); border-radius:50%;
-  left:calc(var(--kw) / 2 + (100% - var(--kw)) * var(--i) / var(--n)); background:#fff; box-shadow:0 0 0 3px var(--red),0 2px 6px rgba(0,0,0,.45);
+  left:calc(var(--kw) / 2 + (100% - var(--kw)) * var(--i) / var(--n)); background:#fff; border:1px solid var(--acc); box-shadow:0 0 0 2px rgba(255,208,47,.35),0 2px 6px rgba(31,29,26,.18);
   transition:left .18s cubic-bezier(.3,.7,.3,1),transform .12s}
 .ps-step.drag .knob,.ps-step:focus-visible .knob{transform:scale(1.15)}
 /* 控件统一用圆角卡片（--r），配色沿用抽屉的墨色 + 红；不再用切角 */
-#ps{--r:10px; --line:rgba(255,255,255,.09)}
+#ps{--r:10px; --line:rgba(31,29,26,.10); --psline:rgba(31,29,26,.10)}
 /* 胶囊开关：字写在开关里，外形与底栏多选标签同一套（描边胶囊、30px 高）。
  * 开 = 淡红底 + 红描边、红圆钮靠右；关 = 透明底 + 灰描边、灰圆钮靠左。红色只用在描边和圆钮上，不整块铺满 */
 .ps-pair{display:flex; flex-wrap:wrap; gap:6px; min-width:0}
 .ps-sw{flex:none; height:30px; display:inline-flex; align-items:center; gap:6px; padding:0 4px; border-radius:15px; cursor:pointer; user-select:none;
-  background:transparent; border:1px solid rgba(255,255,255,.2); transition:background .18s,border-color .18s}
-.ps-sw .dot{flex:none; width:20px; height:20px; border-radius:50%; background:rgba(255,255,255,.28); transition:background .18s}
+  background:var(--ink2); border:1px solid rgba(31,29,26,.18); transition:background .18s,border-color .18s}
+.ps-sw .dot{flex:none; width:20px; height:20px; border-radius:50%; background:rgba(31,29,26,.14); transition:background .18s}
 .ps-sw .t{font-size:13px; white-space:nowrap; color:var(--mut); padding-right:8px}
-.ps-sw.on{background:rgba(255,70,85,.16); border-color:var(--red)}
-.ps-sw.on .dot{order:2; background:var(--red)}
+.ps-sw.on{background:var(--acc-soft); border-color:var(--acc)}
+.ps-sw.on .dot{order:2; background:var(--acc)}
 .ps-sw.on .t{order:1; color:var(--bone); padding:0 0 0 8px}
-.ps-sw:not(.on):hover{border-color:rgba(255,255,255,.35)}
+.ps-sw:not(.on):hover{border-color:rgba(31,29,26,.32)}
 .ps-sw.off{opacity:.35; pointer-events:none}
 .ps-seg{flex:none; height:var(--h); display:flex; gap:3px; padding:3px; background:var(--ink2); border:1px solid var(--line); border-radius:var(--r); min-width:0}
 .ps-seg div{flex:1; display:flex; align-items:center; justify-content:center; border-radius:calc(var(--r) - 3px); font-size:var(--fs); color:var(--mut); cursor:pointer; user-select:none; transition:background .15s,color .15s}
-.ps-seg div.on{color:var(--bone); background:rgba(255,70,85,.22)}
+.ps-seg div.on{color:var(--txt); background:var(--acc-soft); box-shadow:inset 0 0 0 1px var(--acc)}
 /* 主图下的开关组：色号 / 网格线只作用于图纸，主图是烫后效果时收起，发光保留 */
 .ps-sub{flex:none; display:flex; flex-direction:column; gap:var(--g); min-width:0}
 #ps.main-iron .ps-sw[data-k="codes"], #ps.main-iron .ps-sw[data-k="grid"]{display:none}
 /* 主图一行：图纸 / 烫后分段 + 烫法下拉（只在烫后时出现，与分段并排） */
 /* 紧凑下拉按钮：与胶囊开关同高，微切角（右上、左下各切一小角），宽度随内容 */
-.ps-dd{flex:none; height:30px; max-width:100%; display:inline-flex; align-items:center; gap:8px; padding:0 10px 0 12px; cursor:pointer; font:inherit; font-size:13px; color:var(--bone);
-  background:var(--ink2); border:1px solid rgba(255,255,255,.2); border-radius:4px; white-space:nowrap;
+.ps-dd{flex:none; height:30px; max-width:100%; display:inline-flex; align-items:center; gap:8px; padding:0 10px 0 12px; cursor:pointer; font:inherit; font-size:13px; color:var(--bone); clip-path:none;
+  background:var(--ink2); border:1px solid rgba(31,29,26,.18); border-radius:8px; white-space:nowrap;
   clip-path:polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,6px 100%,0 calc(100% - 6px)); transition:border-color .15s}
 .ps-dd .v{min-width:0; overflow:hidden; text-overflow:ellipsis}
 .ps-dd::after{content:""; flex:none; width:5px; height:5px; margin-top:-3px; border:solid var(--mut); border-width:0 1.5px 1.5px 0; transform:rotate(45deg); transition:transform .15s}
-.ps-dd:hover{border-color:rgba(255,255,255,.35)}
-.ps-dd.open{border-color:var(--red)}
+.ps-dd:hover{border-color:rgba(31,29,26,.32)}
+.ps-dd.open{border-color:var(--acc)}
 .ps-dd.open::after{transform:rotate(-135deg); margin-top:3px}
 /* 弹出菜单：挂在抽屉上，按按钮位置定位；微切角，与抽屉配色一致 */
-#psMenu{position:absolute; z-index:20; padding:5px; background:#1A2531; border:1px solid rgba(255,255,255,.14); box-shadow:0 14px 36px rgba(0,0,0,.55);
-  clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,10px 100%,0 calc(100% - 10px))}
+#psMenu{position:absolute; z-index:20; padding:5px; background:#FFFFFF; border:1px solid rgba(31,29,26,.10); box-shadow:0 14px 36px rgba(31,29,26,.55);
+}
 #psMenu[hidden]{display:none}
 #psMenu .mi{position:relative; display:flex; align-items:center; gap:8px; height:32px; padding:0 14px 0 30px; font-size:13px; color:var(--bone); cursor:pointer; white-space:nowrap; border-radius:3px}
-#psMenu .mi:hover{background:rgba(255,70,85,.12)}
+#psMenu .mi:hover{background:rgba(255,208,47,.12)}
 #psMenu .mi.on::before{content:""; position:absolute; left:11px; top:50%; width:4px; height:8px; margin-top:-6px; border:solid var(--red); border-width:0 2px 2px 0; transform:rotate(45deg)}
 #psMenu .mi.dis{color:var(--mut); opacity:.45; cursor:default}
 #psMenu .mi.dis:hover{background:none}
 #psMenu .mi em{font-style:normal; font-size:11px; color:var(--mut); margin-left:auto; padding-left:12px}
-#psMenu .sep{display:block; height:1px; margin:4px 6px; background:rgba(255,255,255,.12)}
+#psMenu .sep{display:block; height:1px; margin:4px 6px; background:rgba(31,29,26,.08)}
 /* 菜单内分组标题：两组（分享图「图纸 / 烫豆效果」，底部栏「无 / 烫豆效果」），选项缩进在组标题下；底部栏的烫豆效果组带「可多选」标记 */
 #psMenu .mg{display:flex; align-items:baseline; gap:8px; padding:4px 14px 2px 11px; font-size:11px; letter-spacing:.06em; color:var(--mut); white-space:nowrap; cursor:default; user-select:none}
-#psMenu .mg span{margin-left:auto; padding:1px 6px; border-radius:3px; font-size:10px; letter-spacing:0; color:var(--bone); background:rgba(255,255,255,.08)}
+#psMenu .mg span{margin-left:auto; padding:1px 6px; border-radius:3px; font-size:10px; letter-spacing:0; color:var(--bone); background:rgba(31,29,26,.06)}
 /* 底栏一行：原图开关 + 烫后小图下拉，并排 */
 .ps-foot{flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:6px; min-width:0}
 .ps-bgs{flex:none; display:flex; gap:7px; flex-wrap:wrap; padding:4px}   /* 内边距给选中色块外圈留位置，不被滚动区裁掉 */
-.ps-bgs i,.ps-bgs label{width:24px; height:24px; flex:none; cursor:pointer; position:relative; border-radius:50%; border:1px solid rgba(255,255,255,.34)}
-.ps-bgs .on{box-shadow:0 0 0 2px var(--ink),0 0 0 4px var(--red)}
+.ps-bgs i,.ps-bgs label{width:24px; height:24px; flex:none; cursor:pointer; position:relative; border-radius:50%; border:1px solid rgba(31,29,26,.16)}
+.ps-bgs .on{box-shadow:0 0 0 2px #FFFFFF,0 0 0 4px var(--acc)}
 .ps-bgs input{opacity:0; position:absolute; inset:0; width:100%; height:100%; cursor:pointer}
-.ps-bgs label{background:conic-gradient(#FF4655,#F5C542,#4FD18B,#3BA7FF,#B06CFF,#FF4655)}
-#psDl{flex:none; margin-top:4px; height:calc(var(--h) + 6px); display:flex; align-items:center; justify-content:center; font-size:15px; font-weight:700; letter-spacing:.12em;
+.ps-bgs label{background:conic-gradient(#F0BB00,#F5C542,#4FD18B,#3BA7FF,#B06CFF,#F0BB00)}
+#psDl{flex:none; margin-top:4px; height:calc(var(--h) + 6px); display:flex; align-items:center; justify-content:center; font-size:15px; font-weight:700; letter-spacing:.04em;
   color:#fff; background:var(--red); border-radius:var(--r); cursor:pointer; user-select:none}
 #psDl:hover{filter:brightness(1.12)}
 #psDl.busy{opacity:.6; pointer-events:none}
@@ -123,12 +120,12 @@ canvas#psStage{width:100%; height:100%; display:block}
 #psDl.busy .fmtn, #psDl.busy .fmt{display:none}
 #psDl .fmt{flex:none; margin-left:4px; width:calc(var(--h) - 12px); height:calc(var(--h) - 12px); padding:0;
   display:flex; align-items:center; justify-content:center; font:inherit; font-size:13px; letter-spacing:0; color:#fff; cursor:pointer;
-  background:rgba(0,0,0,.22); border:1px solid rgba(255,255,255,.35); border-radius:6px}
-#psDl .fmt:hover{background:rgba(0,0,0,.36)}
+  background:rgba(31,29,26,.22); border:1px solid rgba(255,255,255,.35); border-radius:6px}
+#psDl .fmt:hover{background:rgba(31,29,26,.36)}
 /* 背景底色与色号大小并排的包装层：宽屏不参与排版（display:contents），子项照旧平铺在控制坞里；窄屏见文件末尾 */
 /* 选项行：段名（白字，固定列宽）+ 控件同一行；段与段之间一道细线 */
 .ps-line{flex:none; display:flex; align-items:center; gap:10px; min-width:0; min-height:30px}
-.ps-line-sec{padding-top:10px; border-top:1px solid rgba(255,255,255,.07)}
+.ps-line-sec{padding-top:10px; border-top:1px solid rgba(31,29,26,.08)}
 .ps-line-main{padding-top:0; border-top:0}   /* 主图是第一段，上面不画线 */
 #psDock{container-type:inline-size}
 /* 主图的二级开关行：缩进 + 左侧一道细竖线，表示挂在主图下面；开关比一级控件小一号，放不下就自然折行 */
@@ -146,12 +143,12 @@ canvas#psStage{width:100%; height:100%; display:block}
 .ps-val{flex:none; min-width:58px; text-align:right; font-weight:400; font-size:12px; color:var(--bone); opacity:.72; white-space:nowrap}
 .ps-line .ps-bgs{padding:4px 0 4px 4px; flex-wrap:nowrap}
 /* 手机与 App 内嵌页：成品图弹出供长按保存 */
-#psSave{position:fixed; inset:0; z-index:90; background:rgba(4,7,11,.94); display:none; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px 16px}
+#psSave{position:fixed; inset:0; z-index:90; background:rgba(31,29,26,.94); display:none; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px 16px}
 #psSave.show{display:flex}
-#psSave img{max-width:100%; max-height:calc(100% - 110px); object-fit:contain; box-shadow:0 20px 60px rgba(0,0,0,.6);
+#psSave img{max-width:100%; max-height:calc(100% - 110px); object-fit:contain; box-shadow:0 20px 60px rgba(31,29,26,.6);
   -webkit-touch-callout:default; -webkit-user-select:auto; user-select:auto; touch-action:auto; pointer-events:auto}
-#psSave .tip{display:flex; flex-direction:column; align-items:center; gap:4px; color:#ECE8E1; font-size:15px; letter-spacing:.1em}
-#psSave .go{padding:12px 32px; border:0; border-radius:10px; background:#FF4655; color:#fff; font-size:16px; letter-spacing:.1em}
+#psSave .tip{display:flex; flex-direction:column; align-items:center; gap:4px; color:#1F1D1A; font-size:15px; letter-spacing:.1em}
+#psSave .go{padding:12px 32px; border:0; border-radius:10px; background:#F0BB00; color:#fff; font-size:16px; letter-spacing:.1em}
 #psSave .go[hidden],#psSave img[hidden]{display:none}
 #psSave .sz,#psSave .x{font-size:12px; color:#8B9BB0; letter-spacing:.06em}
 

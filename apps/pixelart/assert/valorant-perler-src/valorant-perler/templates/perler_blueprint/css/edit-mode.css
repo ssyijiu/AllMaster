@@ -30,20 +30,20 @@ body:not(.editing) aside > #edControls{display:none !important}
 #edBar button span{font-size:11px; color:var(--txt2); line-height:1}
 #edBar button:hover:not(:disabled){border-color:var(--line2)}
 #edBar button.on{background:var(--teal)}
-#edBar button.on i, #edBar button.on span{color:#0B141A}
+#edBar button.on i, #edBar button.on span{color:#1F1D1A}
 #edBar button:disabled{opacity:.3; cursor:default}
 /* 撤销 / 重做：紧凑的回折箭头（SVG），粗线条，不依赖系统字形宽度 */
 #edBar button svg.ed-ico{width:22px; height:22px; display:block; fill:none; stroke:currentColor; stroke-width:2.6; stroke-linecap:round; stroke-linejoin:round}
-#edBar button.on svg.ed-ico{color:#0B141A}
+#edBar button.on svg.ed-ico{color:#1F1D1A}
 /* 套索按钮右下角的小三角：提示点开有选法可选 */
 #edBar button[data-tool="lasso"]{position:relative}
 #edBar button[data-tool="lasso"]::after{content:""; position:absolute; right:3px; bottom:3px; border:3px solid transparent; border-right-color:currentColor; border-bottom-color:currentColor; opacity:.55}
-#edBar button[data-tool="lasso"].on::after{color:#0B141A}
+#edBar button[data-tool="lasso"].on::after{color:#1F1D1A}
 
 /* 套索选法：点套索按钮弹出的小选单（挪到 body 下，fixed 定位在按钮下方） */
 #edLassoMenu{
   position:fixed; z-index:60; display:none; flex-direction:column; min-width:188px; padding:4px;
-  background:var(--panel); border:1px solid var(--line2); box-shadow:0 8px 24px rgba(0,0,0,.45);
+  background:var(--panel); border:1px solid var(--line2); box-shadow:0 8px 24px rgba(31,29,26,.45);
 }
 #edLassoMenu.show{display:flex}
 #edLassoMenu button{
@@ -57,14 +57,14 @@ body:not(.editing) aside > #edControls{display:none !important}
 #edLassoMenu button b{font-size:13px; font-weight:700; line-height:1.2}
 #edLassoMenu button small{font-size:11px; color:var(--txt2); line-height:1.3}
 #edLassoMenu button:hover{border-color:var(--line2)}
-#edLassoMenu button.on{background:rgba(0,200,200,.14); border-color:var(--teal)}
+#edLassoMenu button.on{background:rgba(240,187,0,.14); border-color:var(--teal)}
 #edLassoMenu button.on b{color:var(--teal)}
 
 /* 选区浮条：贴在选区上方（位置由脚本按选区外接框算），有选区才出现 */
 #edSelPop{
   position:absolute; left:0; top:0; z-index:6; display:none; align-items:center; gap:6px;
-  padding:4px 4px 4px 10px; background:rgba(15,25,35,.94); border:1px solid var(--teal); white-space:nowrap;
-  box-shadow:0 2px 10px rgba(0,0,0,.35);
+  padding:4px 4px 4px 10px; background:rgba(255,255,255,.96); border:1px solid var(--acc); border-radius:9px; white-space:nowrap;
+  box-shadow:0 2px 10px rgba(31,29,26,.35);
 }
 body.editing.has-sel:not(.mode3d) #edSelPop{display:flex}
 #edSelN{font-family:var(--font-d); font-size:12px; letter-spacing:.06em; color:var(--teal); margin-right:2px}
@@ -84,10 +84,10 @@ body.lasso-color #edPal .sw.lasso-on{outline:2px solid var(--red); outline-offse
 #edHandBtn{
   position:absolute; right:10px; bottom:10px; z-index:6; display:none; width:44px; height:44px; padding:0;
   align-items:center; justify-content:center; cursor:pointer; border-radius:50%;
-  background:rgba(255,255,255,.92); border:1px solid #b9bec4; box-shadow:0 2px 8px rgba(0,0,0,.25);
+  background:rgba(255,255,255,.92); border:1px solid #b9bec4; box-shadow:0 2px 8px rgba(31,29,26,.25);
 }
 #edHandBtn img{width:26px; height:26px; display:block} /* 与工具条同一套定稿图标，原色显示；按钮仍是灰白圆钮，和编辑工具区分开 */
-#edHandBtn.on{background:#5b6168; border-color:#5b6168}
+#edHandBtn.on{background:#5F6478; border-color:#5F6478}
 body.editing #edHandBtn{display:flex}
 body.ironon.editing #edHandBtn{bottom:44px}
 /* 套索圈中后自动切到移动：按钮弹一下 + 青色光圈向外扩散三次，提示可以拖动选区了 */
@@ -97,10 +97,10 @@ body.ironon.editing #edHandBtn{bottom:44px}
 @media (prefers-reduced-motion: reduce){ #edHandBtn.enter{animation:none} }
 #edHandBtn.cue{animation:edHandCue .8s ease-out 3}
 @keyframes edHandCue{
-  0%{transform:scale(1); box-shadow:0 2px 8px rgba(0,0,0,.25), 0 0 0 0 rgba(0,200,200,.85)}
+  0%{transform:scale(1); box-shadow:0 2px 8px rgba(31,29,26,.25), 0 0 0 0 rgba(240,187,0,.85)}
   25%{transform:scale(1.18)}
   50%{transform:scale(1)}
-  100%{transform:scale(1); box-shadow:0 2px 8px rgba(0,0,0,.25), 0 0 0 16px rgba(0,200,200,0)}
+  100%{transform:scale(1); box-shadow:0 2px 8px rgba(31,29,26,.25), 0 0 0 16px rgba(240,187,0,0)}
 }
 @media (prefers-reduced-motion: reduce){ #edHandBtn.cue{animation:edHandCue .8s ease-out 1} }
 #edBar #edChip{
@@ -109,7 +109,7 @@ body.ironon.editing #edHandBtn{bottom:44px}
 }
 #edChip[aria-expanded="true"]{border-color:var(--teal); background:var(--panel2)}
 #edChip:hover{border-color:var(--teal)}
-#edChip .sw{width:36px; height:36px; border:1px solid rgba(255,255,255,.3)}
+#edChip .sw{width:36px; height:36px; border:1px solid rgba(31,29,26,.14)}
 #edChip .cd{font-family:var(--font-d); font-weight:700; font-size:15px; letter-spacing:.05em}
 #edPal{
   display:none; max-height:min(260px,30vh);
@@ -126,7 +126,7 @@ body.ironon.editing #edHandBtn{bottom:44px}
 #edPal .bd{overflow-y:auto; padding:0 12px 12px; flex:1; min-height:0}
 #edPal .sec{font-size:11px; color:var(--txt2); margin:10px 0 6px; letter-spacing:.08em}
 #edPal .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(38px,1fr)); gap:4px}
-#edPal .sw{aspect-ratio:1; cursor:pointer; border:1px solid rgba(255,255,255,.14); position:relative;
+#edPal .sw{aspect-ratio:1; cursor:pointer; border:1px solid rgba(31,29,26,.10); position:relative;
   display:flex; align-items:center; justify-content:center; text-align:center; overflow:hidden;
   font-family:var(--font-d); font-weight:700; font-size:9px; line-height:1; letter-spacing:0}
 #edPal .sw.long{font-size:7px; word-break:break-all; padding:1px}   /* 长色号（如 Perler 80-15179）折两行 */
@@ -135,8 +135,8 @@ body.ironon.editing #edHandBtn{bottom:44px}
 #edColorSec .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(62px,1fr)); gap:6px; margin:4px 0 8px}
 /* 颜色块：色样 · 色号 · 颗数 · 占比条；点即选用 */
 /* 上半是色样、色号直接写在色样上（字色由 txtOn 按明暗取深 / 浅）；下半深色条写颗数；最底一道细占比条 */
-.ed-count{display:flex; flex-direction:column; align-items:stretch; gap:0; padding:0; border:1px solid var(--line); background:var(--panel2); color:var(--txt); cursor:pointer; min-width:0; position:relative; text-align:center; overflow:hidden; clip-path:var(--cut-tr)}
-.ed-count .sw{position:relative; width:100%; height:30px; display:flex; align-items:center; justify-content:center; border-bottom:1px solid rgba(0,0,0,.25)}
+.ed-count{display:flex; flex-direction:column; align-items:stretch; gap:0; padding:0; border:1px solid var(--line); background:var(--panel2); color:var(--txt); cursor:pointer; min-width:0; position:relative; text-align:center; overflow:hidden; border-radius:9px}
+.ed-count .sw{position:relative; width:100%; height:30px; display:flex; align-items:center; justify-content:center; border-bottom:1px solid rgba(31,29,26,.25)}
 .ed-count .code{font-family:var(--font-d); font-size:14px; font-weight:700; letter-spacing:.04em; line-height:1; overflow-wrap:anywhere; padding:0 2px}
 .ed-count .sw.long .code{font-size:10px; letter-spacing:0}
 .ed-count .sw.empty .code{color:var(--bg); font-size:12px}
@@ -152,16 +152,16 @@ body.ironon.editing #edHandBtn{bottom:44px}
 .ed-more:hover, .ed-more.on{border-color:var(--teal); color:var(--teal)}
 /* 全部色号区：住在颜色区块里、在用色块下方展开 */
 #edColorSec #edPal{border-top:1px solid var(--line2); margin:0 0 8px}
-#edPal .sw.used::after{content:attr(data-count); position:absolute; right:0; bottom:0; font-size:7px; line-height:1; padding:1px 2px; background:rgba(15,25,35,.85); color:var(--teal); font-weight:700}
+#edPal .sw.used::after{content:attr(data-count); position:absolute; right:0; bottom:0; font-size:7px; line-height:1; padding:1px 2px; background:rgba(255,255,255,.85); color:var(--teal); font-weight:700}
 /* 空白（不放豆）：钉板底色 + 红斜线 */
-.sw.empty{background:linear-gradient(135deg, transparent 46%, #FF4655 46% 54%, transparent 54%), var(--paper) !important}
+.sw.empty{background:linear-gradient(135deg, transparent 46%, #F0BB00 46% 54%, transparent 54%), var(--paper) !important}
 body.editing .hud{bottom:10px}
 /* 页内确认框（替代浏览器 confirm）：盖在图纸区上，图纸仍隐约可见 */
-#edModal{position:absolute; inset:0; z-index:20; display:none; align-items:center; justify-content:center; background:rgba(10,16,22,.55)}
+#edModal{position:absolute; inset:0; z-index:20; display:none; align-items:center; justify-content:center; background:rgba(31,29,26,.45)}
 #edModal.show{display:flex}
 #edModal .box{
   width:340px; background:var(--panel); border:1px solid var(--line2); border-top:3px solid var(--red);
-  clip-path:var(--cut); padding:20px 20px 16px; box-shadow:0 16px 48px rgba(0,0,0,.5);
+  border-radius:14px; padding:20px 20px 16px; box-shadow:0 16px 48px rgba(31,29,26,.22);
 }
 #edModal .t{font-family:var(--font-d); font-weight:700; font-size:16px; letter-spacing:.08em; margin-bottom:8px}
 #edModal .m{font-size:13px; color:var(--txt2); line-height:1.6; margin-bottom:18px}
@@ -189,7 +189,7 @@ body.editing #edBadge{display:block; animation:edBreath 1.8s ease-in-out forward
 /* 浏览态：可单击格子的提示 */
 #edTip{
   position:absolute; z-index:6; pointer-events:none; display:none; white-space:nowrap;
-  background:rgba(15,25,35,.92); color:var(--txt); border-left:3px solid var(--teal);
+  background:rgba(255,255,255,.96); color:var(--txt); border:1px solid var(--line); border-left:3px solid var(--acc); border-radius:8px;
   font-size:12px; padding:5px 9px;
 }
 #edTip.show{display:block}
@@ -198,7 +198,7 @@ body.editing #edBadge{display:block; animation:edBreath 1.8s ease-in-out forward
 #edHoldRing{
   position:absolute; z-index:7; width:38px; height:38px; margin:-19px 0 0 -19px; border-radius:50%;
   pointer-events:none; display:none;
-  background:conic-gradient(var(--red) var(--p,0%), rgba(15,25,35,.35) 0);
+  background:conic-gradient(var(--red) var(--p,0%), rgba(255,255,255,.35) 0);
   -webkit-mask:radial-gradient(circle, transparent 12px, #000 13px); mask:radial-gradient(circle, transparent 12px, #000 13px);
 }
 #edHoldRing.show{display:block; animation:edHold 330ms linear forwards}

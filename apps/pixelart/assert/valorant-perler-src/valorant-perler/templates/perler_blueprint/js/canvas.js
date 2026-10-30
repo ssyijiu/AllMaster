@@ -39,7 +39,7 @@ function draw() {
 
   // 图纸面板（纸面上微深一档，衬出豆格区域）。[IRON hook] 烫豆预览是撕下来的成品，没有豆板：不画面板与外框
   if (!state.meltOn) {
-    ctx.fillStyle = '#EDE9DF';
+    ctx.fillStyle = '#F2F3F6';
     ctx.fillRect(state.ox - 1, state.oy - 1, GW * s + 2, GH * s + 2);
   }
 
@@ -85,7 +85,7 @@ function draw() {
       if (isCur) curCells.push(x0, j);  // 在拼格 / 编辑态选色反馈：豆面照常画，网格线之后在这片区域的外轮廓上描荧光边
       if (s >= CODE_PX) { // 色号文字 [EDIT-MODE hook] 阈值与单击编辑共用
         ctx.fillStyle = txtOn(c.rgb);
-        ctx.font = `600 ${Math.min(s * 0.30, 15)}px Rajdhani, sans-serif`;
+        ctx.font = `600 ${Math.min(s * 0.30, 15)}px 'PingFang SC', 'Noto Sans SC', sans-serif`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(c.code, x + s/2, y + s/2 + 0.5);
       }
@@ -116,7 +116,7 @@ function draw() {
     ctx.stroke();
   }
   // 外框
-  if (!state.meltOn) { ctx.strokeStyle = '#8A8272'; ctx.lineWidth = 1.5; ctx.strokeRect(state.ox, state.oy, GW * s, GH * s); }
+  if (!state.meltOn) { ctx.strokeStyle = '#D3D7DE'; ctx.lineWidth = 1.5; ctx.strokeRect(state.ox, state.oy, GW * s, GH * s); }
   if (curCells.length && hlSet) {                // 多色高亮：按色分组，各描各色的荧光边
     const by = new Map();
     for (let k = 0; k < curCells.length; k += 2) {
@@ -214,20 +214,20 @@ function drawGlowEdge(cells, c, s, glow = 1, noCodes = false) {
 }
 function drawGlowCodes(cells, c, s) {
   if (s < CODE_PX) return;
-  ctx.fillStyle = txtOn(c.rgb); ctx.font = `600 ${Math.min(s * 0.30, 15)}px Rajdhani, sans-serif`;
+  ctx.fillStyle = txtOn(c.rgb); ctx.font = `600 ${Math.min(s * 0.30, 15)}px 'PingFang SC', 'Noto Sans SC', sans-serif`;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   for (let k = 0; k < cells.length; k += 2) ctx.fillText(c.code, state.ox + cells[k] * s + s / 2, state.oy + cells[k + 1] * s + s / 2 + 0.5);
 }
 
 function drawRulers(W, H, s) {
   const step = [1, 5, 10, 20, 50, 100].find(k => k * s >= 22) || 100; // 相邻刻度至少 22px
-  ctx.fillStyle = '#E3DDCF';
+  ctx.fillStyle = '#F2F3F6';
   ctx.fillRect(0, 0, W, RULER); ctx.fillRect(0, 0, RULER, H);
-  ctx.strokeStyle = '#C9C2B2'; ctx.lineWidth = 1;
+  ctx.strokeStyle = '#E5E7EC'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, RULER + .5); ctx.lineTo(W, RULER + .5);
   ctx.moveTo(RULER + .5, 0); ctx.lineTo(RULER + .5, H); ctx.stroke();
-  ctx.fillStyle = '#5B6B7A'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.font = '600 11px Rajdhani, sans-serif';
+  ctx.fillStyle = '#C3C8D2'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = "600 11px 'PingFang SC', 'Noto Sans SC', sans-serif";
   for (let i = 0; i < GW; i++) {
     const n = i + 1;
     if (n % step !== 0 && n !== 1 && n !== GW) continue;
