@@ -97,6 +97,12 @@ SPECK_QUANT = 6         # 判定「同色」的量化粒度
 SPECK_MAX_PX = 14       # 同色连通域小于这么大就当散点（约 3x4 像素）
 SPECK_MAX_RATIO = 0.08  # 散点占主体超过这个比例就整体放过：那多半是细颗粒画法不是噪点
 
+# —— 方格吸附（v9.1）——
+# 参照端是专用像素模型，输出天生是大小一致、行列对齐的方格点阵；通用模型画出来的是
+# 大小不一、边缘参差的碎块。吸附成 3px 方格后，底稿才有真正的像素块结构
+# （放大目检：3px 最接近参照端的块大小，2px 更保细节但仍有碎块感）。
+GRID_CELL = 3
+
 # —— 诊断埋点（默认全关，环境变量开启）——
 # PERLER_CLEANUP_JSON=<path>   写完整诊断 JSON（链路侧据此决定是否留 RAW）
 # PERLER_CLEANUP_TRACE=<path>  追加一行 JSONL，长期统计「光晕触发率」
@@ -204,6 +210,41 @@ def suppress_halo_rgb(rgb: np.ndarray, opaque: np.ndarray,
     out[halo_px] = rgb[iy[halo_px], ix[halo_px]]
     info["halo_pixels"] = int(halo_px.sum())
     return out, info
+
+
+def grid_snap(rgb: np.ndarray, opaque: np.ndarray, cell: int = GRID_CELL) -> np.ndarray:
+    """把底稿吸附到 cell×cell 的方格：每个方格取其中位数色，整格铺平。
+
+    为什么需要这一步：参照后端是专用像素模型，输出天然是**大小一致、行列对齐的方格点阵**；
+    通用生图模型画出来的小块大小不一、边缘参差，放大看是碎块感而不是像素画。
+    吸附后底稿才有真正的「像素块」结构（实测 3px 最接近参照端的块大小）。
+    用中位数而不是均值：取的是模型本来就画出来的颜色，不凭空造中间色。
+    """
+    h, w = opaque.shape
+    gh, gw = h // cell, w // cell
+    if gh < 4 or gw < 4:
+        return rgb
+    # 向量化：切块 → 用 nanmedian 跳过透明像素（比逐格 Python 循环快约 10 倍）
+    blk = rgb[:gh * cell, :gw * cell].reshape(gh, cell, gw, cell, 3)
+    msk = opaque[:gh * cell, :gw * cell].reshape(gh, cell, gw, cell)
+    cover = cell * cell
+    filled = msk.sum(axis=(1, 3)) >= max(2, cover // 3)   # 几乎全在主体外的格子留空
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        small = np.nanmedian(np.where(msk[..., None], blk, np.nan), axis=(1, 3))
+    small = np.nan_to_num(small, nan=0.0).astype(np.float32)
+    if not filled.any():
+        return rgb
+    if not filled.all():
+        _, (iy, ix) = distance_transform_edt(~filled, return_indices=True)
+        miss = ~filled
+        small[miss] = small[iy[miss], ix[miss]]
+    up = np.repeat(np.repeat(small, cell, axis=0), cell, axis=1)
+    up = np.pad(up, ((0, max(0, h - up.shape[0])), (0, max(0, w - up.shape[1])),
+                     (0, 0)), mode="edge")[:h, :w]
+    out = rgb.copy()
+    out[opaque] = up[opaque]
+    return out
 
 
 def median_run(rgb: np.ndarray, opaque: np.ndarray, rows: int = 24) -> float:
@@ -599,7 +640,12 @@ def _clean_image(src: Path, dst: Path, erode: int = ERODE_DEFAULT) -> dict:
     rgb, halo_info = suppress_halo_rgb(rgb, opaque, inner)
     info.update(halo_info)
 
-    # 3) 散点清理（v9：只动「同色小连通域」，不动成片的明暗档）
+    # 3) 方格吸附：把模型画的碎块对齐成大小一致的像素块（参照端的标志性结构）
+    if GRID_CELL > 1:
+        rgb = grid_snap(rgb, opaque, GRID_CELL)
+        info["grid_cell"] = GRID_CELL
+
+    # 4) 散点清理（v9：只动「同色小连通域」，不动成片的明暗档）
     #    v8 之前是先把全图并成几十~几百档再重建——那样连模型好不容易画出的细色块
     #    一起并掉了，底稿观感退回「大色片」；实测 5 组里 3 组是「不清洗」更接近
     #    参照端，只有背景噪点重的图才需要洗。所以改成定向去散点。

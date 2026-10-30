@@ -106,6 +106,10 @@ def run_render(script: str, prompt: Path, src: Path, dst: Path, env_extra: dict,
     遇到就按它给的 retry_after 等一会儿再来，所以它的重试次数给得多一些。"""
     env = dict(os.environ, NO_PROXY="*", **env_extra)
     tries = 6 if script == "image_render_vp.py" else max(retries, 4)
+    # 开跑前先删掉旧产物：否则某次渲染失败时，"目标文件已存在且够大" 会被误判成成功，
+    # 拿到的其实是上一轮（旧提示词）的图——这个坑让 G35 的描边数据白测了一轮。
+    if dst.is_file():
+        dst.unlink()
     for attempt in range(1, tries + 1):
         r = subprocess.run([PY, str(SCRIPTS / script), "--prompt", str(prompt),
                             "--image", str(src), "--output", str(dst)],
