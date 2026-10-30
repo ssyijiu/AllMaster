@@ -43,4 +43,5 @@ ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$HOST" "
   printf '    云服务反代 → '
   curl -s -o /dev/null -w '%{http_code}\n' -H 'x-wb-webapp-access-key: wbpk_eoMql05K7PT2JgZUKFFOo9_9vLkFanCYcm67RRrIgxoEnsGnDS52YEM' http://127.0.0.1:$APP_PORT/.cloud/database/rest/app_products?select=id\&limit=1
 "
-echo "发布完成 → http://123.207.22.47:$APP_PORT/apps/avatar/"
+echo "发布完成 → $HOST:$APP_PORT"
+echo "  目标机器：$HOST  目录：$REMOTE_DIR  端口：$APP_PORT"

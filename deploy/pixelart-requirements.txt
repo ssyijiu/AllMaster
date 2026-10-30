@@ -1,0 +1,11 @@
+# 拼豆算法链 Python 依赖（与广州生产机 venv 实测版本一致，2026-10-30 导出）
+# 用途：新机器初始化时创建 /opt/allmaster/.venv 并安装
+# 国内机器建议加速：pip install -r ... -i https://pypi.tuna.tsinghua.edu.cn/simple
+# 境外机器（如雅加达）直连官方源即可
+numpy==2.2.6
+scipy==1.15.3
+pillow==12.3.0
+opencv-python-headless==5.0.0.93
+scikit-image==0.25.2
+scikit-learn==1.7.2
+requests==2.34.2
