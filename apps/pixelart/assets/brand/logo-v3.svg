@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <!-- 点豆 DotBeads Logo v3 · 头像安全版（方形底）
+       相对 v2 的修正：原 v2 图形视觉包围盒中心在 (56,51)，整体偏右下，
+       而「点」的圆心距画布中心 42.5 + 半径 7 = 49.5，超出圆形头像内切圆半径 48 → 会被切边。
+       v3 将 D + 点作为一个整体按 bbox 中心对齐画布中心并等比缩至 90%：
+       点最远点距中心 37.5（内切圆余量 10.5，严格 40 安全圈余量 2.5），方底四角留白均匀。 -->
+  <rect width="96" height="96" rx="22" fill="#FFD02F"/>
+  <g transform="translate(-2.4 2.1) scale(0.9)">
+    <path d="M32 26 H44 C 60 26 70 35 70 48 C 70 61 60 70 44 70 H32"
+          fill="none" stroke="#1F1D1A" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="80" cy="76" r="7" fill="#1F1D1A"/>
+  </g>
+</svg>

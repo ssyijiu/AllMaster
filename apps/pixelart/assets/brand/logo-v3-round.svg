@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <!-- 点豆 DotBeads Logo v3 · 头像安全版（圆形底）
+       用于圆形头像/圆形 App 图标场景：黄底直接做成圆，避免方形底四角被裁剪后出现切边。
+       图形几何与 logo-v3.svg 完全一致（bbox 居中 + 90% 缩放）。 -->
+  <circle cx="48" cy="48" r="48" fill="#FFD02F"/>
+  <g transform="translate(-2.4 2.1) scale(0.9)">
+    <path d="M32 26 H44 C 60 26 70 35 70 48 C 70 61 60 70 44 70 H32"
+          fill="none" stroke="#1F1D1A" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="80" cy="76" r="7" fill="#1F1D1A"/>
+  </g>
+</svg>
