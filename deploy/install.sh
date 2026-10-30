@@ -55,7 +55,13 @@ chown "$APP_USER:$APP_USER" "$APP_DIR"/.ai-config.json "$APP_DIR"/.pay-config.js
 
 echo "==> 4/8 安装 systemd 服务"
 if [ -f "$APP_DIR/deploy/allmaster.service" ]; then
-  cp "$APP_DIR/deploy/allmaster.service" /etc/systemd/system/allmaster.service
+  # unit 模板里写死 /opt/allmaster + /usr/local/bin/node；按本机实际情况改写
+  # （广州机 node 由 nvm 装在 /usr/local/bin，apt 装的在 /usr/bin，必须探测）
+  NODE_BIN="$(command -v node || echo /usr/bin/node)"
+  sed -e "s#/opt/allmaster#$APP_DIR#g" \
+      -e "s#^ExecStart=.*#ExecStart=$NODE_BIN $APP_DIR/server.js#" \
+      "$APP_DIR/deploy/allmaster.service" > /etc/systemd/system/allmaster.service
+  echo "  ExecStart=$NODE_BIN $APP_DIR/server.js"
   systemctl daemon-reload
   if [ "$HAVE_CODE" = "1" ]; then
     systemctl enable --now allmaster

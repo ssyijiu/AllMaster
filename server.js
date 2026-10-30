@@ -586,6 +586,9 @@ function handlePixelartEnvCheck(res, deep, variant) {
   if (!py) { return sendJson(res, 500, { error: { message: '无法启动探测进程' } }); }
 }
 
+/* 根级「只给服务器看」的文件名（小写比较），不经 HTTP 下发 */
+const SERVER_ONLY_FILES = ['server.js', 'package.json', 'package-lock.json', 'architecture.md', 'readme.md'];
+
 function serveStatic(req, res) {
   const url = new URL(req.url, 'http://localhost');
   let pathname = decodeURIComponent(url.pathname);
@@ -598,6 +601,13 @@ function serveStatic(req, res) {
   }
   /* assert 目录存放产品源码/资产备份，不经 HTTP 下发 */
   if (safePath.split('/').includes('assert')) {
+    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('403 Forbidden');
+  }
+  /* 服务端文件不下发：server.js 源码暴露全部路由与反代逻辑，deploy/ 里的脚本含服务器
+     IP、部署路径与密钥文件名，package.json / 架构文档同理。只放行前端资产。 */
+  const firstSeg = ((safePath.split('/').filter(Boolean)[0]) || '').toLowerCase();
+  if (firstSeg === 'deploy' || SERVER_ONLY_FILES.includes(firstSeg)) {
     res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
     return res.end('403 Forbidden');
   }
