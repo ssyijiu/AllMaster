@@ -18,6 +18,7 @@
 用法：
   python3 风格体检.py                 # 扫 assert/生图对比 下所有含 A_/B_ 转换图的组
   python3 风格体检.py 31 52           # 只扫指定组
+  python3 风格体检.py --ours 54 68    # 新样本只有我方 raw：先跑色块规整再量（有 A_ 的顺带比）
 """
 from __future__ import annotations
 
@@ -103,12 +104,49 @@ def tag_of(name: str) -> str:
     return parts[2] if len(parts) > 2 else "-"
 
 
+def _cleanup_mod():
+    """按需加载 block_cleanup：只有 --ours 模式（要跑色块规整）才用得到。"""
+    import importlib.util
+    p = Path(__file__).resolve().parents[1] / "assert" / "valorant-perler-src" \
+        / "valorant-perler" / "scripts" / "block_cleanup.py"
+    spec = importlib.util.spec_from_file_location("block_cleanup", p)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def latest_ours(group: str):
+    """raw/G<组>/ours_*_raw.png 里最新的那份（同一组可能跑过多个画风）。"""
+    d = DATA / "raw" / f"G{group}"
+    if not d.is_dir():
+        return None
+    c = sorted(d.glob("ours_*_raw.png"), key=lambda p: p.stat().st_mtime)
+    return c[-1] if c else None
+
+
 def main(argv: list[str]) -> None:
-    groups = argv if argv else sorted(
+    args = [a for a in argv if not a.startswith("--")]
+    ours_mode = "--ours" in argv      # 新样本只有我方 raw：先跑色块规整再量
+    groups = args if args else sorted(
         [d.name for d in DATA.iterdir() if d.is_dir() and d.name != "raw"],
         key=lambda x: int(x))
+    keys = ["fill", "colors", "lvl10k", "flat", "dark", "darkrim", "rimw", "edgeΔ"]
     rows = []
+    tmp = DATA / "raw" / ".体检临时"
     for g in groups:
+        if ours_mode:
+            src = latest_ours(g)
+            if not src:
+                continue
+            tmp.mkdir(parents=True, exist_ok=True)
+            dst = tmp / f"G{g}.png"
+            _cleanup_mod().clean_image(src, dst)
+            mb = metrics(dst)
+            a, _ = find_pair(DATA / g)
+            ma = metrics(a) if a else None
+            if mb:
+                rows.append((g, src.stem.replace("ours_", "").replace("_raw", ""), ma, mb))
+            continue
         d = DATA / g
         a, b = find_pair(d)
         if not (a and b):
@@ -118,21 +156,27 @@ def main(argv: list[str]) -> None:
             continue
         rows.append((g, tag_of(a.name), ma, mb))
 
-    keys = ["fill", "colors", "lvl10k", "flat", "dark", "darkrim", "rimw", "edgeΔ"]
+    if not rows:
+        print("没有找到可量的图（--ours 模式下需要 raw/G<组>/ours_*_raw.png）")
+        return
     print(f"组  标签      " + " ".join(f"{k:>7}" for k in keys) + "   （上=val-perler 下=我方）")
     for g, tag, ma, mb in rows:
-        print(f"{g:>3} {tag:<8}" + " ".join(f"{ma[k]:>7.3f}" for k in keys))
-        print(f"    {'':<8}" + " ".join(f"{mb[k]:>7.3f}" for k in keys))
-    if not rows:
-        print("没有找到成对的 A/B 转换图")
-        return
+        if ma:
+            print(f"{g:>3} {tag:<8}" + " ".join(f"{ma[k]:>7.3f}" for k in keys))
+        print(f"{'' if ma else g:>3} {'' if ma else tag:<8}"
+              + " ".join(f"{mb[k]:>7.3f}" for k in keys))
     print("\n" + "=" * 96)
     print("汇总均值")
     for label, idx in (("val-perler", 2), ("我方", 3)):
-        print(f"  {label:<12}" + " ".join(
-            f"{k}={np.mean([r[idx][k] for r in rows]):.3f}" for k in keys))
+        vs = [r[idx] for r in rows if r[idx]]
+        if vs:
+            print(f"  {label:<12}" + " ".join(
+                f"{k}={np.mean([v[k] for v in vs]):.3f}" for k in keys))
     print("\n逐组 Δ（我方 − 参照端，>0 是我方更高）")
     for g, tag, ma, mb in rows:
+        if not ma:
+            print(f"  G{g:<3}{tag:<8}(无参照端)")
+            continue
         d = " ".join(f"{k}{mb[k] - ma[k]:+.2f}" for k in ("colors", "lvl10k", "flat", "darkrim"))
         print(f"  G{g:<3}{tag:<8}{d}")
 

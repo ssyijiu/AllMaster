@@ -33,3 +33,9 @@ __pycache__/
 
 # ===== 算法对比数据集（30 组生图对比原图+输出，372MB，不入库）=====
 apps/pixelart/assert/生图对比/
+
+# ===== 算法测试原图：图片体积大，本地保留即可；manifest.json（含 subject 判读）入仓库 =====
+apps/pixelart/assert/算法测试原图/**/*.png
+apps/pixelart/assert/算法测试原图/**/*.jpg
+apps/pixelart/assert/算法测试原图/**/*.jpeg
+apps/pixelart/assert/算法测试原图/**/*.webp

@@ -1,0 +1,173 @@
+{
+  "1_original": {
+    "group": 54,
+    "seq": "1",
+    "style": "original",
+    "subject": "prop",
+    "notes": "保留所有元素",
+    "cat": "01-文字徽章",
+    "file": "01-文字徽章/01_还原_保留所有元素.png"
+  },
+  "2_original": {
+    "group": 55,
+    "seq": "2",
+    "style": "original",
+    "subject": "prop",
+    "notes": "保留所有元素",
+    "cat": "01-文字徽章",
+    "file": "01-文字徽章/02_还原_保留所有元素.png"
+  },
+  "3_original": {
+    "group": 56,
+    "seq": "3",
+    "style": "original",
+    "subject": "prop",
+    "notes": "",
+    "cat": "01-文字徽章",
+    "file": "01-文字徽章/03_还原.png"
+  },
+  "4_original": {
+    "group": 57,
+    "seq": "4",
+    "style": "original",
+    "subject": "prop",
+    "notes": "",
+    "cat": "01-文字徽章",
+    "file": "01-文字徽章/04_还原.png"
+  },
+  "5_original": {
+    "group": 58,
+    "seq": "5",
+    "style": "original",
+    "subject": "prop",
+    "notes": "",
+    "cat": "01-文字徽章",
+    "file": "01-文字徽章/05_还原png.png"
+  },
+  "6_original": {
+    "group": 59,
+    "seq": "6",
+    "style": "original",
+    "subject": "prop",
+    "notes": "",
+    "cat": "01-文字徽章",
+    "file": "01-文字徽章/06_还原.png"
+  },
+  "7_original": {
+    "group": 60,
+    "seq": "7",
+    "style": "original",
+    "subject": "character",
+    "notes": "",
+    "cat": "03-透明底",
+    "file": "03-透明底/07_还原.png"
+  },
+  "8_original": {
+    "group": 61,
+    "seq": "8",
+    "style": "original",
+    "subject": "prop",
+    "notes": "",
+    "cat": "03-透明底",
+    "file": "03-透明底/08_还原.png"
+  },
+  "9_chibi": {
+    "group": 62,
+    "seq": "9",
+    "style": "chibi",
+    "subject": "character",
+    "notes": "",
+    "cat": "03-透明底",
+    "file": "03-透明底/09_Q版.png"
+  },
+  "9_original": {
+    "group": 63,
+    "seq": "9",
+    "style": "original",
+    "subject": "character",
+    "notes": "",
+    "cat": "03-透明底",
+    "file": "03-透明底/09_还原.png"
+  },
+  "10_original": {
+    "group": 64,
+    "seq": "10",
+    "style": "original",
+    "subject": "prop",
+    "notes": "保留光线",
+    "cat": "04-极端光线",
+    "file": "04-极端光线/10_还原_保留光线.png"
+  },
+  "11_original": {
+    "group": 65,
+    "seq": "11",
+    "style": "original",
+    "subject": "prop",
+    "notes": "",
+    "cat": "04-极端光线",
+    "file": "04-极端光线/11_还原.png"
+  },
+  "12_original": {
+    "group": 66,
+    "seq": "12",
+    "style": "original",
+    "subject": "prop",
+    "notes": "",
+    "cat": "04-极端光线",
+    "file": "04-极端光线/12_还原.png"
+  },
+  "13_original": {
+    "group": 67,
+    "seq": "13",
+    "style": "original",
+    "subject": "prop",
+    "notes": "完全保留所有元素",
+    "cat": "04-极端光线",
+    "file": "04-极端光线/13_还原_完全保留所有元素png.png"
+  },
+  "14_chibi": {
+    "group": 68,
+    "seq": "14",
+    "style": "chibi",
+    "subject": "character",
+    "notes": "",
+    "cat": "04-极端光线",
+    "file": "04-极端光线/14_Q版.png"
+  },
+  "15_chibi": {
+    "group": 69,
+    "seq": "15",
+    "style": "chibi",
+    "subject": "character",
+    "notes": "",
+    "cat": "05-发丝衣物",
+    "file": "05-发丝衣物/15_Q版.png"
+  },
+  "16_chibi": {
+    "group": 70,
+    "seq": "16",
+    "style": "chibi",
+    "subject": "character",
+    "notes": "",
+    "cat": "05-发丝衣物",
+    "file": "05-发丝衣物/16_Q版.png"
+  },
+  "17_chibi": {
+    "group": 71,
+    "seq": "17",
+    "style": "chibi",
+    "subject": "character",
+    "notes": "",
+    "cat": "05-发丝衣物",
+    "file": "05-发丝衣物/17_Q版.png"
+  },
+  "18_chibi": {
+    "group": 72,
+    "seq": "18",
+    "style": "chibi",
+    "subject": "character",
+    "notes": "",
+    "cat": "05-发丝衣物",
+    "file": "05-发丝衣物/18_Q版.png"
+  }
+}

@@ -241,10 +241,12 @@ def render(prompt_path: Path, image: Path | None, output: Path,
                                   json=form, timeout=HTTP_TIMEOUT)
     else:
         mime = mimetypes.guess_type(image.name)[0] or "application/octet-stream"
-        with image.open("rb") as fh:
-            resp = request_with_retry("POST", f"{base}/images/edits", "提交",
-                                      headers=auth, data=form,
-                                      files={"image": (image.name, fh, mime)}, timeout=HTTP_TIMEOUT)
+        # 先把图读进内存再传：重试时若复用同一个文件句柄，它已经被第一次请求读到 EOF，
+        # 第二次上传的就是 0 字节，网关会回 file_zero_bytes（线上偶发 502 重试就会踩到）。
+        resp = request_with_retry("POST", f"{base}/images/edits", "提交",
+                                  headers=auth, data=form,
+                                  files={"image": (image.name, image.read_bytes(), mime)},
+                                  timeout=HTTP_TIMEOUT)
     if resp.status_code in (401, 403):
         fail(f"提交：HTTP {resp.status_code}（API Key 无效或无权限），{service_error(resp)}")
     if resp.status_code != 200:

@@ -129,10 +129,24 @@ def run_render(script: str, prompt: Path, src: Path, dst: Path, env_extra: dict,
     return False, tail
 
 
+# spec 的第 3 段既可能是画风也可能是备注，靠这张表区分（与登记新原图.py 的 STYLE_MAP 一致）
+KNOWN_STYLES = {"还原", "Q版", "q版", "官方同款", "贴纸", "像素大头", "像素大头小图",
+                "手绘头像", "柔彩手绘", "粉彩手绘", "低饱和彩铅", "手绘小人", "简笔小人",
+                "手绘表情包",
+                "original", "chibi", "official", "mini-sticker", "pixel-head",
+                "hand-avatar", "soft-color", "low-sat-pencil"}
+
+
 def one_job(spec: str, with_vp: bool) -> tuple[str, str]:
-    group, subject, desc = (spec.split(":", 2) + ["", ""])[:3]
+    """spec = 组号[:subject][:画风][:备注]；第 3 段在 KNOWN_STYLES 里才算画风，否则当备注。"""
+    group, subject, third, fourth = (spec.split(":") + ["", "", "", ""])[:4]
     subject = subject or "prop"
-    style = getattr(one_job, "style", "")
+    if third in KNOWN_STYLES:
+        style, desc = third, fourth
+    else:
+        style, desc = "", (third or fourth)
+    if not style:
+        style = getattr(one_job, "style", "")
     if getattr(one_job, "use_pair", False):
         # 直接用用户那对转换图文件名里写的画风标签与备注，口径和他手上那张 val-perler 一致
         ptag, pnotes = pair_meta(group)
