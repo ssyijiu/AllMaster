@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>我的作品 · 点豆科技</title>
+  <meta name="description" content="点豆科技账号下的作品与积分明细：头像与拼豆图纸云端保存，换设备登录即可查看。" />
+  <link rel="icon" href="/apps/pixelart/assets/brand/logo-v3-round.svg" />
+  <link rel="stylesheet" href="/shared/base.css" />
+  <link rel="stylesheet" href="/shared/my.css?v=20261030a" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/">点豆<span class="brand-en">DOTBEADS</span></a>
+      <nav class="topnav" aria-label="产品导航">
+        <a href="/">拼豆</a>
+        <a href="/apps/avatar/">成像</a>
+        <a class="cur" href="/my" aria-current="page">我的</a>
+      </nav>
+      <div class="topbar-actions">
+        <button class="btn secondary" id="btnLogin" type="button" hidden>登录</button>
+        <span class="user-chip" id="userChip" hidden><span id="userChipText"></span></span>
+        <button class="btn secondary small" id="btnWallet" type="button" hidden title="点击查看积分与充值">
+          <span>积分 <b id="walletBalance">–</b></span>
+        </button>
+        <button class="btn ghost small" id="btnSignOut" type="button" hidden>退出</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="page-head">
+      <h1>我的作品</h1>
+      <p class="hint">生成记录保存在云端，换设备登录即可看到；最多显示最近 30 条。</p>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button class="tab cur" id="tabWorks" type="button" role="tab" aria-selected="true">作品</button>
+      <button class="tab" id="tabTxns" type="button" role="tab" aria-selected="false">积分明细</button>
+    </div>
+
+    <section id="panelWorks">
+      <div class="filters" id="workFilters">
+        <button class="chip cur" type="button" data-filter="all">全部</button>
+        <button class="chip" type="button" data-filter="avatar">成像 · 头像</button>
+        <button class="chip" type="button" data-filter="pixelart">点豆 · 图纸</button>
+      </div>
+      <div class="works-grid" id="worksGrid"></div>
+      <div class="empty" id="worksEmpty" hidden></div>
+    </section>
+
+    <section id="panelTxns" hidden>
+      <div class="txn-list" id="txnList"><p class="hint">加载中…</p></div>
+    </section>
+  </main>
+
+  <div class="modal-mask" id="loginModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+      <div class="modal-head">
+        <h3 id="loginTitle">登录</h3>
+        <button class="btn ghost" id="btnCloseLogin" type="button" aria-label="关闭登录">×</button>
+      </div>
+      <p class="modal-desc">登录后作品与积分全平台同步，换设备也不丢。</p>
+
+      <span class="group-label">手机验证码登录 / 注册</span>
+      <label class="field-label" for="loginPhone">手机号</label>
+      <div class="phone-row">
+        <input type="tel" id="loginPhone" class="text-input mono" inputmode="numeric" maxlength="11" placeholder="请输入 11 位手机号" autocomplete="tel" />
+        <button class="btn secondary small" id="btnSendCode" type="button">获取验证码</button>
+      </div>
+      <p class="field-error" id="errPhone" hidden>请输入正确的 11 位手机号</p>
+
+      <label class="field-label" for="loginCode">验证码</label>
+      <input type="text" id="loginCode" class="text-input mono" inputmode="numeric" maxlength="6" placeholder="短信验证码" autocomplete="one-time-code" />
+      <p class="field-error" id="errCode" hidden>请输入正确的验证码</p>
+
+      <button class="btn primary big" id="btnPhoneLogin" type="button">登录 / 注册</button>
+
+      <div class="login-divider"><span>或</span></div>
+      <button class="btn ghost big" id="btnWechatLogin" type="button">微信扫码 / 一键登录</button>
+      <p class="hint" id="loginMsg"></p>
+    </div>
+  </div>
+
+  <div class="modal-mask" id="walletModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="walletTitle">
+      <div class="modal-head">
+        <h3 id="walletTitle">积分钱包</h3>
+        <button class="btn ghost" id="btnCloseWallet" type="button" aria-label="关闭钱包">×</button>
+      </div>
+      <p class="modal-desc">积分全平台通用：1 积分 = 生成 1 次；生成失败自动退回；新用户有 2 次免费体验。</p>
+      <p class="wallet-balance"><span class="wb-label">当前余额</span><span class="wb-num"><b id="walletBalanceBig">–</b>积分</span></p>
+      <span class="group-label">充值套餐</span>
+      <div class="product-grid" id="productGrid"></div>
+      <p class="hint" id="payChannelsNote"></p>
+      <div class="login-divider"><span>或</span></div>
+      <span class="group-label">兑换码兑换</span>
+      <div class="phone-row">
+        <input type="text" id="redeemCode" class="text-input mono" placeholder="输入兑换码" />
+        <button class="btn secondary small" id="btnRedeem" type="button">兑换</button>
+      </div>
+      <p class="hint" id="walletMsg"></p>
+      <span class="group-label">最近流水</span>
+      <div class="txn-list" id="txnHistory"><p class="hint">加载中…</p></div>
+    </div>
+  </div>
+
+  <div class="lightbox-mask" id="lightbox" hidden>
+    <div class="lightbox-body" role="dialog" aria-modal="true" aria-label="图片预览">
+      <img id="lightboxImg" alt="作品预览" />
+      <button class="btn-close-lightbox" id="btnCloseLightbox" type="button" aria-label="关闭预览">×</button>
+    </div>
+  </div>
+
+  <script src="/shared/workbuddy-cloud.global.js"></script>
+  <script src="/shared/platform.js?v=20261030b"></script>
+  <script src="/shared/my.js?v=20261030a"></script>
+</body>
+</html>
