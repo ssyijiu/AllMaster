@@ -440,7 +440,8 @@ function createEngine(options) {
   function startTask(id, workDir, imagePath, promptPath, subject, styleId) {
     const args = [imagePath, '--work-dir', workDir, '--prompt', promptPath,
       '--subject', subject, '--task-name', '拼豆图纸'];
-    if (styleId && styleId !== 'original') { args.push('--art-style', styleId); }
+    /* 画风必须显式传全量（含还原）：python 端人物默认是「卡通」，漏传会把「还原」静默生成成卡通 */
+    if (styleId) { args.push('--art-style', styleId); }
     if (styleId === 'pixel-big-head') { args.push('--boards', '36', '52', '78'); }
     launchPerler(id, args);
   }
@@ -452,6 +453,8 @@ function createEngine(options) {
     const args = ['--work-dir', workDir, '--prompt', promptPath,
       '--skip-gen', '--effect-image', effectImage, '--merge-close-colors',
       '--task-name', '拼豆图纸'];
+    /* 同 startTask：显式传画风，保证重转后的图纸页标注与原任务一致 */
+    if (styleId) { args.push('--art-style', styleId); }
     if (styleId === 'pixel-big-head') { args.push('--boards', '36', '52', '78'); }
     launchPerler(id, args);
   }

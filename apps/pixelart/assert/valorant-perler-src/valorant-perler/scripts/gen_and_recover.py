@@ -398,8 +398,8 @@ def parse_args() -> argparse.Namespace:
                         choices=["auto", "opaque", "transparent"],
                         help=f"GPT Image 背景模式（默认 {DEFAULT_BACKGROUND}）")
     parser.add_argument("--art-style", default=None, metavar="画风",
-                        help="模板名字（还原 / 像素大头小图 / 贴纸 / 手绘头像 / Q版 / 柔彩手绘，或对应目录名；手绘小人归Q版），"
-                             "或一段自定义画风描述；不给时用配置里的 art_style，配置也没写就用「还原」。修改模式不能换画风")
+                        help="模板名字（还原 / 卡通 / 贴纸 / 手绘头像 / Q版 / 柔彩手绘 / 像素大头，或对应目录名），"
+                             "或一段自定义画风描述；不给时按主体取默认（人物=卡通、道具=还原）。修改模式不能换画风")
     parser.add_argument("--subject", choices=DEFAULT_SUBJECT_MAP, default="character")
     parser.add_argument("--skip-gen", action="store_true", help="复用已有平面像素底稿")
     parser.add_argument("--effect-image", type=Path, help="与 --skip-gen 配合使用")
