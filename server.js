@@ -298,26 +298,9 @@ async function handleAi(req, res) {
 
   /* —— 计费（服务端把关，前端无法跳过）—— */
   const chargeRef = 'gen-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
-  let charge;
-  try {
-    const r = await cloudRpc(token, 'wallet_consume', { p_credits: -1, p_ref: chargeRef });
-    const msg = rpcErrorText(r);
-    if (r.status === 401 || r.status === 403 || /AUTH_REQUIRED/.test(msg)) {
-      return sendJson(res, 401, { error: { code: 'AUTH_REQUIRED', message: '登录状态已失效，请重新登录后再生成' } });
-    }
-    if (/INSUFFICIENT_BALANCE/.test(msg)) {
-      return sendJson(res, 402, { error: { code: 'INSUFFICIENT_BALANCE', message: '积分不足：免费体验已用完，请充值或输入兑换码。' } });
-    }
-    if (r.status !== 200) {
-      return sendJson(res, 502, { error: { code: 'WALLET_UNAVAILABLE', message: '计费服务暂不可用，请稍后重试' } });
-    }
-    const row = Array.isArray(r.data) ? r.data[0] : r.data;
-    if (!row || row.txn_id == null) {
-      return sendJson(res, 502, { error: { code: 'WALLET_UNAVAILABLE', message: '计费服务返回异常，请稍后重试' } });
-    }
-    charge = { txnId: String(row.txn_id), balance: row.balance };
-  } catch (err) {
-    return sendJson(res, 502, { error: { code: 'WALLET_UNAVAILABLE', message: '计费服务连接失败，请稍后重试' } });
+  const charge = await chargeOneCredit(token, chargeRef);
+  if (charge.error) {
+    return sendJson(res, charge.error.status, { error: { code: charge.error.code, message: charge.error.message } });
   }
 
   /* SSE 心跳流：边等上游边每 2 秒写心跳，最后一行 data: 携带真实结果 */
@@ -739,6 +722,74 @@ async function refundCharge(token, txnId) {
   try { await cloudRpc(token, 'wallet_refund', { p_ref: String(txnId) }); } catch (_) {}
 }
 
+/* 服务端扣 1 积分：返回 { txnId, balance } 或 { error: {status, code, message} }。
+ * /api/ai 与拼豆 /api/pixelart{,-vp}/generate 共用；扣费用调用者自己的 JWT，
+ * 匿名/过期会话在云端 RPC 层就被拒（wallet_uid 守卫），此处只做状态映射。 */
+async function chargeOneCredit(token, ref) {
+  let r;
+  try {
+    r = await cloudRpc(token, 'wallet_consume', { p_credits: -1, p_ref: ref });
+  } catch (err) {
+    return { error: { status: 502, code: 'WALLET_UNAVAILABLE', message: '计费服务连接失败，请稍后重试' } };
+  }
+  const msg = rpcErrorText(r);
+  if (r.status === 401 || r.status === 403 || /AUTH_REQUIRED/.test(msg)) {
+    return { error: { status: 401, code: 'AUTH_REQUIRED', message: '登录状态已失效，请重新登录后再生成' } };
+  }
+  if (/INSUFFICIENT_BALANCE/.test(msg)) {
+    return { error: { status: 402, code: 'INSUFFICIENT_BALANCE', message: '积分不足：免费体验已用完，请充值或输入兑换码。' } };
+  }
+  if (r.status !== 200) {
+    return { error: { status: 502, code: 'WALLET_UNAVAILABLE', message: '计费服务暂不可用，请稍后重试' } };
+  }
+  const row = Array.isArray(r.data) ? r.data[0] : r.data;
+  if (!row || row.txn_id == null) {
+    return { error: { status: 502, code: 'WALLET_UNAVAILABLE', message: '计费服务返回异常，请稍后重试' } };
+  }
+  return { txnId: String(row.txn_id), balance: row.balance };
+}
+
+/* 拼豆生成接口的强制计费包装：先验身份并扣 1 分，再放行引擎。
+ * 引擎返回 4xx/5xx（参数错误、落盘失败等提交期失败）→ 自动退款；
+ * 返回 200 即已创建后台任务，txnId/余额经响应头交给前端，任务期失败由
+ * 前端凭 txnId 发起退款（退款对用户有利，放前端不影响营收安全；
+ * 连接中断场景归「生成单」重构彻底解决）。 */
+async function handlePixelartGenerate(req, res, engine) {
+  const bearer = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''));
+  if (!bearer) {
+    return sendJson(res, 401, { error: { code: 'AUTH_REQUIRED', message: '生成需要登录，请先登录后再试' } });
+  }
+  const token = bearer[1];
+  const chargeRef = 'pxgen-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
+  const charge = await chargeOneCredit(token, chargeRef);
+  if (charge.error) {
+    return sendJson(res, charge.error.status, { error: { code: charge.error.code, message: charge.error.message } });
+  }
+  /* 包装 writeHead：成功响应附上扣费凭据；同时记录引擎实际响应码用于退款判定 */
+  let statusCode = 200;
+  const origWriteHead = res.writeHead.bind(res);
+  res.writeHead = function (code, headers) {
+    statusCode = code;
+    if (code === 200) {
+      headers = Object.assign({}, headers || {}, {
+        'X-Wallet-Txn-Id': charge.txnId,
+        'X-Wallet-Balance': charge.balance == null ? '' : String(charge.balance)
+      });
+    }
+    return origWriteHead(code, headers);
+  };
+  try {
+    await engine.handleGenerate(req, res, sendJson);
+  } catch (err) {
+    if (!res.headersSent) {
+      return sendJson(res, 500, { error: { message: String((err && err.message) || err).slice(0, 160) } });
+    }
+    throw err; /* 头已发出，只能让连接以错误收场 */
+  } finally {
+    if (statusCode >= 400) { await refundCharge(token, charge.txnId); }
+  }
+}
+
 function proxyCloud(req, res) {
   let target;
   try {
@@ -850,7 +901,7 @@ const server = http.createServer((req, res) => {
   }
   if (pathOnly === '/api/pixelart/generate') {
     if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
-    return pixelartMain.handleGenerate(req, res, sendJson);
+    return handlePixelartGenerate(req, res, pixelartMain);
   }
   if (pathOnly === '/api/pixelart/regen') {
     if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
@@ -877,7 +928,7 @@ const server = http.createServer((req, res) => {
   }
   if (pathOnly === '/api/pixelart-vp/generate') {
     if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
-    return pixelartVp.handleGenerate(req, res, sendJson);
+    return handlePixelartGenerate(req, res, pixelartVp);
   }
   if (pathOnly === '/api/pixelart-vp/regen') {
     if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }

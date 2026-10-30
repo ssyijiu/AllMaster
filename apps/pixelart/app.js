@@ -418,34 +418,44 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     var notes = ($('notesInput').value || '').trim();
     setGenerating(true);
     $('genDone').hidden = true;
-    $('genStatusText').textContent = '正在扣除积分…';
+    $('genStatusText').textContent = '正在提交任务…';
     var startedAt = Math.floor(Date.now() / 1000);
 
-    /* 1. 先扣积分（余额不足 → 打开钱包） */
-    wallet.consume().then(function (r) {
-      Store.lastTxnId = r && r.txnId;
-      $('genStatusText').textContent = '正在提交任务…';
-      /* 2. 提交生成任务 */
+    /* 扣费在服务端完成（先扣后放行，前端绕不过）：前端只带令牌提交，
+       凭响应头 X-Wallet-Txn-Id / X-Wallet-Balance 记账与刷新积分 chip。
+       任务期失败由 onTaskFailed 凭 Store.lastTxnId 退款。 */
+    getAuthToken().then(function (token) {
+      var headers = { 'Content-Type': 'application/json' };
+      if (token) { headers.Authorization = 'Bearer ' + token; }
       return fetch(PIXELART_API + '/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: headers,
         body: JSON.stringify({
           imageBase64: Store.imgDataUrl,
           subject: Store.subject,
           styleId: Store.styleId,
           notes: notes
         })
-      }).then(function (res) {
-        return res.json().then(function (data) {
-          if (!res.ok || !data.taskId) {
-            var e = new Error((data.error && data.error.message) || '提交失败，请稍后重试');
-            throw e;
-          }
-          return data.taskId;
-        });
+      });
+    }).then(function (res) {
+      var txn = res.headers && res.headers.get ? res.headers.get('X-Wallet-Txn-Id') : null;
+      if (txn) { Store.lastTxnId = txn; }
+      var bal = res.headers && res.headers.get ? res.headers.get('X-Wallet-Balance') : null;
+      if (bal !== null && bal !== '') { wallet.applyBalance(bal); }
+      return res.json().then(function (data) {
+        if (!res.ok || !data.taskId) {
+          var info = (data && data.error) || {};
+          var e = new Error(info.message || '提交失败，请稍后重试');
+          e.status = res.status;
+          e.code = info.code || '';
+          if (e.code === 'INSUFFICIENT_BALANCE') { e.insufficient = true; }
+          if (e.code === 'AUTH_REQUIRED') { e.authRequired = true; }
+          throw e;
+        }
+        return data.taskId;
       });
     }).then(function (taskId) {
-      /* 3. SSE 心跳流跟踪任务（对齐 /api/ai 防 524 的成熟方案）：
+      /* 2. SSE 心跳流跟踪任务（对齐 /api/ai 防 524 的成熟方案）：
             服务端每 2s 写心跳注释，连接永不空闲，托管平台 30s 空闲 524 不会触发；
             心跳顺便驱动「已等待 N 秒」提示，status 事件驱动完成/失败。
             流不可用时自动降级为 4s 轮询。 */
@@ -458,9 +468,15 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
         auth.openWallet();
         return;
       }
-      /* 扣费成功但提交失败 → 退回 */
-      if (Store.lastTxnId) { wallet.refund(Store.lastTxnId); }
-      studioMsg((err && err.message) || '生成失败，请稍后重试（已扣积分将自动退回）', true);
+      /* 会话失效（服务端 401，未产生扣费）：清掉「已登录」假象并引导重登 */
+      if (err && (err.authRequired || err.status === 401 || err.status === 403)) {
+        auth.applySession(null);
+        studioMsg('登录状态已失效，请重新登录后再生成', true);
+        auth.openLogin();
+        return;
+      }
+      /* 其余提交期失败（参数/落盘等）：服务端已在扣费后自动退款，无需前端再退 */
+      studioMsg((err && err.message) || '生成失败，请稍后重试', true);
     });
   }
 
@@ -703,6 +719,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
   var loadPayChannels = auth.loadPayChannels;
   var renderAuthUI = auth.renderAuthUI;
   var wallet = auth.walletService;
+  var getAuthToken = auth.getAuthToken;
 
   /* 测试钩子：jsdom 测试直接驱动内部状态与流程（线上无依赖方，仅挂 window 属性） */
   window.__pixelart = { store: Store, generateFlow: generateFlow, regenFlow: regenFlow, acceptFile: acceptFile, renderStyleStrip: renderStyleStrip, addRecent: addRecent, renderRecent: renderRecent, restoreRecent: restoreRecent, persistRecent: persistRecent, makeThumb: makeThumb };
