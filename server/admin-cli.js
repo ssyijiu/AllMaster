@@ -49,6 +49,8 @@ function help() {
     '  node server/admin-cli.js health',
     '  node server/admin-cli.js users',
     '  node server/admin-cli.js balance <邮箱>',
+    '  node server/admin-cli.js config [show|check]',
+    '  node server/admin-cli.js config import <config.json>',
     '',
     '数据目录：' + dbmod.DATA_DIR,
     '库文件：' + dbmod.DB_FILE
@@ -153,6 +155,103 @@ function cmdBalance() {
   });
 }
 
+/* 前台配置（app_config.default）：风格 + 服务商。admin.html 还是云端版本不可用，
+   所以在自建后台改造完成前，配置走这里。data 里不含密钥（密钥在 .ai-config.json）。 */
+function readConfig() {
+  const row = dbmod.db.prepare('SELECT id, data, updated_at FROM app_config WHERE id = ?').get('default');
+  if (!row) { return null; }
+  let data = null;
+  try { data = JSON.parse(row.data); } catch (_) { data = null; }
+  return { id: row.id, data: data, updatedAt: row.updated_at, raw: row.data };
+}
+
+function cmdConfig() {
+  const sub = argv[1] || 'show';
+  const cfg = readConfig();
+
+  if (sub === 'import') {
+    const file = argv[2];
+    if (!file) { throw new Error('用法：config import <config.json>'); }
+    const fs = require('fs');
+    let data;
+    try { data = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {
+      throw new Error('读不了这个 JSON：' + ((e && e.message) || e));
+    }
+    if (!Array.isArray(data.providers)) { throw new Error('缺少 providers 数组'); }
+    if (!Array.isArray(data.styles)) { throw new Error('缺少 styles 数组'); }
+    for (const p of data.providers) {
+      if (!p || !p.id) { throw new Error('providers 里有一项没有 id'); }
+      if (!p.baseUrl || !p.model) { console.warn('  提醒：服务商 ' + p.id + ' 缺少 baseUrl 或 model，生成会失败'); }
+    }
+    for (const s of data.styles) {
+      if (!s || !s.id || !s.name) { throw new Error('styles 里有一项缺少 id 或 name'); }
+    }
+    const now = Date.now();
+    dbmod.db.prepare('INSERT INTO app_config (id, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at')
+      .run('default', JSON.stringify(data), now);
+    console.log('已写入配置：' + data.providers.length + ' 个服务商，' + data.styles.length + ' 个风格');
+    cmdConfigCheck(data);
+    return;
+  }
+
+  if (sub === 'check') {
+    if (!cfg || !cfg.data) {
+      console.log('app_config 是空的 —— 前台账本读不到配置，会退回内置兜底风格，且生成必然失败（没有服务商）。');
+      console.log('用 config import <config.json> 导入，或先看 config show 确认现状。');
+      return;
+    }
+    cmdConfigCheck(cfg.data);
+    return;
+  }
+
+  /* show */
+  if (!cfg || !cfg.data) {
+    console.log('app_config.default 不存在（前台走内置兜底：' + '仅 grokbot 一个风格，但没有服务商 → 生成会失败）');
+    return;
+  }
+  console.log('更新时间：' + fmtTime(cfg.updatedAt) + '\n');
+  console.log(JSON.stringify(cfg.data, null, 2));
+}
+
+/* 交叉校验：风格绑定的服务商是否存在、是否配全、密钥有没有 */
+function cmdConfigCheck(data) {
+  const aiCfg = (() => {
+    try { return JSON.parse(require('fs').readFileSync(require('path').join(dbmod.ROOT, '.ai-config.json'), 'utf8')); }
+    catch (_) { return null; }
+  })();
+  const keys = (aiCfg && aiCfg.providerKeys) || {};
+  const providers = Array.isArray(data.providers) ? data.providers : [];
+  const styles = Array.isArray(data.styles) ? data.styles : [];
+  const byId = {};
+  for (const p of providers) { byId[p.id] = p; }
+
+  console.log('服务商 ' + providers.length + ' 个：');
+  for (const p of providers) {
+    const gap = [];
+    if (!p.baseUrl) { gap.push('缺 baseUrl'); }
+    if (!p.model) { gap.push('缺 model'); }
+    if (!keys[p.id]) { gap.push('缺密钥'); }
+    console.log('  ' + (gap.length ? '✗' : '✓') + ' ' + p.id + '  ' + (p.baseUrl || '-') + '  ' + (p.model || '-') +
+      (gap.length ? '  ← ' + gap.join(' / ') : ''));
+  }
+
+  console.log('\n风格 ' + styles.length + ' 个：');
+  for (const s of styles) {
+    const p = byId[s.providerId];
+    let note = '';
+    if (!s.providerId) { note = '← 没绑服务商，点了会提示配置缺失'; }
+    else if (!p) { note = '← 服务商 ' + s.providerId + ' 不存在'; }
+    else if (!p.baseUrl || !p.model) { note = '← 服务商配置不全'; }
+    else if (!keys[s.providerId]) { note = '← 服务商没有密钥'; }
+    console.log('  ' + (note ? '✗' : '✓') + ' ' + s.id + '  ' + s.name + (note ? '  ' + note : ''));
+  }
+
+  const orphan = Object.keys(keys).filter((k) => !byId[k]);
+  if (orphan.length) {
+    console.log('\n有密钥但没有服务商条目：' + orphan.join(', ') + '（这些 Key 用不上）');
+  }
+}
+
 try {
   if (cmd === 'code') { cmdCode(); }
   else if (cmd === 'codes') { cmdCodes(); }
@@ -161,6 +260,7 @@ try {
   else if (cmd === 'health') { cmdHealth(); }
   else if (cmd === 'users') { cmdUsers(); }
   else if (cmd === 'balance') { cmdBalance(); }
+  else if (cmd === 'config') { cmdConfig(); }
   else { help(); }
 } catch (e) {
   console.error('错误：' + ((e && e.message) || e));

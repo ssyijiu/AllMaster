@@ -226,6 +226,8 @@
       grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
       gap: var(--space-3);
     }
+    /* 单风格：固定卡片宽度，避免 auto-fill + 1fr 把唯一一张卡拉满整行 */
+    .style-grid.is-single { grid-template-columns: minmax(96px, 132px); }
     .style-grid.is-busy { pointer-events: none; opacity: 0.6; }
     .style-grid .hint { margin: 0; }
     .style-card {

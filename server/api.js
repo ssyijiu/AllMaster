@@ -94,16 +94,20 @@ const TABLES = {
       return rows.filter((r) => matches(r, q.filters));
     }
   },
-  /* 风格/服务商配置：公开只读，一行 id='default' 的 JSON */
+  /* 风格/服务商配置：公开只读，一行 id='default' 的 JSON。
+     形状必须与云端表一致：返回 [{ id, data }]，前端读 rows[0].data。
+     （早前这里把 data 展开成 {id, providers, styles}，导致 rows[0].data 恒为
+     undefined → 前台永远回退内置兜底，后台配的风格一直「读不到」。） */
   app_config: {
     needAuth: false,
     select: function (user, q) {
-      const row = dbmod.db.prepare('SELECT data FROM app_config WHERE id = ?').get(q.eqId || 'default');
+      const eqId = (q && q.filters || []).filter((f) => f && f.col === 'id' && f.op === 'eq')[0];
+      const id = (eqId && eqId.val) || 'default';
+      const row = dbmod.db.prepare('SELECT id, data FROM app_config WHERE id = ?').get(id);
       if (!row) { return []; }
-      let data = {};
-      try { data = JSON.parse(row.data); } catch (_) {}
-      const out = Array.isArray(data) ? data : Object.assign({ id: q.eqId || 'default' }, data);
-      return Array.isArray(out) ? out.filter((r) => matches(r, q.filters)) : [out];
+      let data = null;
+      try { data = JSON.parse(row.data); } catch (_) { data = null; }
+      return [{ id: row.id, data: data }];
     }
   },
   /* 套餐：本地暂无产品套餐表，返回空 → 前端回落到内置套餐 */

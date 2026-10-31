@@ -22,32 +22,13 @@
     var DEPLOYED_URL = CUSTOM_DOMAIN ? (CUSTOM_DOMAIN + '/apps/avatar/') : PLATFORM_URL;
 
 
-    /* 兜底风格库：数据库配置加载失败或为空时使用（封面图由后台配置，未配置则显示占位） */
+    /* 兜底风格库：数据库配置加载失败或为空时使用。
+       2026-10-31 起只保留 grokbot 一个 —— 首页不再默认铺一屏风格，
+       正式风格列表由后台 app_config 下发（node server/admin-cli.js config）。
+       封面图由后台配置，未配置则显示占位。 */
     var FALLBACK_STYLES = [
-      { id: 'cartoon', name: '经典卡通', imageUrl: '',
-        prompt: 'Turn this photo into a classic cartoon style portrait avatar. Bold clean outlines, flat vivid colors, friendly exaggerated features, simple solid color background. Keep the person\'s facial features, hairstyle and likeness clearly recognizable.' },
-      { id: 'anime', name: '日系动漫', imageUrl: '',
-        prompt: 'Redraw this photo as a Japanese anime style portrait avatar. Clean bold line art, vibrant cel shading, large expressive eyes, soft pastel gradient background. Keep the person\'s facial features, hairstyle and likeness clearly recognizable.' },
-      { id: 'toon3d', name: '3D 立体', imageUrl: '',
-        prompt: 'Turn this photo into a cute 3D cartoon character avatar, animation movie style. Soft studio lighting, smooth clay-like skin texture, big friendly eyes, gentle smile, simple warm-colored background. Preserve the person\'s likeness and hairstyle.' },
-      { id: 'pixel', name: '像素风', imageUrl: '',
-        prompt: 'Convert this photo into a retro pixel art avatar, 32-bit game character style. Crisp pixel blocks, limited retro color palette, simple background. Keep the hairstyle, face shape and overall likeness recognizable in pixel form.' },
-      { id: 'watercolor', name: '水彩', imageUrl: '',
-        prompt: 'Redraw this photo as a soft watercolor illustration portrait. Delicate brush strokes, translucent color washes, paper texture, artistic splashes around the edges, light and airy composition. Keep the facial features recognizable.' },
-      { id: 'sketch', name: '素描线稿', imageUrl: '',
-        prompt: 'Redraw this photo as a detailed pencil sketch portrait. Fine graphite hatching, soft shading, white paper background, elegant hand-drawn feel. Keep the facial features and expression accurate.' },
-      { id: 'oil', name: '油画', imageUrl: '',
-        prompt: 'Redraw this photo as a classical oil painting portrait in Renaissance style. Rich color depth, dramatic Rembrandt lighting, visible canvas texture, dark muted background. Preserve the person\'s likeness and dignified expression.' },
-      { id: 'cyberpunk', name: '赛博朋克', imageUrl: '',
-        prompt: 'Redraw this photo as a cyberpunk style portrait avatar. Neon cyan and teal rim lighting, futuristic tech accessories, glowing holographic elements, dark city bokeh background, cinematic atmosphere. Keep the person\'s facial features recognizable.' },
-      { id: 'retro', name: '复古胶片', imageUrl: '',
-        prompt: 'Redraw this photo as a vintage film photograph portrait from the 1970s. Warm faded tones, subtle film grain, soft vignette, slightly washed highlights, nostalgic analog atmosphere. Keep the person\'s facial features clearly recognizable.' },
-      { id: 'flat', name: '极简扁平', imageUrl: '',
-        prompt: 'Redraw this photo as a modern flat illustration avatar. Minimal geometric shapes, bold solid colors, clean vector style, simple two-tone background, trendy and minimal. Keep the hairstyle and key facial features recognizable.' },
-      { id: 'illus', name: '欧美插画', imageUrl: '',
-        prompt: 'Redraw this photo as a modern Western editorial illustration portrait. Expressive stylized shapes, textured brush strokes, bold complementary colors, trendy magazine art style. Keep the person\'s likeness and key facial features recognizable.' },
-      { id: 'nebula', name: '梦幻星云', imageUrl: '',
-        prompt: 'Redraw this photo as a dreamy cosmic fantasy portrait. Soft glowing starlight, nebula clouds in teal and cyan tones, subtle shimmer particles, ethereal atmosphere. Keep the person\'s facial features clearly recognizable.' }
+      { id: 'grokbot', name: 'GrokBot', imageUrl: '', providerId: 'grokbot',
+        prompt: 'Turn this photo into a high-quality illustrated portrait avatar. Clean line work, soft cel shading, natural skin tones, simple blurred background. Keep the person\'s facial features, hairstyle and likeness clearly recognizable.' }
     ];
 
     var COMMON_PROMPT_SUFFIX =
@@ -71,7 +52,7 @@
         photoUrl: '',         /* 原图预览 objectURL（移除/替换时 revoke） */
         compareUrl: '',       /* 对比原图专用 objectURL（独立生命周期） */
         currentOriginalSrc: '', /* 当前结果对应的原图地址（用于对比原图） */
-        selectedStyle: 'cartoon',
+        selectedStyle: 'grokbot',
         generating: false,
         history: [],          /* { src, thumb, styleName, mode, time } */
         cloudHistory: [],     /* 云端历史 { src, thumb, styleName, mode, time, cloud } */
@@ -563,6 +544,8 @@
     function renderStyleGrid() {
       els.styleGrid.innerHTML = '';
       var list = Store.styles();
+      /* 只有一个风格时不要拉满整行（auto-fill + 1fr 会把单卡撑到全宽） */
+      els.styleGrid.classList.toggle('is-single', list.length === 1);
       list.forEach(function (style) {
         var card = document.createElement('div');
         card.className = 'style-card' +
