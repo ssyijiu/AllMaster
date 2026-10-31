@@ -1,0 +1,56 @@
+# 点豆 — 雅加达机 Caddy 配置（dotbeads.online）
+# ---------------------------------------------------------------
+# 为什么不是「全站反代到本机」这么简单：
+# 2026-10-31 起数据层自建，主库在广州（/opt/allmaster-data/dotbeads.db）。
+# 雅加达只是「备案期对外入口」，如果它自己也跑一套库，就会出现两个平行世界：
+# 用户在 dotbeads.online 注册，去 IP:8080 就看不到自己的账号和积分。
+#
+# 所以这里按路径分流：
+#   静态页面 / 样式 / 脚本  → 本机 Node（雅加达本地出，快）
+#   /api/*  与  /files/*    → 广州主库（登录、账本、订单、用户文件只有一份）
+#
+# 注意：跨境调用是这个方案的固有成本（雅加达→广州 RTT 约 80-120ms）。
+# 备案通过后主站迁到 dotbeads.com（广州），本文件即可废弃。
+
+dotbeads.online, www.dotbeads.online {
+	encode zstd gzip
+
+	# ① 业务接口与用户文件：唯一的真相在广州
+	@backend path /api/* /files/*
+	handle @backend {
+		reverse_proxy 123.207.22.47:8080 {
+			# 图片生成单次 20~90s，SSE 心跳保活；超时放宽到 5 分钟
+			transport http {
+				read_timeout 300s
+				write_timeout 300s
+			}
+			# 流式响应（SSE）不缓冲
+			flush_interval -1
+		}
+	}
+
+	# ② 页面与静态资源：本机出，走本地回环
+	handle {
+		reverse_proxy 127.0.0.1:8080 {
+			transport http {
+				read_timeout 300s
+				write_timeout 300s
+			}
+			flush_interval -1
+		}
+	}
+
+	# 安全响应头
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/dotbeads.log {
+			roll_size 20MiB
+			roll_keep 5
+		}
+	}
+}
