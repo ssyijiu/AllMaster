@@ -344,7 +344,9 @@
     function renderAuthUI() {
       var user = Store.state.user;
       els.btnLogin.hidden = !!user;
-      els.btnSignOut.hidden = !user;
+      /* 首页不再放「退出」按钮（两个产品页已删），/my 顶栏保留；
+         这里按节点是否存在决定，缺了不影响其它按钮渲染。 */
+      if (els.btnSignOut) { els.btnSignOut.hidden = !user; }
       var chip = els.userChip;
       if (!chip) { return; }
       if (chip.tagName === 'A') {
@@ -893,13 +895,16 @@
       els.loginCode.addEventListener('input', function () { showFieldErr(els.errCode, '', false); });
       els.btnSendCode.addEventListener('click', sendCodeHandler);
       els.btnPhoneLogin.addEventListener('click', submitPhoneLogin);
-      els.btnSignOut.addEventListener('click', function () {
-        var cloud = cloudService.getClient();
-        Store.state.user = null;
-        renderAuthUI();
-        onSignOut();
-        if (cloud && cloud.auth.signOut) { cloud.auth.signOut().catch(function () {}); }
-      });
+      /* 退出只在 /my 顶栏提供（产品页不放入口）；节点缺失就跳过绑定 */
+      if (els.btnSignOut) {
+        els.btnSignOut.addEventListener('click', function () {
+          var cloud = cloudService.getClient();
+          Store.state.user = null;
+          renderAuthUI();
+          onSignOut();
+          if (cloud && cloud.auth.signOut) { cloud.auth.signOut().catch(function () {}); }
+        });
+      }
       /* 页面重新可见时复核会话：避免标签页放久了，过期会话还挂着「已登录」的假象 */
       document.addEventListener('visibilitychange', function () {
         if (!document.hidden) { ensureAuth(); }
