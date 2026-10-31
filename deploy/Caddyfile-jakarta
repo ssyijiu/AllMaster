@@ -19,6 +19,13 @@ dotbeads.online, www.dotbeads.online {
 	@backend path /api/* /files/*
 	handle @backend {
 		reverse_proxy 123.207.22.47:8080 {
+			# ★ 必须把 Host 改写成 IP：腾讯云对「Host 里带未备案域名」的入站请求
+			#   一律 302 到 dnspod.qcloud.com/static/webblock.html，8080 端口也拦。
+			#   改成 IP 后放行（已实测：同机自测与公网访问均 200）。
+			#   代价：广州侧看到 Host 是 IP，所以支付回调地址改用 PUBLIC_ORIGIN 环境变量。
+			header_up Host 123.207.22.47:8080
+			# 真实客户端 IP 靠 XFF 传过去（广州侧只信本机与雅加达这两个对端）
+			header_up X-Forwarded-For {remote_host}
 			# 图片生成单次 20~90s，SSE 心跳保活；超时放宽到 5 分钟
 			transport http {
 				read_timeout 300s

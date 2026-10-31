@@ -111,7 +111,14 @@ const payChannels = {
     },
     /* 创建订单：调虎皮殿下单接口，返回支付跳转地址 */
     async createOrder(cfg, order, req) {
-      const host = req.headers.host || '';
+      /* 回调/回跳必须用「用户浏览器看到的公开域名」，不能用 Host 头：
+         ① 备案期 dotbeads.online 由雅加达入口反代到本机，反代时必须把 Host
+            改写成 IP（腾讯云会拦截 Host 带未备案域名的入站请求），
+            此时 Host 已是 123.207.22.47:8080，拼出来的回调地址是废的；
+         ② 顺带避免 Host 头注入（攻击者改 Host 就能把支付回调指向自己的站）。
+         优先 PUBLIC_ORIGIN（systemd 里配），未配则退回 Host 头。 */
+      const origin = (process.env.PUBLIC_ORIGIN || '').replace(/\/+$/, '')
+        || ('https://' + (req.headers.host || ''));
       const share = cfg.siteSharecode ? ('?sharecode=' + cfg.siteSharecode) : '';
       const params = {
         version: '1.1',
@@ -122,8 +129,8 @@ const payChannels = {
         total_fee: (order.amountCents / 100).toFixed(2),
         title: order.title || 'AI 头像工坊积分充值',
         time: Math.floor(Date.now() / 1000),
-        notify_url: 'https://' + host + '/api/pay/notify' + share,
-        return_url: 'https://' + host + '/apps/avatar/?paid=' + order.orderNo + share.replace('?', '&'),
+        notify_url: origin + '/api/pay/notify' + share,
+        return_url: origin + '/apps/avatar/?paid=' + order.orderNo + share.replace('?', '&'),
         nonce_str: crypto.randomBytes(8).toString('hex')
       };
       params.hash = xunhuHash(params, cfg.xunhupay.secret);

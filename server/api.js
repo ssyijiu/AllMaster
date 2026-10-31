@@ -68,9 +68,20 @@ async function readJson(req) {
   try { return JSON.parse(buf.toString('utf8')); } catch (_) { throw new Error('BAD_JSON'); }
 }
 
+/* 客户端 IP：只有「直连对端是可信任的反向代理」时才信 X-Forwarded-For。
+   备案期 dotbeads.online 由雅加达入口反代到本机，真实 IP 只能从 XFF 拿；
+   但本机 8080 也直接暴露在公网，若无条件信 XFF，任何人伪造这个头就能
+   绕过按 IP 的发码限流。所以按对端地址白名单判断。 */
+const TRUSTED_PROXIES = new Set(
+  (process.env.TRUSTED_PROXIES || '127.0.0.1,::1,163.7.10.124')
+    .split(',').map(function (s) { return s.trim().replace(/^::ffff:/, ''); }).filter(Boolean)
+);
+
 function clientIp(req) {
-  const xf = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return xf || (req.socket && req.socket.remoteAddress) || '';
+  const peer = String((req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/, '');
+  const first = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim().replace(/^::ffff:/, '');
+  if (first && TRUSTED_PROXIES.has(peer)) { return first; }
+  return peer || first;
 }
 
 /* ---------- 表访问白名单 ---------- */
