@@ -74,6 +74,15 @@ if [ -f "$APP_DIR/deploy/allmaster.service" ]; then
   sed -i "/^Environment=PORT=/a Environment=DATA_DIR=$DATA_DIR" /etc/systemd/system/allmaster.service
   echo "  ExecStart=$NODE_BIN $APP_DIR/server.js"
   echo "  DATA_DIR=$DATA_DIR"
+  # PUBLIC_ORIGIN：支付回调/回跳用的公开地址。必须显式配，不能靠 Host 头 ——
+  # 备案期 dotbeads.online 由雅加达反代到本机时，Host 会被改写成 IP（腾讯云
+  # 拦截 Host 带未备案域名的入站请求），拼出来的回调地址就是废的。
+  if [ -n "$DOMAIN" ]; then
+    echo "Environment=PUBLIC_ORIGIN=https://$DOMAIN" >> /etc/systemd/system/allmaster.service
+    echo "  PUBLIC_ORIGIN=https://$DOMAIN"
+  else
+    echo "  ⚠ 未传 DOMAIN，PUBLIC_ORIGIN 未设置（支付回调用 Host 头兜底）"
+  fi
   systemctl daemon-reload
   if [ "$HAVE_CODE" = "1" ]; then
     systemctl enable --now allmaster
