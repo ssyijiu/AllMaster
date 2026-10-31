@@ -7,7 +7,7 @@
   <title>成像 DotAvatar · 点一下，换头像</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='22' fill='%23FFD02F'/%3E%3Cpath d='M48.6 19.2 A 14 14 0 1 0 58.6 24.9' stroke='%231F1D1A' stroke-width='10' stroke-linecap='round' fill='none'/%3E%3Ccircle cx='55' cy='18' r='5' fill='%231F1D1A'/%3E%3Cpath d='M25 80 C25 61 34 52 47 52 C60 52 69 61 69 80' stroke='%231F1D1A' stroke-width='10' stroke-linecap='round' fill='none'/%3E%3C/svg%3E" data-page-node-id="CWEfNv9byZuou93P0EnGlw" />
   <link rel="stylesheet" href="/shared/base.css?v=20261031g" />
-  <link rel="stylesheet" href="/apps/avatar/avatar.css?v=20261031e" />
+  <link rel="stylesheet" href="/apps/avatar/avatar.css?v=20261031f" />
 </head>
 <body data-page-node-id="AUKLLjIrJEZnWvEZPPCk8m">
   <!-- ===== Section S1: SVG 图标 Sprite（Lucide 规格：viewBox 24 / stroke 1.5 / currentColor） ===== -->
@@ -122,6 +122,29 @@
                  placeholder="例如：戴红色贝雷帽、背景是星空、加一副圆框眼镜" data-page-node-id="fPsDXyWZj9Ywahc0zSms5U" />
         </div>
 
+        <!-- 参考图（可选）：后台「生成选项」可整体关闭；开启时与用户照片一起作为第二张图发给服务商 -->
+        <div class="extra-row ref-row" id="refRow" hidden>
+          <label class="field-label" for="btnPickRef">参考图（可选）</label>
+          <div class="ref-pick" id="refPick">
+            <input type="file" id="refInput" accept="image/*" hidden />
+            <button class="btn secondary small" id="btnPickRef" type="button">
+              <svg class="icon icon-16" aria-hidden="true"><use href="#i-upload"/></svg>
+              <span>上传参考图</span>
+            </button>
+            <span class="ref-tip">给 AI 一张画风 / 配色 / 姿势参考；人物长相仍以你上传的照片为准</span>
+          </div>
+          <div class="ref-selected" id="refSelected" hidden>
+            <img class="ref-thumb" id="refThumb" alt="参考图预览" />
+            <div class="ref-meta">
+              <p class="ref-name" id="refName"></p>
+              <p class="ref-size" id="refSize"></p>
+            </div>
+            <button class="btn-remove-photo" id="btnRemoveRef" type="button" aria-label="移除参考图">
+              <svg class="icon icon-16" aria-hidden="true"><use href="#i-x"/></svg>
+            </button>
+          </div>
+        </div>
+
         <button class="btn primary big" id="btnGenerate" type="button" aria-busy="false" data-page-node-id="2amFdVRLwiniHT6cNehZwC">
           <span id="btnGenIdle" style="display:inline-flex;align-items:center;gap:8px;" data-page-node-id="DiBtKJeKcy3jvPs597EacM">
             <svg class="icon icon-20" aria-hidden="true" data-page-node-id="35HcpiV4ntYnYd2wyHCXmf"><use href="#i-sparkles" data-page-node-id="jH2BkU5eSxFFZQy6NyiclD"/></svg>生成头像
@@ -232,6 +255,6 @@
   <!-- ===== Section J0: WorkBuddy 云服务 SDK（CDN 形式，单文件无构建） ===== -->
   <script defer src="/shared/local-cloud.js?v=20261031a"></script>
   <script defer src="/shared/platform.js?v=20261031i"></script>
-  <script defer src="/apps/avatar/app.js?v=20261031c"></script>
+  <script defer src="/apps/avatar/app.js?v=20261031d"></script>
 </body>
 </html>

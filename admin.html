@@ -159,6 +159,19 @@
       </div>
 
       <div class="panel">
+        <h2 class="panel-title">生成选项</h2>
+        <p class="panel-desc">头像页「参考图（可选）」：用户可再传一张图，生成时和照片一起作为多图输入发给服务商（第一张必须是照片，参考图只用来借画风 / 配色 / 构图）。</p>
+        <label for="optRefImage" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:var(--text-base);color:var(--fg);">
+          <input type="checkbox" id="optRefImage" style="margin-top:3px;width:16px;height:16px;flex:none;"/>
+          <span>允许用户在头像页上传「参考图（可选）」</span>
+        </label>
+        <label class="field-label" for="optRefPrompt" style="margin-top:12px;">参考图说明（英文提示词片段，留空用内置默认）</label>
+        <textarea class="text-input mono" id="optRefPrompt" rows="3"
+                  placeholder="留空即可。内置默认：A SECOND image is attached as a style reference only…（第二张图只借画风与配色，不复制其中人脸与文字）"></textarea>
+        <p class="hint" id="optRefPromptState"></p>
+      </div>
+
+      <div class="panel">
         <h2 class="panel-title">风格列表</h2>
         <p class="panel-desc">每种风格 = 名称 + 封面图（可上传）+ 提示词（可留空）+ 绑定的服务商。提示词留空时，前台会把用户填写的「补充描述」作为提示词发送给 AI。</p>
         <div id="styleList"></div>
@@ -380,6 +393,10 @@
             /* 存量风格无 product 字段，默认归属第一个产品（avatar） */
             return Object.assign({}, s, { product: s.product || PLATFORM_PRODUCTS[0].id });
           }),
+          settings: {
+            avatarRefImage: !(data.config && data.config.settings && data.config.settings.avatarRefImage === false),
+            refPrompt: (data.config && data.config.settings && data.config.settings.refPrompt) || ''
+          },
           adminEmails: data.adminEmails || []
         };
       });
@@ -391,6 +408,7 @@
       return adminApi('POST', '/api/admin/config', {
         providers: payloadConfig.providers,
         styles: payloadConfig.styles,
+        settings: payloadConfig.settings || {},
         providerKeys: payloadSecrets.providerKeys || {}
       }).then(function (data) {
         serverHasKey = {};
@@ -442,7 +460,18 @@
       $('whoami').textContent = '已登录：' + (user.email || user.id);
       renderProviders();
       renderStyles();
+      renderSettings();
       loadUsers();
+    }
+
+    /* ---------- 渲染：生成选项（头像页参考图入口） ---------- */
+    function renderSettings() {
+      var s = (cfg && cfg.settings) || {};
+      $('optRefImage').checked = s.avatarRefImage !== false;
+      $('optRefPrompt').value = s.refPrompt || '';
+      $('optRefPromptState').textContent = String(s.refPrompt || '').trim()
+        ? '当前：使用自定义说明'
+        : '当前：使用内置默认说明（只借画风，不借人脸）';
     }
 
     /* ---------- 渲染：服务商 ---------- */
@@ -705,7 +734,11 @@
             providerId: s.providerId || '',
             product: s.product || PLATFORM_PRODUCTS[0].id
           };
-        })
+        }),
+        settings: {
+          avatarRefImage: !!$('optRefImage').checked,
+          refPrompt: $('optRefPrompt').value.trim()
+        }
       };
       /* 新填的 Key 与配置一次提交：服务端写 app_config + .ai-config.json（生成用 Key 的权威来源） */
       var payloadSecrets = { providerKeys: providerKeys };
@@ -730,7 +763,7 @@
       providerKeys = {};
       fetchAdminData().then(function (data) {
         cfg = data;
-        renderProviders(); renderStyles();
+        renderProviders(); renderStyles(); renderSettings();
         showSaveMsg('已重新加载', 'ok');
       }).catch(function (err) {
         showSaveMsg((err && err.message) || '加载失败', 'err');

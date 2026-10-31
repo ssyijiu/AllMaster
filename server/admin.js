@@ -205,6 +205,15 @@ function cleanStr(v, max) {
   return String(v == null ? '' : v).trim().slice(0, max || 200);
 }
 
+/* 头像页「参考图」入口的全局设置：是否开放 + 追加给 AI 的说明（英文提示词片段，留空用前端内置默认） */
+function normalizeSettings(body) {
+  const s = (body && typeof body === 'object') ? body : {};
+  return {
+    avatarRefImage: s.avatarRefImage === undefined ? true : s.avatarRefImage !== false,
+    refPrompt: String(s.refPrompt == null ? '' : s.refPrompt).slice(0, 1200)
+  };
+}
+
 function normalizeConfig(body) {
   const providers = (Array.isArray(body.providers) ? body.providers : []).map((p) => ({
     id: cleanStr(p && p.id, 40),
@@ -221,7 +230,7 @@ function normalizeConfig(body) {
     providerId: cleanStr(s && s.providerId, 40),
     product: cleanStr(s && s.product, 40) || 'avatar'
   }));
-  return { providers: providers, styles: styles };
+  return { providers: providers, styles: styles, settings: normalizeSettings(body.settings) };
 }
 
 function validateConfig(cfg) {
@@ -262,7 +271,11 @@ function handleBootstrap(req, res) {
     isAdmin: true,
     user: { id: user.id, email: user.email, balance: wallet.balance(user.id) },
     adminEmails: emails,
-    config: { providers: data.providers || [], styles: data.styles || [] },
+    config: {
+      providers: data.providers || [],
+      styles: data.styles || [],
+      settings: normalizeSettings(data.settings)
+    },
     /* 只回「哪些服务商有 Key」，Key 明文永不出库 */
     hasKeys: Object.keys(pk).filter((k) => !!pk[k]),
     /* 支付通道未配置（.pay-config.json 的 channels 为空），面板先隐藏 */
@@ -285,6 +298,8 @@ async function handleSaveConfig(req, res) {
   const data = readAppConfigData();
   data.providers = cfg.providers;
   data.styles = cfg.styles;
+  /* settings 只在请求显式带了才写：老页面/机器调用不传这个字段时，不把已有开关冲成默认值 */
+  if (body && body.settings !== undefined) { data.settings = cfg.settings; }
   writeAppConfigData(data);
 
   /* Key 合并规则：以「当前服务商列表」为准保留，前端新填的覆盖旧值。

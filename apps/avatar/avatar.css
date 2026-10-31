@@ -220,6 +220,35 @@
     }
     .btn-remove-photo:hover { background: var(--danger-bg); color: var(--danger); }
 
+    /* ===== 参考图（可选）：一行「上传 ● 说明」，选了之后变成缩略图 + 文件名 + 移除 ===== */
+    .ref-row { margin-top: var(--space-4); }
+    .ref-pick {
+      display: flex; align-items: center; gap: var(--space-3);
+      flex-wrap: wrap; margin-top: var(--space-2);
+    }
+    .ref-pick .btn { flex: none; }
+    .ref-tip {
+      flex: 1 1 200px; min-width: 0;
+      font-size: var(--text-xs); color: var(--meta); line-height: 1.6;
+    }
+    .ref-selected {
+      display: flex; align-items: center; gap: var(--space-3);
+      margin-top: var(--space-2); padding: var(--space-2) var(--space-3);
+      border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+      background: var(--bg);
+    }
+    .ref-thumb {
+      width: 44px; height: 44px; flex: none;
+      border-radius: var(--radius-sm); object-fit: cover;
+      border: 1px solid var(--border); background: var(--surface);
+    }
+    .ref-meta { flex: 1; min-width: 0; }
+    .ref-name {
+      font-size: var(--text-sm); color: var(--fg);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .ref-size { font-size: var(--text-xs); color: var(--meta); margin-top: 2px; }
+
     /* ===== 风格网格：选中黄描边（对齐点豆：白底 + 黄 ring + 黄角标） ===== */
     .style-grid {
       display: grid;

@@ -37,6 +37,9 @@ const { URL } = require('url');
 const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
 const MAX_BODY = 25 * 1024 * 1024;
+/* 参考图（风格参考）单张上限：8MB 的 data URL ≈ 6MB 原图，前端会先缩到 1024px，
+   正常一张 1~3MB；这里只是防有人直接 POST 一个巨型串。 */
+const MAX_REF_DATAURL = 8 * 1024 * 1024;
 const UPSTREAM_TIMEOUT = 300000;
 const BEAT_INTERVAL = 2000;
 
@@ -232,7 +235,7 @@ function sendJson(res, status, obj) {
 
 /* 校验入参；Key 由调用方解析后传入（服务器本地文件优先，payload.apiKey 仅作旧版兼容） */
 function preparePayload(payload, apiKey) {
-  const { baseUrl, model, path: apiPath, prompt, imageBase64 } = payload || {};
+  const { baseUrl, model, path: apiPath, prompt, imageBase64, referenceBase64 } = payload || {};
   function bad(msg) { const e = new Error(msg); e.status = 400; return e; }
   if (!baseUrl || !apiKey || !model || !prompt) {
     throw bad('缺少必要参数（接口地址 / Key / 模型 / 提示词）');
@@ -244,7 +247,30 @@ function preparePayload(payload, apiKey) {
   if (apiPath === '/images/edits' && !imageBase64) {
     throw bad('该接口需要上传照片');
   }
-  return { target: target.toString(), apiKey, model, apiPath, prompt, imageBase64 };
+  /* 参考图（可选）：和照片一起作为第二张图发给服务商。只收 data URL，且限长——
+     不能让客户端拿一个超大串把请求体顶到 25MB 上限之外。 */
+  let ref = referenceBase64 || '';
+  if (ref) {
+    if (apiPath !== '/images/edits') {
+      throw bad('纯文生图接口不支持参考图');
+    }
+    if (!/^data:image\/[a-z+]+;base64,/i.test(String(ref))) { throw bad('参考图格式不正确'); }
+    if (String(ref).length > MAX_REF_DATAURL) { throw bad('参考图太大（上限 8MB）'); }
+    ref = String(ref);
+  }
+  return { target: target.toString(), apiKey, model, apiPath, prompt, imageBase64, referenceBase64: ref };
+}
+
+/**
+ * data URL → { buf, mime, ext }。照片与参考图共用，格式不对统一按 400 抛。
+ */
+function imagePartFromDataUrl(dataUrl, label) {
+  const match = /^data:(image\/[a-z+]+);base64,(.+)$/i.exec(String(dataUrl || ''));
+  if (!match) { const e = new Error((label || '图片') + '数据格式不正确'); e.status = 400; throw e; }
+  const mime = match[1].toLowerCase();
+  const buf = Buffer.from(match[2], 'base64');
+  const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+  return { buf: buf, mime: mime, ext: ext };
 }
 
 /* 真正调用上游，返回 { statusCode, data }；网络层失败抛出异常 */
@@ -254,17 +280,21 @@ async function callUpstream(arg) {
   try {
     let upstreamRes;
     if (arg.apiPath === '/images/edits') {
-      const match = /^data:(image\/[a-z+]+);base64,(.+)$/i.exec(arg.imageBase64);
-      if (!match) { const e = new Error('图片数据格式不正确'); e.status = 400; throw e; }
-      const mime = match[1];
-      const buf = Buffer.from(match[2], 'base64');
-      const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+      /* 单图走 image（老行为不变）；带参考图时两张都走 image[] ——
+         2026-10-31 实测 apinebula 的 /images/edits 接受重复的 image[] 字段并返回 b64_json。 */
+      const parts = [imagePartFromDataUrl(arg.imageBase64, '照片')];
+      if (arg.referenceBase64) { parts.push(imagePartFromDataUrl(arg.referenceBase64, '参考图')); }
+      const multi = parts.length > 1;
       const form = new FormData();
       form.append('model', arg.model);
       form.append('prompt', arg.prompt);
       form.append('n', '1');
       form.append('size', '1024x1024');
-      form.append('image', new Blob([buf], { type: mime }), 'photo.' + ext);
+      parts.forEach(function (part, i) {
+        const field = multi ? 'image[]' : 'image';
+        const name = (i === 0 ? 'photo.' : 'reference.') + part.ext;
+        form.append(field, new Blob([part.buf], { type: part.mime }), name);
+      });
       upstreamRes = await fetch(arg.target, {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + arg.apiKey },

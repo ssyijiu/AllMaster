@@ -34,6 +34,12 @@
     var COMMON_PROMPT_SUFFIX =
       ' Square 1:1 avatar composition, head and shoulders framing, high quality, detailed.';
 
+    /* 参考图说明（后台留空时用这段）：明确告诉模型「第二张图只借画风，不借人」，
+       否则模型容易把参考图里的人脸也画进来。 */
+    var REF_PROMPT_DEFAULT =
+      'A SECOND image is attached as a style reference only: follow its art style, palette, lighting and rendering. ' +
+      'Do not copy the identity, face or any text from the second image; the FIRST image is the person to transform.';
+
     var AI_LOADING_TIPS = [
       'AI 绘制中，约需 10-20 秒',
       '正在勾勒轮廓与铺色…',
@@ -47,9 +53,14 @@
       state: {
         config: { providers: [], styles: [] },
         configFromDb: false,  /* 配置是否来自数据库（false = 兜底内置库） */
+        settings: { avatarRefImage: true, refPrompt: '' }, /* 后台「生成选项」 */
         photoFile: null,      /* 原始 File */
         photoBlob: null,      /* 1024px PNG Blob（上传后自动生成） */
         photoUrl: '',         /* 原图预览 objectURL（移除/替换时 revoke） */
+        refFile: null,        /* 参考图原始 File（可选） */
+        refBlob: null,        /* 参考图 1024px PNG Blob */
+        refDataUrl: '',       /* 参考图 data URL（发给服务商的就是它） */
+        refUrl: '',           /* 参考图预览 objectURL */
         compareUrl: '',       /* 对比原图专用 objectURL（独立生命周期） */
         currentOriginalSrc: '', /* 当前结果对应的原图地址（用于对比原图） */
         selectedStyle: 'grokbot',
@@ -105,6 +116,12 @@
         this.state.config = {
           providers: providers,
           styles: valid
+        };
+        /* 后台「生成选项」：参考图入口是否开放 + 参考图说明（留空用内置英文默认） */
+        var st = data.settings || {};
+        this.state.settings = {
+          avatarRefImage: st.avatarRefImage !== false,
+          refPrompt: typeof st.refPrompt === 'string' ? st.refPrompt : ''
         };
         this.state.configFromDb = true;
         /* 当前选中风格不存在时回退到第一个 */
@@ -282,8 +299,9 @@
       'Create a high quality portrait avatar suitable as a profile picture. Keep the subject\'s facial features and hairstyle natural and clearly recognizable.';
     var aiService = {
       /* 风格提示词可留空：留空则直接把用户填写的「补充描述」当作提示词；
-         两者都为空时用通用人像提示词，保证始终有可发送的内容 */
-      buildPrompt: function (style, extraText) {
+         两者都为空时用通用人像提示词，保证始终有可发送的内容。
+         refText：带参考图时追加的说明（第二张图只借画风，不借人脸） */
+      buildPrompt: function (style, extraText, refText) {
         var base = String(style.prompt || '').trim();
         var extra = String(extraText || '').trim();
         var userExtra = '';
@@ -294,7 +312,8 @@
         } else {
           base = extra || DEFAULT_STYLE_PROMPT;
         }
-        return base + userExtra + COMMON_PROMPT_SUFFIX;
+        var ref = String(refText || '').trim();
+        return base + (ref ? '\n' + ref : '') + userExtra + COMMON_PROMPT_SUFFIX;
       },
       apiUrl: function (provider, path) {
         return provider.baseUrl.replace(/\/+$/, '') + path;
@@ -302,7 +321,7 @@
       /* 同源代理 + 心跳流：请求发到本站 /api/ai，由服务端转发给服务商。
        * 服务端在等待期间每 2 秒写一个心跳注释，避免托管平台「空闲 30 秒即 524」，
        * 最终结果放在最后一行 data: 中，前端边读流边显示已等待秒数。 */
-      postProxy: function (provider, apiPath, prompt, imageDataUrl) {
+      postProxy: function (provider, apiPath, prompt, imageDataUrl, refDataUrl) {
         /* Key 已下沉到服务器（按 providerId 解析），前端不再持有 */
         var payload = {
           providerId: provider.id,
@@ -312,6 +331,8 @@
           prompt: prompt
         };
         if (imageDataUrl) { payload.imageBase64 = imageDataUrl; }
+        /* 参考图（可选）：服务端会把它作为第二张图随 /images/edits 一起发给服务商 */
+        if (refDataUrl) { payload.referenceBase64 = refDataUrl; }
 
         /* 带上登录令牌：服务端据此校验身份并扣费（扣费在服务端做，前端绕不过） */
         return getAuthToken().then(function (token) {
@@ -394,12 +415,12 @@
         }
         return pump();
       },
-      callImageEdits: function (provider, photoBlob, prompt) {
+      callImageEdits: function (provider, photoBlob, prompt, refDataUrl) {
         /* 轻压缩加快上传（不改变画质策略）；压缩环境异常时退回原始 dataURL。 */
         return imageService.compressForEdits(photoBlob)
           .catch(function () { return imageService.blobToDataURL(photoBlob); })
           .then(function (dataUrl) {
-            return aiService.postProxy(provider, '/images/edits', prompt, dataUrl);
+            return aiService.postProxy(provider, '/images/edits', prompt, dataUrl, refDataUrl);
           });
       },
       callImageGenerations: function (provider, prompt) {
@@ -488,6 +509,11 @@
       uploadPreview: $('uploadPreview'), previewImg: $('previewImg'),
       fileName: $('fileName'), fileSize: $('fileSize'),
       btnRemovePhoto: $('btnRemovePhoto'),
+      /* 参考图（可选） */
+      refRow: $('refRow'), refPick: $('refPick'), refInput: $('refInput'),
+      btnPickRef: $('btnPickRef'), refSelected: $('refSelected'),
+      refThumb: $('refThumb'), refName: $('refName'), refSize: $('refSize'),
+      btnRemoveRef: $('btnRemoveRef'),
       styleGrid: $('styleGrid'), extraInput: $('extraInput'),
       btnGenerate: $('btnGenerate'),
       btnGenIdle: $('btnGenIdle'), btnGenBusy: $('btnGenBusy'),
@@ -772,6 +798,80 @@
       updateSteps();
     }
 
+    /* ---------- 参考图（可选）：用户自己传一张画风/配色参考 ---------- */
+    /* 入口显隐由后台「生成选项」控制；关闭时不渲染、也不参与生成 */
+    function renderRefRow() {
+      if (!els.refRow) { return; }
+      var on = Store.state.settings.avatarRefImage !== false;
+      els.refRow.hidden = !on;
+      if (!on) { removeReference(); }
+    }
+
+    function acceptReference(file) {
+      if (!file) { return; }
+      if (!file.type || file.type.indexOf('image/') !== 0) {
+        showHint('参考图请选图片文件（JPG / PNG / WebP）', true);
+        return;
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        showHint('参考图太大了，请选择 20MB 以内的图片', true);
+        return;
+      }
+      var st = Store.state;
+      if (st.refUrl) { URL.revokeObjectURL(st.refUrl); }
+      st.refFile = file;
+      st.refBlob = null;
+      st.refDataUrl = '';
+      st.refUrl = URL.createObjectURL(file);
+      els.refThumb.src = st.refUrl;
+      els.refName.textContent = file.name;
+      els.refSize.textContent = formatBytes(file.size);
+      els.refPick.hidden = true;
+      els.refSelected.hidden = false;
+      showHint('');
+      /* 与照片同样缩到 1024px PNG；dataURL 在生成前必须就绪，这里先算好 */
+      imageService.resizeImage(file, UPLOAD_RESIZE_PX)
+        .then(function (blob) {
+          st.refBlob = blob;
+          return imageService.blobToDataURL(blob);
+        })
+        .then(function (dataUrl) { st.refDataUrl = dataUrl; })
+        .catch(function () {
+          /* 缩放失败就退回原图读取；再失败就当作没上传（生成时按无参考图走） */
+          return imageService.blobToDataURL(file)
+            .then(function (dataUrl) { st.refDataUrl = dataUrl; })
+            .catch(function () { st.refDataUrl = ''; });
+        });
+    }
+
+    function removeReference() {
+      var st = Store.state;
+      st.refFile = null;
+      st.refBlob = null;
+      st.refDataUrl = '';
+      if (st.refUrl) { URL.revokeObjectURL(st.refUrl); }
+      st.refUrl = '';
+      if (!els.refThumb) { return; }
+      els.refThumb.src = '';
+      els.refSelected.hidden = true;
+      els.refPick.hidden = false;
+    }
+
+    /* 生成前拿到参考图 dataURL：已算好直接用；只算了一半就现补，失败按无参考图处理 */
+    function ensureRefDataUrl() {
+      var st = Store.state;
+      if (!st.refFile || Store.state.settings.avatarRefImage === false) { return Promise.resolve(''); }
+      if (st.refDataUrl) { return Promise.resolve(st.refDataUrl); }
+      var p = st.refBlob ? Promise.resolve(st.refBlob) : imageService.resizeImage(st.refFile, UPLOAD_RESIZE_PX);
+      return p.then(function (blob) {
+        st.refBlob = blob;
+        return imageService.blobToDataURL(blob);
+      }).then(function (dataUrl) {
+        st.refDataUrl = dataUrl;
+        return dataUrl;
+      }).catch(function () { return ''; });
+    }
+
     /* 对比原图：独立 objectURL，不受移除照片影响 */
     function refreshCompareSource() {
       var st = Store.state;
@@ -826,7 +926,12 @@
       showHint('');
       setResultLoading(style.name);
 
-      var prompt = aiService.buildPrompt(style, els.extraInput.value.trim());
+      /* 参考图：纯文生图接口不收；后台关闭了也不收。提示词里追加「第二张图只借画风」的说明 */
+      var hasRef = !pureText && !!st.refFile && Store.state.settings.avatarRefImage !== false;
+      var refPrompt = hasRef
+        ? (String(Store.state.settings.refPrompt || '').trim() || REF_PROMPT_DEFAULT)
+        : '';
+      var prompt = aiService.buildPrompt(style, els.extraInput.value.trim(), refPrompt);
       /* 后台任务轮询期间持续显示已用时长，让用户知道没卡死 */
       aiService.onProgress = function (elapsed) {
         showHint('生成中… 已等待 ' + elapsed + ' 秒，请勿关闭页面（服务商出图通常需 20~90 秒）');
@@ -840,9 +945,12 @@
         })
         .then(function (blob) {
           if (blob) { st.photoBlob = blob; }
+          return hasRef ? ensureRefDataUrl() : '';
+        })
+        .then(function (refDataUrl) {
           var call = pureText
             ? function () { return aiService.callImageGenerations(provider, prompt); }
-            : function () { return aiService.callImageEdits(provider, st.photoBlob, prompt); };
+            : function () { return aiService.callImageEdits(provider, st.photoBlob, prompt, refDataUrl || ''); };
           return aiService.withRetry(call, function (n, left) {
             showHint('服务商波动，自动重试中（' + n + '/' + left + '）…');
           });
@@ -967,6 +1075,14 @@
         if (e.target.files && e.target.files[0]) { acceptPhoto(e.target.files[0]); }
         els.fileInput.value = '';
       });
+
+      /* 参考图：上传 / 移除（入口是否显示由后台「生成选项」决定） */
+      els.btnPickRef.addEventListener('click', function () { els.refInput.click(); });
+      els.refInput.addEventListener('change', function (e) {
+        if (e.target.files && e.target.files[0]) { acceptReference(e.target.files[0]); }
+        els.refInput.value = '';
+      });
+      els.btnRemoveRef.addEventListener('click', function () { removeReference(); });
 
       /* 拖拽（计数器方案防子元素误触发 dragleave） */
       var dragDepth = 0;
@@ -1186,6 +1302,7 @@
           if (!Store.applyConfig(data)) { return false; }
           /* 配置到位后重渲染风格卡与历史（云端历史风格名解析用最新配置） */
           renderStyleGrid();
+          renderRefRow();
           renderHistory();
           return true;
         })
@@ -1195,6 +1312,7 @@
     function init() {
       Store.restoreHistory();
       renderStyleGrid();
+      renderRefRow();
       renderHistory();
       updateSteps();
       bindEvents();
