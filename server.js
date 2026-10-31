@@ -28,6 +28,7 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const os = require('os');
 const crypto = require('crypto');
 const querystring = require('querystring');
@@ -682,6 +683,31 @@ function handlePixelartEnvCheck(res, deep, variant) {
 /* 根级「只给服务器看」的文件名（小写比较），不经 HTTP 下发 */
 const SERVER_ONLY_FILES = ['server.js', 'package.json', 'package-lock.json', 'architecture.md', 'readme.md', 'orders.js'];
 
+/* ---------- 静态资源压缩与缓存 ----------
+ * 跨境链路（国内→雅加达）带宽只有几十 KB/s，而 platform.js 40KB+、my.js 27KB、
+ * base.css 18KB 都是纯文本，不压缩等于让用户多等好几秒。
+ * 按 mtime+size 缓存 gzip 结果，源码改了自然失效。 */
+const GZIP_EXT = new Set(['.css', '.js', '.mjs', '.html', '.json', '.svg', '.txt', '.webmanifest', '.map']);
+const GZIP_MIN_BYTES = 1024;
+const gzipCache = new Map();
+
+function gzipFile(fp, stat) {
+  const key = fp + '|' + stat.mtimeMs + '|' + stat.size;
+  const hit = gzipCache.get(key);
+  if (hit) { return Promise.resolve(hit); }
+  return new Promise((resolve) => {
+    fs.readFile(fp, (err, buf) => {
+      if (err) { return resolve(null); }
+      zlib.gzip(buf, { level: 6 }, (err2, gz) => {
+        if (err2) { return resolve(null); }
+        if (gzipCache.size > 120) { gzipCache.clear(); }
+        gzipCache.set(key, gz);
+        resolve(gz);
+      });
+    });
+  });
+}
+
 function serveStatic(req, res) {
   const url = new URL(req.url, 'http://localhost');
   let pathname = decodeURIComponent(url.pathname);
@@ -720,12 +746,38 @@ function serveStatic(req, res) {
       return res.end('404 Not Found');
     }
     const ext = path.extname(fp).toLowerCase();
-    res.writeHead(200, {
-      'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Content-Length': stat.size,
-      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=3600'
+    const mediaType = MIME[ext] || 'application/octet-stream';
+    /* 带 ?v= 的资源视为内容寻址：可以永久缓存（改内容一定改版本号）；
+       没带版本号的（页面里漏写的引用）退回 1 小时，免得改版后长期不生效。 */
+    const cacheControl = ext === '.html'
+      ? 'no-cache'
+      : (url.searchParams.has('v') ? 'public, max-age=31536000, immutable' : 'public, max-age=3600');
+    const acceptGzip = String(req.headers['accept-encoding'] || '').indexOf('gzip') !== -1;
+
+    const sendPlain = () => {
+      res.writeHead(200, {
+        'Content-Type': mediaType,
+        'Content-Length': stat.size,
+        'Cache-Control': cacheControl,
+        'Vary': 'Accept-Encoding'
+      });
+      if (req.method === 'HEAD') { return res.end(); }
+      fs.createReadStream(fp).pipe(res);
+    };
+
+    if (!acceptGzip || !GZIP_EXT.has(ext) || stat.size < GZIP_MIN_BYTES) { return sendPlain(); }
+    gzipFile(fp, stat).then((gz) => {
+      if (!gz) { return sendPlain(); }
+      res.writeHead(200, {
+        'Content-Type': mediaType,
+        'Content-Length': gz.length,
+        'Content-Encoding': 'gzip',
+        'Cache-Control': cacheControl,
+        'Vary': 'Accept-Encoding'
+      });
+      if (req.method === 'HEAD') { return res.end(); }
+      res.end(gz);
     });
-    fs.createReadStream(fp).pipe(res);
   });
 }
 

@@ -261,30 +261,32 @@
     }
 
     /* ---------- 渲染：登录态（登录按钮 / 我的入口 / 退出） ----------
-     * 两种顶栏形态都支持：
+     * 三种顶栏形态：
      *   「我的」入口（userChip 是 <a href="/my">）：常驻可见，文案固定「我的」，
      *     登录人标识放 title；未登录点进去由 /my 给登录引导。
-     *   用户徽标（userChip 是 <span class="user-chip">，如 /my 自身）：登录后显示身份。
-     * 用 tagName 判断而不是新增 ctx 开关：页面结构自己就说明了意图。 */
+     *   用户徽标（userChip 是 <span class="user-chip">）：登录后显示身份。
+     *   没有 userChip（/my 顶栏不放身份徽标）：只切换登录/退出按钮。
+     * 用结构与 tagName 判断而不是新增 ctx 开关：页面结构自己就说明了意图。 */
     function renderAuthUI() {
       var user = Store.state.user;
-      var isMyEntry = !!(els.userChip && els.userChip.tagName === 'A');
       els.btnLogin.hidden = !!user;
       els.btnSignOut.hidden = !user;
-      if (isMyEntry) {
-        els.userChip.hidden = false;
+      var chip = els.userChip;
+      if (!chip) { return; }
+      if (chip.tagName === 'A') {
+        chip.hidden = false;
         if (els.userChipText) { els.userChipText.textContent = '我的'; }
         var who = user
           ? (user.name || maskIdentifier(user.phone) || maskIdentifier(user.email) || '')
           : '';
-        els.userChip.title = (who ? who + ' · ' : '') + '我的作品与积分明细';
+        chip.title = (who ? who + ' · ' : '') + '我的作品与积分明细';
         return;
       }
-      els.userChip.hidden = !user;
+      chip.hidden = !user;
       if (user) {
         els.userChipText.textContent =
           user.name || maskIdentifier(user.phone) || maskIdentifier(user.email) || '已登录';
-        els.userChip.title = ctx.userChipTitle || '已登录';
+        chip.title = ctx.userChipTitle || '已登录';
       }
     }
 
@@ -311,11 +313,34 @@
     var walletService = {
       balance: null,
       refreshing: false,
+      /* 余额本地缓存：跨境 RPC 要 0.3~0.6s，二次打开先用缓存把数字亮出来，
+         再后台刷新覆盖。只按用户 id 存，不跨账号串味。 */
+      cacheKey: function () {
+        return 'platform.balance.' + (Store.state.user ? Store.state.user.id : 'anon');
+      },
+      readCache: function () {
+        try {
+          var raw = localStorage.getItem(this.cacheKey());
+          var c = raw ? JSON.parse(raw) : null;
+          if (c && typeof c.balance === 'number') { return c.balance; }
+        } catch (_) {}
+        return null;
+      },
+      writeCache: function (balance) {
+        try {
+          localStorage.setItem(this.cacheKey(), JSON.stringify({ balance: balance, ts: Date.now() }));
+        } catch (_) {}
+      },
       refresh: function () {
         if (!Store.state.user || this.refreshing) { return Promise.resolve(null); }
+        if (this.balance === null) {
+          var cached = this.readCache();
+          if (cached !== null) { this.balance = cached; this.renderChip(); }
+        }
         this.refreshing = true;
         return walletRpc('wallet_balance').then(function (data) {
           walletService.balance = typeof data === 'number' ? data : parseInt(data, 10) || 0;
+          walletService.writeCache(walletService.balance);
           walletService.renderChip();
           return walletService.balance;
         }).catch(function () {

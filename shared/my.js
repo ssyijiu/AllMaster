@@ -87,6 +87,10 @@
     }
   });
 
+  /* /my 过去漏了这一句：登录/积分/兑换/退出这些按钮的事件全没绑上，
+     表现为「点积分没反应」。产品页一直有调，只有本页遗漏。 */
+  auth.bindAuthEvents();
+
   /* ---------- 标签切换 ---------- */
   function switchTab(name) {
     var works = name === 'works';
@@ -475,16 +479,23 @@
       ? '从作品列表移除？图纸在服务器仍保留一段时间，用原链接还能打开。'
       : '删除后不可恢复，确定删除这个作品？';
     if (!window.confirm(tip)) { return; }
-    card.style.opacity = '0.4';
+    /* 乐观更新：跨境删一个文件要 0.5~1s，等请求回来卡片才消失会明显卡顿。
+       先从列表移除并重绘，请求失败再整体回滚 + 提示。 */
+    var snapshot = Store.state.works.slice();
+    Store.state.works = Store.state.works.filter(function (x) { return x.path !== w.path; });
+    renderWorks();
+    var rollback = function () {
+      Store.state.works = snapshot;
+      renderWorks();
+      showHint('删除失败，请稍后重试', true);
+    };
     /* 头像原图连带它的缩略图一起删（缩略图可能还不存在，一起传即可） */
     var paths = (w.kind === 'avatar' && w.path)
       ? [w.path, w.path + '.thumb.jpg']
       : [w.path];
     Promise.resolve(cloud.storage.remove(paths)).then(function (res) {
-      if (res && res.error) { card.style.opacity = '1'; showHint('删除失败，请稍后重试', true); return; }
-      Store.state.works = Store.state.works.filter(function (x) { return x.path !== w.path; });
-      renderWorks();
-    }).catch(function () { card.style.opacity = '1'; showHint('删除失败，请稍后重试', true); });
+      if (res && res.error) { rollback(); }
+    }).catch(rollback);
   }
 
   /* ---------- 积分明细 ---------- */
@@ -528,9 +539,25 @@
 
   function renderTxnsEmpty() { els.txnList.innerHTML = '<p class="hint">登录后查看积分明细</p>'; }
 
-  /* 明细按「登录用户」缓存：来回切 tab 不再重复跨境请求（这是积分明细慢的主观放大器）。
-     用户变了（重新登录/换号）自动失效重拉。 */
+  /* 明细按「登录用户」缓存：内存 + 本地存储双层。
+     跨境请求要 0.3~0.6s，二次打开先用上次的明细把列表铺满，再后台覆盖——
+     否则每次进来都要盯着「加载中…」。 */
   var txnsCache = { userId: null, loaded: false };
+
+  function txnsKey(uid) { return 'my.txns.' + uid; }
+
+  function readTxnsCache(uid) {
+    try {
+      var raw = localStorage.getItem(txnsKey(uid));
+      var c = raw ? JSON.parse(raw) : null;
+      if (c && Array.isArray(c.rows) && c.rows.length) { return c.rows; }
+    } catch (_) {}
+    return null;
+  }
+
+  function writeTxnsCache(uid, rows) {
+    try { localStorage.setItem(txnsKey(uid), JSON.stringify({ rows: rows, ts: Date.now() })); } catch (_) {}
+  }
 
   function loadTxns(force) {
     var cloud = Platform.cloud.getClient();
@@ -538,14 +565,21 @@
     if (!user) { txnsCache = { userId: null, loaded: false }; renderTxnsEmpty(); return; }
     if (!force && txnsCache.loaded && txnsCache.userId === user.id) { return; }
     if (!cloud || !cloud.database || !cloud.database.from) { els.txnList.innerHTML = '<p class="hint">云端未就绪，请刷新重试</p>'; return; }
-    els.txnList.innerHTML = '<p class="hint">加载中…</p>';
+    var cached = readTxnsCache(user.id);
+    if (cached) { renderTxns(cached); }
+    else { els.txnList.innerHTML = '<p class="hint">加载中…</p>'; }
     Promise.resolve(cloud.database.from('app_wallet_txns').select('*')
       .order('created_at', { ascending: false }).limit(50))
       .then(function (res) {
+        var rows = (res && res.data) || [];
         txnsCache = { userId: user.id, loaded: true };
-        renderTxns((res && res.data) || []);
+        writeTxnsCache(user.id, rows);
+        renderTxns(rows);
       })
-      .catch(function () { els.txnList.innerHTML = '<p class="hint">明细加载失败，请稍后重试</p>'; });
+      .catch(function () {
+        if (cached) { return; }   /* 有旧数据就先看着，不打断 */
+        els.txnList.innerHTML = '<p class="hint">明细加载失败，请稍后重试</p>';
+      });
   }
 
   /* ---------- 启动 ---------- */
@@ -554,9 +588,12 @@
   function boot() {
     els.tabWorks.addEventListener('click', function () { switchTab('works'); });
     els.tabTxns.addEventListener('click', function () { switchTab('txns'); });
-    /* 兑换 / 充值到账后明细会变：作废缓存，正在看明细 tab 时立刻重拉 */
+    /* 兑换 / 充值到账后明细会变：作废内存与本地缓存，正在看明细 tab 时立刻重拉 */
     document.addEventListener('platform:balance-changed', function () {
       txnsCache.loaded = false;
+      try {
+        if (Store.state.user) { localStorage.removeItem(txnsKey(Store.state.user.id)); }
+      } catch (_) {}
       if (!els.panelTxns.hidden) { loadTxns(); }
     });
     els.workFilters.addEventListener('click', function (e) {

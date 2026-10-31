@@ -27,6 +27,35 @@ body {
   align-items: center;
   gap: 20px;
 }
+/* 品牌区：两个产品 logo（黄底圆角图标 + 中文名标），各自是入口 */
+.brand-group { display: flex; align-items: center; gap: 6px; }
+.brand-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 8px 4px 4px;
+  border-radius: 10px;
+  text-decoration: none;
+  transition: background var(--motion-fast) var(--ease-standard);
+}
+.brand-item:hover { background: var(--ink-50); }
+.brand-badge {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: #FFD02F;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(240, 187, 0, 0.35);
+}
+.brand-badge svg { width: 19px; height: 19px; display: block; }
+.brand-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--fg);
+  letter-spacing: 0.5px;
+}
 .brand {
   display: inline-flex;
   align-items: baseline;
