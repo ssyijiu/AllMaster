@@ -289,6 +289,10 @@
     }
 
     /* ---------- 积分钱包（账本在云端，前端只调 RPC） ---------- */
+    /* 余额变动广播：产品页（如 /my 的积分明细）监听后刷新各自视图 */
+    function notifyBalanceChanged() {
+      try { document.dispatchEvent(new CustomEvent('platform:balance-changed')); } catch (_) {}
+    }
     function walletRpc(name, params) {
       var cloud = cloudService.getClient();
       if (!cloud || !cloud.database || !cloud.database.rpc) {
@@ -519,6 +523,7 @@
       walletService.redeem(code).then(function (balance) {
         els.redeemCode.value = '';
         showWalletMsg('兑换成功，当前余额 ' + balance + ' 积分');
+        notifyBalanceChanged();
         if (!els.walletModal.hidden) { loadTxnHistory(); }
       }).catch(function (err) {
         showWalletMsg(err.message || '兑换失败', true);
@@ -549,6 +554,7 @@
           .then(function (balance) {
             walletService.balance = typeof balance === 'number' ? balance : walletService.balance;
             walletService.renderChip();
+            notifyBalanceChanged();
             showHint('充值成功，积分已到账，当前余额 ' + balance + '。');
           })
           .catch(function (err) {

@@ -739,6 +739,17 @@ const CLOUD_UPSTREAM = process.env.CLOUD_UPSTREAM || 'https://ai-avatar-studio-5
 const CLOUD_ORIGIN = new URL(CLOUD_UPSTREAM).origin;
 const CLOUD_PUBLISHABLE_KEY = 'wbpk_eoMql05K7PT2JgZUKFFOo9_9vLkFanCYcm67RRrIgxoEnsGnDS52YEM';
 
+/* 云上游连接复用：跨境链路（尤其雅加达→云）完整 TLS 握手要 1.1~2s，
+ * 之前每来一个 API 请求就新建一条连接，积分明细/作品/余额每个都白付一次握手
+ * （实测雅加达 TTFB：新建 1.5s+ → keepAlive 复用 0.36s）。
+ * 所有走云的出站请求（proxyCloud / cloudRpc / cloudRpcAnon）共用这个 agent。 */
+const cloudAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30000,
+  maxSockets: 32,
+  maxFreeSockets: 8
+});
+
 /* ---------- 服务端计费：用调用者自己的 JWT 调云端钱包 RPC ----------
  * 为什么必须放在服务端：/api/ai 是唯一消耗服务商 Key 的出口，前端扣费可被绕过
  * （2026-10-30 事故：会话过期 → 云端自动降级为匿名会话 → 扣费打在共享 anon 账本上，
@@ -762,6 +773,7 @@ function cloudRpc(token, fn, params) {
         Origin: CLOUD_ORIGIN,
         Referer: CLOUD_ORIGIN + '/'
       },
+      agent: cloudAgent,
       timeout: 15000
     }, (res) => {
       const chunks = [];
@@ -809,6 +821,7 @@ function cloudRpcAnon(fn, params) {
         Origin: CLOUD_ORIGIN,
         Referer: CLOUD_ORIGIN + '/'
       },
+      agent: cloudAgent,
       timeout: 15000
     }, (res) => {
       const chunks = [];
@@ -1024,6 +1037,7 @@ function proxyCloud(req, res) {
     path: target.pathname + target.search,
     method: req.method,
     headers: headers,
+    agent: cloudAgent,
     timeout: 60000
   }, (upRes) => {
     if (isListPath) {

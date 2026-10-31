@@ -528,14 +528,23 @@
 
   function renderTxnsEmpty() { els.txnList.innerHTML = '<p class="hint">登录后查看积分明细</p>'; }
 
-  function loadTxns() {
+  /* 明细按「登录用户」缓存：来回切 tab 不再重复跨境请求（这是积分明细慢的主观放大器）。
+     用户变了（重新登录/换号）自动失效重拉。 */
+  var txnsCache = { userId: null, loaded: false };
+
+  function loadTxns(force) {
     var cloud = Platform.cloud.getClient();
-    if (!Store.state.user) { renderTxnsEmpty(); return; }
+    var user = Store.state.user;
+    if (!user) { txnsCache = { userId: null, loaded: false }; renderTxnsEmpty(); return; }
+    if (!force && txnsCache.loaded && txnsCache.userId === user.id) { return; }
     if (!cloud || !cloud.database || !cloud.database.from) { els.txnList.innerHTML = '<p class="hint">云端未就绪，请刷新重试</p>'; return; }
     els.txnList.innerHTML = '<p class="hint">加载中…</p>';
     Promise.resolve(cloud.database.from('app_wallet_txns').select('*')
       .order('created_at', { ascending: false }).limit(50))
-      .then(function (res) { renderTxns((res && res.data) || []); })
+      .then(function (res) {
+        txnsCache = { userId: user.id, loaded: true };
+        renderTxns((res && res.data) || []);
+      })
       .catch(function () { els.txnList.innerHTML = '<p class="hint">明细加载失败，请稍后重试</p>'; });
   }
 
@@ -545,6 +554,11 @@
   function boot() {
     els.tabWorks.addEventListener('click', function () { switchTab('works'); });
     els.tabTxns.addEventListener('click', function () { switchTab('txns'); });
+    /* 兑换 / 充值到账后明细会变：作废缓存，正在看明细 tab 时立刻重拉 */
+    document.addEventListener('platform:balance-changed', function () {
+      txnsCache.loaded = false;
+      if (!els.panelTxns.hidden) { loadTxns(); }
+    });
     els.workFilters.addEventListener('click', function (e) {
       var btn = e.target.closest ? e.target.closest('.chip') : null;
       if (!btn || !btn.dataset.filter) { return; }
