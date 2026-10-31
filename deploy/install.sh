@@ -92,7 +92,14 @@ curl -s -o /dev/null -w "  本地 :$APP_PORT → HTTP %{http_code}\n" "http://12
 
 echo "==> 6/8 安装 Caddy 配置（需域名 $DOMAIN 已解析到本机，否则证书签发会失败）"
 if [ -f "$APP_DIR/deploy/Caddyfile" ]; then
-  sed "s/dotbeads\.com/$DOMAIN/g" "$APP_DIR/deploy/Caddyfile" > /etc/caddy/Caddyfile
+  # 雅加达机是「备案期对外入口」，要用按路径分流的版本（静态本地 / 业务接口反代广州），
+  # 否则两机各跑一套库，同一用户在两个入口会看到两个账号。
+  CADDY_SRC="$APP_DIR/deploy/Caddyfile"
+  if [ "$DOMAIN" = "dotbeads.online" ] && [ -f "$APP_DIR/deploy/Caddyfile-jakarta" ]; then
+    CADDY_SRC="$APP_DIR/deploy/Caddyfile-jakarta"
+    echo "  使用 Caddyfile-jakarta（静态本机、/api 与 /files 反代广州）"
+  fi
+  sed "s/dotbeads\.com/$DOMAIN/g" "$CADDY_SRC" > /etc/caddy/Caddyfile
   systemctl reload caddy || systemctl restart caddy
   sleep 3
   curl -s -o /dev/null -w "  https://$DOMAIN/apps/avatar/ → HTTP %{http_code}\n" "https://$DOMAIN/apps/avatar/" || true
