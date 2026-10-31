@@ -73,6 +73,18 @@ function upsertUser(email) {
 function sendCode(rawEmail, ip) {
   const email = normalizeEmail(rawEmail);
   if (!isValidEmail(email)) { throw fail('BAD_EMAIL', '邮箱格式不正确'); }
+
+  /* 生产环境绝不「假装发出去了」：没配邮件通道就在动数据库之前直接失败。
+     否则验证码只落在服务器 outbox 里，用户永远收不到，而我们以为发成功了；
+     更危险的是 dev 通道原本会把验证码回传给调用方 —— 等于任何人输别人的
+     邮箱就能拿到码登录。生产必须关死这条路。 */
+  const provider = mail.providerName();
+  const isProd = process.env.NODE_ENV === 'production';
+  if (isProd && provider === 'dev') {
+    console.error('[auth] 生产环境未配置邮件通道，拒绝发码');
+    throw fail('MAIL_UNAVAILABLE', '邮件服务暂不可用，请稍后重试或联系客服');
+  }
+
   const d = dbmod.db;
   const now = dbmod.nowMs();
 
@@ -100,14 +112,17 @@ function sendCode(rawEmail, ip) {
     + '<p style="color:#6B6F76">10 分钟内有效。若非本人操作，请忽略本邮件。</p>'
     + '<p style="color:#8E91A0;font-size:13px">点豆 DotBeads</p></div>';
 
-  const provider = mail.providerName();
   return mail.send(email, '点豆登录验证码 ' + code, text, html).then((r) => ({
     ok: true,
     provider: provider,
     expiresIn: Math.floor(CODE_TTL_MS / 1000),
-    /* dev 通道（未配邮件服务）把验证码回传，方便自测；生产通道绝不回传 */
-    devCode: r && r.provider === 'dev' ? code : undefined
-  }));
+    /* 仅非生产环境的 dev 通道回传验证码，方便本地/自测 */
+    devCode: !isProd && r && r.provider === 'dev' ? code : undefined
+  })).catch((e) => {
+    /* 上游通道的具体原因（域名未验证 / Key 失效 / 限流）只进日志，不回给前端 */
+    console.error('[auth] 验证码发送失败 provider=' + provider + ': ' + ((e && e.message) || e));
+    throw fail('MAIL_FAILED', '验证码发送失败，请稍后重试');
+  });
 }
 
 /* ---------- 校验并签发会话 ---------- */

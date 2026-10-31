@@ -120,7 +120,11 @@ async function handleAuth(req, res, pathOnly) {
       const out = await auth.sendCode(body.email, clientIp(req));
       return sendJson(res, 200, out);
     } catch (e) {
-      return sendJson(res, e.code === 'BAD_EMAIL' ? 400 : 429, { error: { code: e.code || 'SEND_FAILED', message: e.message } });
+      const c = e && e.code;
+      const status = c === 'BAD_EMAIL' ? 400
+        : (c === 'MAIL_UNAVAILABLE' || c === 'MAIL_FAILED') ? 503
+        : (c === 'TOO_MANY' ? 429 : 500);
+      return sendJson(res, status, { error: { code: c || 'SEND_FAILED', message: (e && e.message) || '发送失败' } });
     }
   }
   if (pathOnly === '/api/auth/verify' && req.method === 'POST') {
