@@ -113,10 +113,10 @@
   </header>
 
   <main class="page">
-    <!-- 登录门禁（邮箱验证码，与前台同一套自建账号） -->
+    <!-- 登录门禁（邮箱验证码，仅限管理员白名单邮箱） -->
     <div class="panel gate" id="gatePanel">
       <h2 class="panel-title">管理员登录</h2>
-      <p class="panel-desc">使用与前台相同的邮箱登录。只有管理员白名单里的邮箱可以编辑配置；API Key 存放在服务器，页面只显示「是否已配置」，从不回传明文。</p>
+      <p class="panel-desc">只有管理员白名单里的邮箱可以登录本后台：白名单外的邮箱连验证码都发不出去。API Key 存放在服务器，页面只显示「是否已配置」，从不回传明文。</p>
       <label class="field-label" for="gateEmail">邮箱</label>
       <input type="email" id="gateEmail" class="text-input" maxlength="120"
              placeholder="you@example.com" autocomplete="email" />
@@ -137,13 +137,14 @@
       </div>
     </div>
 
-    <!-- 非管理员提示 -->
+    <!-- 非管理员：禁止访问 -->
     <div class="panel gate" id="deniedPanel" hidden>
-      <h2 class="panel-title">无管理权限</h2>
-      <p class="panel-desc">当前登录账号不在管理员白名单里。</p>
+      <h2 class="panel-title">禁止访问</h2>
+      <p class="panel-desc">该邮箱不是本后台的管理员，已被拒绝访问。后台只接受白名单内的管理员邮箱登录。</p>
       <p class="hint" id="deniedUid" style="font-family:var(--mono);"></p>
       <div class="note-box" id="deniedHow" hidden></div>
-      <div style="margin-top:16px;">
+      <div style="margin-top:16px;display:flex;gap:8px;">
+        <button class="btn primary" id="btnDeniedSignOut" type="button">退出当前账号</button>
         <button class="btn ghost" id="btnDeniedBack" type="button">← 返回前台</button>
       </div>
     </div>
@@ -212,7 +213,7 @@
     </div>
   </div>
 
-  <script src="/shared/local-cloud.js?v=20261031a"></script>
+  <script src="/shared/local-cloud.js?v=20261031b"></script>
   <script>
   (function () {
     'use strict';
@@ -267,6 +268,26 @@
       });
     }
 
+    /* 后台专用裸请求（登录用，不带既有会话 token）：
+       与 adminApi 的区别是错误里带上服务端的 code，便于区分「没权限」与「发码失败」 */
+    function adminRaw(method, apiPath, body) {
+      return fetch(apiPath, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (data) {
+          if (!r.ok) {
+            var e = new Error((data && data.error && data.error.message) || ('请求失败（HTTP ' + r.status + '）'));
+            e.code = (data && data.error && data.error.code) || '';
+            e.status = r.status;
+            throw e;
+          }
+          return data;
+        });
+      });
+    }
+
     function esc(v) {
       return String(v == null ? '' : v)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -291,23 +312,21 @@
     function sendCode() {
       var email = $('gateEmail').value.trim();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { showMsg('请输入正确的邮箱地址', 'err'); return; }
-      var c = getClient();
-      if (!c) { showMsg('登录组件未就绪，请刷新页面', 'err'); return; }
       $('btnSendCode').disabled = true;
-      c.auth.sendOtp({ email: email }).then(function (res) {
-        if (res && res.error) {
-          $('btnSendCode').disabled = false;
-          showMsg('验证码发送失败：' + ((res.error && res.error.message) || '请稍后重试'), 'err');
-          return;
-        }
+      /* 走后台专用发码口：服务端先查白名单，非管理员邮箱连验证码都不发 */
+      adminRaw('POST', '/api/admin/login/send', { email: email }).then(function (out) {
         pendingOtp = { email: email };
         startCountdown();
         var tip = '验证码已发送，请查收邮件';
-        if (res && res.data && res.data.devCode) { tip += '（测试环境验证码：' + res.data.devCode + '）'; }
+        if (out && out.devCode) { tip += '（测试环境验证码：' + out.devCode + '）'; }
         showMsg(tip, 'ok');
-      }).catch(function () {
+      }).catch(function (e) {
         $('btnSendCode').disabled = false;
-        showMsg('验证码发送失败，请检查网络后重试', 'err');
+        if (e && e.code === 'NOT_ADMIN') {
+          showDenied({ email: email });
+          return;
+        }
+        showMsg('验证码发送失败：' + ((e && e.message) || '请稍后重试'), 'err');
       });
     }
 
@@ -317,20 +336,24 @@
       if (!pendingOtp || pendingOtp.email !== email) { showMsg('请先为当前邮箱获取验证码', 'err'); return; }
       if (!/^\d{4,6}$/.test(code)) { showMsg('请输入邮件里的验证码', 'err'); return; }
       var c = getClient();
-      if (!c) { showMsg('登录组件未就绪，请刷新页面', 'err'); return; }
+      if (!c || !c.auth.adoptSession) { showMsg('登录组件未就绪，请刷新页面', 'err'); return; }
       $('btnGateLogin').disabled = true;
-      c.auth.verifyOtp({ email: email, token: code }).then(function (res) {
+      adminRaw('POST', '/api/admin/login/verify', { email: email, code: code }).then(function (out) {
+        if (!out || !out.token) { throw Object.assign(new Error('登录响应异常，请重试'), { code: 'BAD_RESPONSE' }); }
+        return c.auth.adoptSession(out.token).then(function (res) {
+          $('btnGateLogin').disabled = false;
+          if (!res || !res.data || !res.data.user) {
+            showMsg('会话建立失败，请重试', 'err');
+            return;
+          }
+          pendingOtp = null;
+          $('gateCode').value = '';
+          boot(res.data.user);
+        });
+      }).catch(function (e) {
         $('btnGateLogin').disabled = false;
-        if (res && res.error) {
-          showMsg('验证码错误或已过期，请重试', 'err');
-          return;
-        }
-        pendingOtp = null;
-        if (res && res.data && res.data.user) { boot(res.data.user); }
-        else { showMsg('登录成功但未返回用户信息，请刷新', 'err'); }
-      }).catch(function () {
-        $('btnGateLogin').disabled = false;
-        showMsg('登录失败，请稍后重试', 'err');
+        if (e && e.code === 'NOT_ADMIN') { showDenied({ email: email }); return; }
+        showMsg((e && e.message) || '验证码错误或已过期，请重试', 'err');
       });
     }
 
@@ -357,7 +380,6 @@
             /* 存量风格无 product 字段，默认归属第一个产品（avatar） */
             return Object.assign({}, s, { product: s.product || PLATFORM_PRODUCTS[0].id });
           }),
-          adminByFallback: !!data.adminByFallback,
           adminEmails: data.adminEmails || []
         };
       });
@@ -386,28 +408,28 @@
         cfg = data;
         enterEditor();
       }).catch(function (err) {
-        if (err && err.notAdmin) { showDenied(err.payload); return; }
+        if (err && (err.notAdmin || err.code === 'NOT_ADMIN')) { showDenied({ email: user.email }); return; }
+        if (err && err.code === 'ADMIN_NOT_CONFIGURED') {
+          showMsg('后台还没有配置管理员白名单（服务器 ADMIN_EMAILS），任何账号都无法登录', 'err');
+          return;
+        }
         showMsg((err && err.message) || '加载失败，请刷新重试', 'err');
       });
     }
 
+    /* 非管理员：整页只留一张「禁止访问」卡片。
+       注意这里不给白名单列表 —— 没什么必要让被拒的人知道谁能进。 */
     function showDenied(payload) {
-      var who = (payload && payload.user && payload.user.email) || (user && user.email) || '';
+      var who = (payload && payload.email) || (payload && payload.user && payload.user.email) || (user && user.email) || '';
       $('gatePanel').hidden = true;
+      $('adminMain').hidden = true;
       $('deniedPanel').hidden = false;
       $('topbarActions').hidden = false;
       $('saveBar').hidden = true;
       document.body.classList.remove('has-save-bar');
-      $('whoami').textContent = '已登录：' + who;
-      $('deniedUid').textContent = '当前账号：' + who;
-      var how = $('deniedHow');
-      var emails = (payload && payload.adminEmails) || [];
-      if (emails.length) {
-        how.hidden = false;
-        how.textContent = '管理员白名单：' + emails.join('、') + '。需要提权就在服务器上改白名单（ADMIN_EMAILS 或 .admin-config.json），改完刷新本页。';
-      } else {
-        how.hidden = true;
-      }
+      $('whoami').textContent = who ? ('已登录：' + who) : '';
+      $('deniedUid').textContent = who ? ('当前账号：' + who) : '';
+      $('deniedHow').hidden = true;
     }
 
     function enterEditor() {
@@ -421,9 +443,6 @@
       renderProviders();
       renderStyles();
       loadUsers();
-      if (cfg.adminByFallback) {
-        showSaveMsg('提示：尚未配置管理员白名单，当前按「首个注册账号」兜底。建议在 .admin-config.json 写入 emails 后重启服务。', 'warn');
-      }
     }
 
     /* ---------- 渲染：服务商 ---------- */
@@ -819,19 +838,23 @@
     $('gateCode').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { login(); }
     });
-    $('btnSignOut').addEventListener('click', function () {
+    function doSignOut() {
       var c = getClient();
-      user = null; cfg = null; providerKeys = {}; serverHasKey = {};
+      user = null; cfg = null; providerKeys = {}; serverHasKey = {}; pendingOtp = null;
       $('adminMain').hidden = true;
       $('deniedPanel').hidden = true;
       $('gatePanel').hidden = false;
       $('topbarActions').hidden = true;
       $('saveBar').hidden = true;
       $('gateCode').value = '';
+      $('whoami').textContent = '';
       document.body.classList.remove('has-save-bar');
       showMsg('已退出登录');
+      /* 前台会话也一并吊销：退出后整站都是未登录状态 */
       if (c && c.auth.signOut) { c.auth.signOut().catch(function () {}); }
-    });
+    }
+    $('btnSignOut').addEventListener('click', doSignOut);
+    $('btnDeniedSignOut').addEventListener('click', doSignOut);
     $('btnDeniedBack').addEventListener('click', function () { location.href = '/'; });
 
     /* ---------- 启动：恢复会话 → 分发门禁 ---------- */

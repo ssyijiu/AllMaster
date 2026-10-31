@@ -125,6 +125,21 @@
       });
     },
 
+    /* 后台专用：/api/admin/login/verify 已经在服务端验过白名单，这里收下 token。
+       普通前台不该用这个方法（前台走 verifyOtp）。 */
+    adoptSession: function (token) {
+      writeToken(token);
+      return api('/api/auth/session').then(function (body) {
+        if (!body || !body.user) {
+          writeToken('');
+          return { data: null, error: { code: 'INVALID_SESSION', message: '会话无效' } };
+        }
+        var session = { user: body.user, balance: body.balance };
+        emit('SIGNED_IN', session);
+        return { data: { user: body.user, session: session }, error: null };
+      });
+    },
+
     onAuthStateChange: function (cb) {
       listeners = listeners.concat([cb]);
       return function () {

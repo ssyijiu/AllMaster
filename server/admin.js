@@ -9,9 +9,11 @@
  *   POST /api/admin/redeem      批量生成兑换码
  *   GET  /api/admin/users       最近注册用户 + 余额（充值面板选人用）
  *
- * 鉴权：**登录会话 + 管理员邮箱白名单**，不用 x-access-key。
- *   - 白名单来源优先级：环境变量 ADMIN_EMAILS → .admin-config.json{emails} → 首个注册用户兜底
- *   - 兜底是为了「刚迁移完不被锁在门外」，一旦配了白名单就立即失效（响应里 adminByFallback 会提示）
+ * 鉴权：**后台专用登录 + 管理员邮箱白名单**，不用 x-access-key。
+ *   - 白名单来源：环境变量 ADMIN_EMAILS → .admin-config.json{emails}
+ *   - 白名单外的邮箱在**发码环节就被拒**，拿不到验证码、也签不出会话；
+ *     即使它已是前台普通用户，访问后台接口一律 403
+ *   - 白名单为空时 fail closed（不放行任何人），而不是退化成「首个注册账号」
  *   - accessKey 仍只服务 /api/admin/sync-key 与 /api/admin/orders/health 这类机器调用，不发给浏览器
  */
 
@@ -86,17 +88,19 @@ function configuredAdminEmails() {
   return list;
 }
 
-function fallbackAdminUserId() {
-  const row = dbmod.db.prepare('SELECT id FROM users ORDER BY created_at ASC, id ASC LIMIT 1').get();
-  return row ? row.id : '';
+/* 白名单为空时**不放行任何人**（fail closed）。
+   早前有「首个注册账号兜底」，那是迁移期怕把自己锁在门外的权宜之计；
+   实际风险更大：库里只要有个更早的测试账号，管理权就落到它头上。
+   现在白名单由 systemd 的 ADMIN_EMAILS 显式给出，缺失就报配置错误。 */
+function isAdminEmail(email) {
+  const list = configuredAdminEmails();
+  const e = String(email || '').trim().toLowerCase();
+  return !!e && list.indexOf(e) !== -1;
 }
 
 function isAdmin(user) {
   if (!user) { return false; }
-  const list = configuredAdminEmails();
-  if (list.length) { return list.indexOf(String(user.email || '').toLowerCase()) !== -1; }
-  /* 兜底：白名单为空时，库里最早注册的账号视为管理员（部署即可用，避免锁死） */
-  return user.id === fallbackAdminUserId();
+  return isAdminEmail(user.email);
 }
 
 /* 统一门禁：返回 user 或已写响应返回 null */
@@ -106,11 +110,74 @@ function requireAdmin(req, res) {
     sendJson(res, 401, { error: { code: 'AUTH_REQUIRED', message: '请先登录' } });
     return null;
   }
+  if (!configuredAdminEmails().length) {
+    sendJson(res, 503, { error: { code: 'ADMIN_NOT_CONFIGURED', message: '后台未配置管理员白名单，请先在服务器设置 ADMIN_EMAILS' } });
+    return null;
+  }
   if (!isAdmin(user)) {
-    sendJson(res, 403, { error: { code: 'NOT_ADMIN', message: '当前账号不是管理员' } });
+    sendJson(res, 403, { error: { code: 'NOT_ADMIN', message: '该账号禁止访问管理后台' } });
     return null;
   }
   return user;
+}
+
+/* ---------- 管理员登录：白名单外一律不发码、不签会话 ----------
+   与前台 /api/auth/* 的区别就在这里：前台任何邮箱都能注册登录（产品要用人），
+   后台只认白名单邮箱 —— 非管理员连验证码都拿不到，也就无从「登录后台」。 */
+function clientIp(req) {
+  const trusted = new Set(
+    (process.env.TRUSTED_PROXIES || '127.0.0.1,::1,163.7.10.124')
+      .split(',').map((s) => s.trim().replace(/^::ffff:/, '')).filter(Boolean)
+  );
+  const peer = String((req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/, '');
+  const first = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim().replace(/^::ffff:/, '');
+  if (first && trusted.has(peer)) { return first; }
+  return peer || first;
+}
+
+function loginErrorStatus(code) {
+  if (code === 'BAD_EMAIL' || code === 'BAD_CODE' || code === 'CODE_EXPIRED') { return 400; }
+  if (code === 'NOT_ADMIN') { return 403; }
+  if (code === 'ADMIN_NOT_CONFIGURED') { return 503; }
+  if (code === 'MAIL_UNAVAILABLE' || code === 'MAIL_FAILED') { return 503; }
+  if (code === 'TOO_MANY' || code === 'TOO_MANY_TRIES' || code === 'TOO_FREQUENT') { return 429; }
+  return 500;
+}
+
+async function handleLoginSend(req, res) {
+  const body = await readJson(req);
+  const email = auth.normalizeEmail(body.email);
+  if (!configuredAdminEmails().length) {
+    return sendJson(res, 503, { error: { code: 'ADMIN_NOT_CONFIGURED', message: '后台未配置管理员白名单，请先在服务器设置 ADMIN_EMAILS' } });
+  }
+  /* 先判身份再发码：白名单外的邮箱不消耗邮件额度，也不会收到验证码 */
+  if (!isAdminEmail(email)) {
+    console.warn('[admin] 拒绝向非白名单邮箱发送后台验证码：' + email);
+    return sendJson(res, 403, { error: { code: 'NOT_ADMIN', message: '该邮箱没有管理后台权限' } });
+  }
+  try {
+    const out = await auth.sendCode(email, clientIp(req));
+    return sendJson(res, 200, out);
+  } catch (e) {
+    const code = (e && e.code) || 'SEND_FAILED';
+    return sendJson(res, loginErrorStatus(code), { error: { code: code, message: (e && e.message) || '发送失败' } });
+  }
+}
+
+async function handleLoginVerify(req, res) {
+  const body = await readJson(req);
+  const email = auth.normalizeEmail(body.email);
+  /* 校验前再判一次：发码后白名单被改掉，手里的码也不能换出会话 */
+  if (!isAdminEmail(email)) {
+    return sendJson(res, 403, { error: { code: 'NOT_ADMIN', message: '该邮箱没有管理后台权限' } });
+  }
+  try {
+    const out = auth.verifyCode(email, body.code, req.headers['user-agent']);
+    return sendJson(res, 200, out);
+  } catch (e) {
+    const code = (e && e.code) || 'VERIFY_FAILED';
+    return sendJson(res, loginErrorStatus(code), { error: { code: code, message: (e && e.message) || '验证失败' } });
+  }
 }
 
 /* ---------- app_config 读写 ---------- */
@@ -181,14 +248,13 @@ function handleBootstrap(req, res) {
   const user = auth.userFromRequest(req);
   if (!user) { return sendJson(res, 401, { error: { code: 'AUTH_REQUIRED', message: '请先登录' } }); }
   const emails = configuredAdminEmails();
-  const admin = isAdmin(user);
-  if (!admin) {
-    return sendJson(res, 200, {
-      isAdmin: false,
-      user: { id: user.id, email: user.email },
-      adminEmails: emails,
-      adminByFallback: false
-    });
+  if (!emails.length) {
+    return sendJson(res, 503, { error: { code: 'ADMIN_NOT_CONFIGURED', message: '后台未配置管理员白名单，请先在服务器设置 ADMIN_EMAILS' } });
+  }
+  /* 非管理员直接 403，连「谁在白名单里」都不告诉它 */
+  if (!isAdmin(user)) {
+    console.warn('[admin] 拒绝非管理员读取后台配置：' + user.email);
+    return sendJson(res, 403, { error: { code: 'NOT_ADMIN', message: '该账号禁止访问管理后台' } });
   }
   const data = readAppConfigData();
   const pk = readProviderKeys().keys;
@@ -196,7 +262,6 @@ function handleBootstrap(req, res) {
     isAdmin: true,
     user: { id: user.id, email: user.email, balance: wallet.balance(user.id) },
     adminEmails: emails,
-    adminByFallback: emails.length === 0,
     config: { providers: data.providers || [], styles: data.styles || [] },
     /* 只回「哪些服务商有 Key」，Key 明文永不出库 */
     hasKeys: Object.keys(pk).filter((k) => !!pk[k]),
@@ -318,10 +383,13 @@ function randomCode(len) {
 }
 
 /**
- * 只接管下面这 5 个路径；其余 /api/admin/* 交回 server.js
+ * 只接管下列路径；其余 /api/admin/* 交回 server.js
  * （/api/admin/sync-key 与 /api/admin/orders/health 仍走 accessKey，属于机器调用）
+ * login/send + login/verify 是**后台专用登录**：只放行白名单邮箱。
  */
 const ROUTES = {
+  '/api/admin/login/send': { POST: handleLoginSend },
+  '/api/admin/login/verify': { POST: handleLoginVerify },
   '/api/admin/bootstrap': { GET: handleBootstrap },
   '/api/admin/config': { POST: handleSaveConfig },
   '/api/admin/grant': { POST: handleGrant },
@@ -343,4 +411,4 @@ async function handle(req, res, pathOnly, url) {
   return true;
 }
 
-module.exports = { handle, isAdmin, configuredAdminEmails };
+module.exports = { handle, isAdmin, isAdminEmail, configuredAdminEmails };

@@ -59,6 +59,7 @@ const localAdmin = require('./server/admin');
 /* 管理后台专用路径：会话 + 管理员邮箱白名单（不走 x-access-key）。
    只列确切路径，其余 /api/admin/*（sync-key、orders/health）仍由下面的既有路由处理。 */
 const ADMIN_PATHS = [
+  '/api/admin/login/send', '/api/admin/login/verify',
   '/api/admin/bootstrap', '/api/admin/config', '/api/admin/grant',
   '/api/admin/redeem', '/api/admin/users'
 ];
