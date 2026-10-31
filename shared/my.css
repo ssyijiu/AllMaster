@@ -56,33 +56,6 @@ body {
   color: var(--fg);
   letter-spacing: 0.5px;
 }
-.brand {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  font-size: 17px;
-  font-weight: var(--weight-announce);
-  color: var(--fg);
-  text-decoration: none;
-  letter-spacing: 0.5px;
-}
-.brand-en {
-  font-size: 10px;
-  letter-spacing: 2px;
-  color: var(--meta);
-  font-weight: 500;
-}
-.topnav { display: flex; gap: 4px; margin-left: 8px; }
-.topnav a {
-  padding: 6px 12px;
-  border-radius: var(--radius-full);
-  font-size: var(--text-sm);
-  color: var(--muted);
-  text-decoration: none;
-  transition: background var(--motion-fast) var(--ease-standard);
-}
-.topnav a:hover { background: var(--ink-50); color: var(--fg); }
-.topnav a.cur { background: var(--ink-900); color: #fff; }
 .topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
 /* ---------- 页面骨架 ---------- */
@@ -251,7 +224,6 @@ body {
 
 @media (max-width: 720px) {
   .topbar-inner { padding: 10px 14px; gap: 10px; flex-wrap: wrap; }
-  .topnav { order: 3; width: 100%; margin: 0; }
   .page { padding: 24px 14px 64px; }
   .works-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
 }

@@ -6,8 +6,8 @@
   <title>我的作品 · 点豆科技</title>
   <meta name="description" content="点豆科技账号下的作品与积分明细：头像与拼豆图纸云端保存，换设备登录即可查看。" />
   <link rel="icon" href="/apps/pixelart/assets/brand/logo-v3-round.svg" />
-  <link rel="stylesheet" href="/shared/base.css?v=20261031e" />
-  <link rel="stylesheet" href="/shared/my.css?v=20261031a" />
+  <link rel="stylesheet" href="/shared/base.css?v=20261031f" />
+  <link rel="stylesheet" href="/shared/my.css?v=20261031b" />
 </head>
 <body>
   <header class="topbar">
@@ -35,12 +35,13 @@
           <span class="brand-name">成像</span>
         </a>
       </div>
-      <nav class="topnav" aria-label="页面导航">
-        <a class="cur" href="/my" aria-current="page">我的</a>
-      </nav>
       <div class="topbar-actions">
         <button class="btn secondary" id="btnLogin" type="button" hidden>登录</button>
         <button class="btn small pill" id="btnWallet" type="button" hidden title="点击查看积分与充值">
+          <svg class="icon icon-16" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
+            <path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/>
+          </svg>
           <span>积分 <b id="walletBalance">–</b></span>
         </button>
         <button class="btn ghost small" id="btnSignOut" type="button" hidden>退出</button>
@@ -111,7 +112,7 @@
   </div>
 
   <script defer src="/shared/workbuddy-cloud.global.js?v=20261027"></script>
-  <script defer src="/shared/platform.js?v=20261031f"></script>
+  <script defer src="/shared/platform.js?v=20261031g"></script>
   <script defer src="/shared/my.js?v=20261031e"></script>
 </body>
 </html>

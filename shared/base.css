@@ -399,10 +399,11 @@
     .login-divider::before, .login-divider::after {
       content: ''; flex: 1; height: 1px; background: var(--border-soft);
     }
-    /* 余额卡：底色与顶栏积分 pill 用同一组 --pill-* token（淡黄），
-       不要再各产品各改一份 #FFD02F——那样顶栏和弹窗永远是两种黄。 */
+    /* 余额卡：用品牌黄 --amber-500（与产品 logo 底框同色），是页面里唯一的
+       重色块，用来强调余额；顶栏 pill 用淡黄 --pill-bg，两者刻意不同层。
+       不要再各产品各写一份字面色值——那样迟早分叉。 */
     .wallet-balance {
-      background: var(--pill-bg);
+      background: var(--amber-500);
       border-radius: var(--radius-lg);
       padding: 16px 20px 18px;
       margin: var(--space-4) 0 var(--space-2);
@@ -441,18 +442,21 @@
       border-radius: var(--radius-full);
     }
     /* 弹窗底部：引导到 /my 的积分明细
-       .btn.big 自带 radius-md，这里要压过它才成 pill；
+       刻意做成「次级小按钮」——比弹窗里的主按钮矮一档、按内容收窄并居中，
+       不做整宽 44px 的大按钮（那样会把弹窗压得头重脚轻）。
        配色写死中性值（不跟主题的 secondary），三个页面看起来才是同一个按钮 */
     .btn.wallet-more {
-      margin-top: var(--space-4);
+      display: flex; width: fit-content;
+      margin: var(--space-4) auto 0;
+      height: 34px; padding: 0 var(--space-4);
+      font-size: var(--text-sm); font-weight: var(--weight-emphasis);
       border-radius: var(--radius-full);
-      text-decoration: none;
+      border: 1px solid #E5E7EC;
       background: var(--surface);
-      border-color: #E5E7EC;
       color: #1F1D1A;
-      font-weight: 700;
+      text-decoration: none;
     }
-    .btn.wallet-more:hover { background: #F7F8FA; }
+    .btn.wallet-more:hover { background: #F7F8FA; border-color: #D8DBE3; }
     .txn-list {
       max-height: 200px; overflow-y: auto;
       border: 1px solid var(--border-soft); border-radius: 10px;

@@ -267,7 +267,7 @@
     '      <button class="btn primary" id="btnRedeem" type="button">兑换</button>',
     '    </div>',
     '    <p class="hint" id="walletMsg"></p>',
-    '    <a class="btn secondary big wallet-more" id="walletMore" href="/my#txns">查看积分明细 →</a>',
+    '    <a class="btn wallet-more" id="walletMore" href="/my#txns">查看积分明细 →</a>',
     '  </div>',
     '</div>'
   ].join('\n');
