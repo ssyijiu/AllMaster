@@ -6,7 +6,7 @@
   <title>我的作品 · 点豆科技</title>
   <meta name="description" content="点豆科技账号下的作品与积分明细：头像与拼豆图纸云端保存，换设备登录即可查看。" />
   <link rel="icon" href="/apps/pixelart/assets/brand/logo-v3-round.svg" />
-  <link rel="stylesheet" href="/shared/base.css?v=20261031f" />
+  <link rel="stylesheet" href="/shared/base.css?v=20261031g" />
   <link rel="stylesheet" href="/shared/my.css?v=20261031b" />
 </head>
 <body>
@@ -73,6 +73,11 @@
 
     <section id="panelTxns" hidden>
       <div class="txn-list" id="txnList"><p class="hint">加载中…</p></div>
+      <nav class="txn-pager" id="txnPager" aria-label="积分明细分页" hidden>
+        <button class="btn ghost small" id="txnPrev" type="button">上一页</button>
+        <span class="txn-page" id="txnPageInfo">1 / 1</span>
+        <button class="btn ghost small" id="txnNext" type="button">下一页</button>
+      </nav>
     </section>
   </main>
 
@@ -112,7 +117,7 @@
   </div>
 
   <script defer src="/shared/workbuddy-cloud.global.js?v=20261027"></script>
-  <script defer src="/shared/platform.js?v=20261031g"></script>
-  <script defer src="/shared/my.js?v=20261031f"></script>
+  <script defer src="/shared/platform.js?v=20261031h"></script>
+  <script defer src="/shared/my.js?v=20261031g"></script>
 </body>
 </html>

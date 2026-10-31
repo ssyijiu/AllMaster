@@ -56,6 +56,10 @@
     worksEmpty: $('worksEmpty'),
     worksNote: $('worksNote'),
     txnList: $('txnList'),
+    txnPager: $('txnPager'),
+    txnPageInfo: $('txnPageInfo'),
+    txnPrev: $('txnPrev'),
+    txnNext: $('txnNext'),
     lightbox: $('lightbox'),
     lightboxImg: $('lightboxImg'),
     btnCloseLightbox: $('btnCloseLightbox')
@@ -505,9 +509,50 @@
    * 条目渲染复用平台层（Platform.setup 返回的 renderTxnList）：
    * 钱包弹窗与这一页原本各写一套，样式/文案迟早分叉成两样。 */
 
-  function renderTxns(rows) { auth.renderTxnList(els.txnList, rows); }
+  /* 每页 10 条 + 整页翻页：列表不再开内部滚动条（移动端滚动条既难用又挡内容），
+     数据本身仍是「最多 50 条」的一次性拉取，切片只在渲染层做。 */
+  var TXN_PAGE_SIZE = 10;
+  var txnsState = { rows: [], page: 1, userId: null };
 
-  function renderTxnsEmpty() { els.txnList.innerHTML = '<p class="hint">登录后查看积分明细</p>'; }
+  function txnPageCount() {
+    return Math.max(1, Math.ceil(txnsState.rows.length / TXN_PAGE_SIZE));
+  }
+
+  function renderPager() {
+    if (!els.txnPager) { return; }
+    var pages = txnPageCount();
+    /* 只有一页时整条分页栏都不出现，避免「1 / 1」这种噪音 */
+    els.txnPager.hidden = txnsState.rows.length <= TXN_PAGE_SIZE;
+    els.txnPageInfo.textContent = txnsState.page + ' / ' + pages;
+    els.txnPrev.disabled = txnsState.page <= 1;
+    els.txnNext.disabled = txnsState.page >= pages;
+  }
+
+  function renderTxns(rows) {
+    txnsState.rows = Array.isArray(rows) ? rows : [];
+    var pages = txnPageCount();
+    if (txnsState.page > pages) { txnsState.page = pages; }
+    if (txnsState.page < 1) { txnsState.page = 1; }
+    var start = (txnsState.page - 1) * TXN_PAGE_SIZE;
+    auth.renderTxnList(els.txnList, txnsState.rows.slice(start, start + TXN_PAGE_SIZE));
+    renderPager();
+  }
+
+  function turnTxnPage(delta) {
+    var next = txnsState.page + delta;
+    if (next < 1 || next > txnPageCount()) { return; }
+    txnsState.page = next;
+    renderTxns(txnsState.rows);
+    /* 翻页后回到列表顶部，否则用户看到的是「中间某条」，不知道换页了 */
+    if (els.txnList.scrollIntoView) { els.txnList.scrollIntoView({ block: 'nearest' }); }
+  }
+
+  function renderTxnsEmpty() {
+    txnsState.rows = [];
+    txnsState.page = 1;
+    els.txnList.innerHTML = '<p class="hint">登录后查看积分明细</p>';
+    if (els.txnPager) { els.txnPager.hidden = true; }
+  }
 
   /* 明细按「登录用户」缓存：内存 + 本地存储双层。
      跨境请求要 0.3~0.6s，二次打开先用上次的明细把列表铺满，再后台覆盖——
@@ -534,10 +579,19 @@
     var user = Store.state.user;
     if (!user) { txnsCache = { userId: null, loaded: false }; renderTxnsEmpty(); return; }
     if (!force && txnsCache.loaded && txnsCache.userId === user.id) { return; }
-    if (!cloud || !cloud.database || !cloud.database.from) { els.txnList.innerHTML = '<p class="hint">云端未就绪，请刷新重试</p>'; return; }
+    /* 换号/换人：分页回到第 1 页，否则会停在上一个人的页码上 */
+    if (txnsState.userId !== user.id) { txnsState.userId = user.id; txnsState.page = 1; }
+    if (!cloud || !cloud.database || !cloud.database.from) {
+      els.txnList.innerHTML = '<p class="hint">云端未就绪，请刷新重试</p>';
+      if (els.txnPager) { els.txnPager.hidden = true; }
+      return;
+    }
     var cached = readTxnsCache(user.id);
     if (cached) { renderTxns(cached); }
-    else { els.txnList.innerHTML = '<p class="hint">加载中…</p>'; }
+    else {
+      els.txnList.innerHTML = '<p class="hint">加载中…</p>';
+      if (els.txnPager) { els.txnPager.hidden = true; }
+    }
     Promise.resolve(cloud.database.from('app_wallet_txns').select('*')
       .order('created_at', { ascending: false }).limit(50))
       .then(function (res) {
@@ -549,6 +603,7 @@
       .catch(function () {
         if (cached) { return; }   /* 有旧数据就先看着，不打断 */
         els.txnList.innerHTML = '<p class="hint">明细加载失败，请稍后重试</p>';
+        if (els.txnPager) { els.txnPager.hidden = true; }
       });
   }
 
@@ -558,6 +613,8 @@
   function boot() {
     els.tabWorks.addEventListener('click', function () { switchTab('works'); });
     els.tabTxns.addEventListener('click', function () { switchTab('txns'); });
+    if (els.txnPrev) { els.txnPrev.addEventListener('click', function () { turnTxnPage(-1); }); }
+    if (els.txnNext) { els.txnNext.addEventListener('click', function () { turnTxnPage(1); }); }
     /* 深链接：首页钱包弹窗的「查看积分明细」指向 /my#txns，直接落在明细 tab；
        从 /my 内部点同一个链接只改 hash，也能正确切换。 */
     function syncTabFromHash() {

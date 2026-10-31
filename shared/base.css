@@ -457,13 +457,27 @@
       text-decoration: none;
     }
     .btn.wallet-more:hover { background: #F7F8FA; border-color: #D8DBE3; }
+    /* 明细列表：不做内部滚动（滚动条在移动端很难用，也挡内容），
+       改成整页翻页——由 /my 的 JS 每页 10 条切片渲染。 */
     .txn-list {
-      max-height: 200px; overflow-y: auto;
       border: 1px solid var(--border-soft); border-radius: 10px;
+      overflow: hidden;
+    }
+    .txn-pager {
+      display: flex; align-items: center; justify-content: center;
+      gap: var(--space-3); margin-top: var(--space-4);
+    }
+    .txn-pager .txn-page {
+      min-width: 56px; text-align: center;
+      font-size: var(--text-sm); color: var(--meta);
+      font-variant-numeric: tabular-nums;
     }
     .txn-item {
       display: flex; align-items: center; gap: var(--space-2);
       padding: var(--space-2) var(--space-3);
+      /* 没有副标题的行（老流水 / 充值）与有副标题的行保持同一高度，
+         否则一页里高高低低，看着像排版错位 */
+      min-height: 56px;
       border-bottom: 1px solid var(--border-soft);
       font-size: var(--text-xs);
     }

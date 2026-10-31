@@ -526,6 +526,13 @@
      * 渲染只此一份：弹窗里的明细已去掉（底部改成去 /my 的入口），
      * /my 的「积分明细」tab 复用这里，避免两处各写一套条目结构。 */
     var TXN_KIND_TEXT = { consume: '生成消费', refund: '失败退回', redeem: '兑换码兑换', grant: '管理员赠送', pay: '充值到账' };
+    /* 生成消费的 ref 就是服务端单号，单号前缀标了产品
+       （server/orders.js 的 PRODUCT_PREFIX：avatar→av、pixelart→px）。
+       老流水（P3 之前的 gen-…）没有产品信息，就不显示这一行。 */
+    var TXN_PRODUCT_TEXT = { av: '成像 · 头像', px: '点豆 · 图纸' };
+    function txnProduct(ref) {
+      return TXN_PRODUCT_TEXT[String(ref || '').slice(0, 2)] || '';
+    }
     function fmtTxnTime(iso) {
       var d = new Date(iso);
       if (isNaN(d.getTime())) { return ''; }
@@ -553,8 +560,11 @@
           '<div class="t-credits"></div><div class="t-time"></div>';
         var credits = Number(t.credits) || 0;
         item.querySelector('.t-kind').textContent = TXN_KIND_TEXT[t.kind] || t.kind || '记录';
-        item.querySelector('.t-note').textContent =
-          t.note || (t.kind === 'redeem' ? '兑换码 ' + maskRedeemCode(t.ref) : '');
+        /* 副标题优先级：云端备注 → 生成消费的产品 → 兑换码（打码） */
+        var note = t.note || '';
+        if (!note && t.kind === 'consume') { note = txnProduct(t.ref); }
+        if (!note && t.kind === 'redeem') { note = '兑换码 ' + maskRedeemCode(t.ref); }
+        item.querySelector('.t-note').textContent = note;
         var creditEl = item.querySelector('.t-credits');
         creditEl.textContent = (credits > 0 ? '+' : '') + credits;
         creditEl.classList.add(credits > 0 ? 'plus' : 'minus');
