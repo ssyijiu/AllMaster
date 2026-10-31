@@ -438,7 +438,9 @@
         '<div class="work-sub"></div>' +
       '</div>' +
       '<div class="work-actions">' +
-        '<button class="btn primary small" type="button" data-act="open">打开图纸</button>' +
+        /* 「打开图纸」与头像卡片的「下载」同款（btn secondary small）：
+           卡片里不再出现一个深色主按钮，列表看起来才齐整 */
+        '<button class="btn secondary small" type="button" data-act="open">打开图纸</button>' +
         '<button class="btn ghost small" type="button" data-act="delete">删除</button>' +
       '</div>';
     var img = card.querySelector('img');
