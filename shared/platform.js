@@ -260,12 +260,27 @@
       return '';
     }
 
-    /* ---------- 渲染：登录态（登录按钮 / 用户徽标 / 退出） ---------- */
+    /* ---------- 渲染：登录态（登录按钮 / 我的入口 / 退出） ----------
+     * 两种顶栏形态都支持：
+     *   「我的」入口（userChip 是 <a href="/my">）：常驻可见，文案固定「我的」，
+     *     登录人标识放 title；未登录点进去由 /my 给登录引导。
+     *   用户徽标（userChip 是 <span class="user-chip">，如 /my 自身）：登录后显示身份。
+     * 用 tagName 判断而不是新增 ctx 开关：页面结构自己就说明了意图。 */
     function renderAuthUI() {
       var user = Store.state.user;
+      var isMyEntry = !!(els.userChip && els.userChip.tagName === 'A');
       els.btnLogin.hidden = !!user;
-      els.userChip.hidden = !user;
       els.btnSignOut.hidden = !user;
+      if (isMyEntry) {
+        els.userChip.hidden = false;
+        if (els.userChipText) { els.userChipText.textContent = '我的'; }
+        var who = user
+          ? (user.name || maskIdentifier(user.phone) || maskIdentifier(user.email) || '')
+          : '';
+        els.userChip.title = (who ? who + ' · ' : '') + '我的作品与积分明细';
+        return;
+      }
+      els.userChip.hidden = !user;
       if (user) {
         els.userChipText.textContent =
           user.name || maskIdentifier(user.phone) || maskIdentifier(user.email) || '已登录';

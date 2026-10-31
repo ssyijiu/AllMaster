@@ -357,6 +357,14 @@
     /* ===== 历史缩略图条（选中态黄 ring，随 token 自动变） ===== */
     .history { margin-top: var(--space-5); }
     .history-title { font-size: var(--text-sm); color: var(--muted); margin-bottom: var(--space-2); }
+    /* 「更多作品在「我的」」引导链接：跟随标题行，强调色但不抢视觉 */
+    .history-link {
+      margin-left: var(--space-1);
+      font-size: var(--text-xs); font-weight: 510;
+      color: var(--teal-700); text-decoration: none;
+      white-space: nowrap;
+    }
+    .history-link:hover { text-decoration: underline; }
     .history-strip {
       display: flex; gap: var(--space-2);
       overflow-x: auto; padding-bottom: var(--space-1);

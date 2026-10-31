@@ -332,6 +332,8 @@
        Section S7: 登录与云同步（全部走既有 Token）
        ============================================================ */
     .topbar-actions { display: flex; align-items: center; gap: var(--space-2); }
+    /* 「我的」入口用 <a> 承担按钮外观（与积分按钮同款），链接不该有下划线 */
+    .topbar-actions a.btn { text-decoration: none; }
     #btnLogin {
       height: 34px; padding: 0 14px; gap: 6px;
       border-radius: var(--radius-full);
