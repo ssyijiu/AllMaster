@@ -30,13 +30,12 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     /* 登录弹窗 */
     loginModal: $('loginModal'),
     btnCloseLogin: $('btnCloseLogin'),
-    loginPhone: $('loginPhone'),
-    errPhone: $('errPhone'),
+    loginEmail: $('loginEmail'),
+    errEmail: $('errEmail'),
     loginCode: $('loginCode'),
     errCode: $('errCode'),
     btnSendCode: $('btnSendCode'),
     btnPhoneLogin: $('btnPhoneLogin'),
-    btnWechatLogin: $('btnWechatLogin'),
     loginMsg: $('loginMsg'),
     /* 积分钱包 */
     btnWallet: $('btnWallet'),

@@ -44,11 +44,21 @@ const AI_CONFIG_FILE = path.join(ROOT, '.ai-config.json');
 const PAY_CONFIG_FILE = path.join(ROOT, '.pay-config.json');
 const PAY_STATE_FILE = path.join(ROOT, '.pay-state.json');
 
+/* 自建云替代（2026-10-31）：登录/账本/生成单/文件全部落到本机 SQLite + 磁盘。
+ * 见 server/db.js 头部说明。下面这段把生成单状态机的 RPC 依赖换成本地实现，
+ * orders.js 一行没改（契约完全一致）。 */
+const localCloud = require('./server/local-cloud').createLocalCloud({
+  accessKey: function () { return (readDotJson(PAY_CONFIG_FILE) || {}).accessKey || ''; },
+  paySecret: function () { return (readDotJson(PAY_CONFIG_FILE) || {}).paySecret || ''; },
+  log: function (msg) { console.warn('[rpc] ' + msg); }
+});
+const localApi = require('./server/api');
+
 /* 生成单（P3）：一次生成 = 一单，先建单扣费，成功/失败必须结算。
- * 云端 app_orders 存状态，退款在 order_fail() 里与状态变更同事务、且幂等。 */
+ * 单据与退款在本地库同一事务内完成，且幂等。 */
 const orderService = require('./server/orders').createOrderService({
-  rpc: function (token, fn, params) { return cloudRpc(token, fn, params); },
-  rpcAnon: function (fn, params) { return cloudRpcAnon(fn, params); },
+  rpc: function (token, fn, params) { return localCloud.rpc(token, fn, params); },
+  rpcAnon: function (fn, params) { return localCloud.rpcAnon(fn, params); },
   log: function (msg) { console.warn('[order] ' + msg); }
 });
 
@@ -298,13 +308,19 @@ async function handleAi(req, res) {
     return sendJson(res, 400, { error: { message: (err && err.message) || '请求解析失败' } });
   }
 
-  /* —— 身份（先判，未登录不该走到 Key/参数校验的分支）—— */
+  /* —— 身份（先判，未登录不该走到 Key/参数校验的分支）——
+   * 2026-10-31 起会话由本地 auth 签发，这里直接验签：
+   * 伪造/过期的 token 在建单前就被挡掉，不再依赖下游 wallet_consume 兜底。 */
   const authHeader = String(req.headers.authorization || '');
   const bearer = /^Bearer\s+(.+)$/i.exec(authHeader);
   if (!bearer) {
     return sendJson(res, 401, { error: { code: 'AUTH_REQUIRED', message: '生成需要登录，请先登录后再试' } });
   }
   const token = bearer[1];
+  const sessionUser = require('./server/auth').userFromToken(token);
+  if (!sessionUser) {
+    return sendJson(res, 401, { error: { code: 'AUTH_REQUIRED', message: '登录已失效，请重新登录后再生成' } });
+  }
 
   const aiCfg = readDotJson(AI_CONFIG_FILE) || {};
   const keys = aiCfg.providerKeys || {};
@@ -1117,8 +1133,22 @@ const server = http.createServer((req, res) => {
   const pathOnly = req.url ? req.url.split('?')[0] : '';
   const fullUrl = new URL(req.url || '/', 'http://localhost');
 
-  /* 云服务（登录 / 钱包 / 数据库 / 存储）同源反代 */
-  if (pathOnly === '/.cloud' || pathOnly.indexOf('/.cloud/') === 0) {
+  /* 自建服务（登录 / 账本 / 存储 / RPC）：取代 /.cloud 云端依赖 */
+  if (pathOnly.indexOf('/api/auth/') === 0 ||
+      pathOnly === '/api/db/query' ||
+      pathOnly.indexOf('/api/rpc/') === 0 ||
+      pathOnly.indexOf('/api/storage/') === 0 ||
+      pathOnly.indexOf('/files/') === 0) {
+    localApi.handle(req, res).catch((e) => {
+      console.warn('[api] ' + ((e && e.message) || e));
+      try { res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' }); res.end('{"error":{"code":"INTERNAL"}}'); } catch (_) {}
+    });
+    return;
+  }
+
+  /* 云服务（登录 / 钱包 / 数据库 / 存储）同源反代 —— 仅作为回滚开关保留，
+     设 LEGACY_CLOUD=1 时启用；默认关闭。 */
+  if (process.env.LEGACY_CLOUD === '1' && (pathOnly === '/.cloud' || pathOnly.indexOf('/.cloud/') === 0)) {
     return proxyCloud(req, res);
   }
 

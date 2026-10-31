@@ -188,20 +188,28 @@
       }
     };
 
-    /* --- cloudService：WorkBuddy 云服务客户端（SDK 缺失/加载失败时优雅降级为 null） --- */
+    /* --- cloudService：自建服务客户端（shared/local-cloud.js 暴露同名 SDK） ---
+     * 保留 WorkBuddyCloud 分支仅用于旧测试夹具兼容。 */
     var cloudService = {
       _client: null,
       getClient: function () {
         if (this._client) { return this._client; }
-        if (!window.WorkBuddyCloud || !window.WorkBuddyCloud.createWorkBuddyCloud) { return null; }
         try {
-          this._client = window.WorkBuddyCloud.createWorkBuddyCloud({
-            endpoint: PUBLIC_CONFIG.endpoint,
-            oauthRelayBaseUrl: PUBLIC_CONFIG.oauthRelayBaseUrl,
-            publishableKey: PUBLIC_CONFIG.publishableKey
-          });
-          return this._client;
+          if (window.LocalCloud && window.LocalCloud.createClient) {
+            this._client = window.LocalCloud.createClient();
+            return this._client;
+          }
+          if (window.WorkBuddyCloud && window.WorkBuddyCloud.createWorkBuddyCloud) {
+            /* 旧 SDK 形状要求三字段齐全，这里给占位值（不会真的请求云端） */
+            this._client = window.WorkBuddyCloud.createWorkBuddyCloud({
+              endpoint: (PUBLIC_CONFIG && PUBLIC_CONFIG.endpoint) || 'http://localhost',
+              oauthRelayBaseUrl: 'legacy',
+              publishableKey: 'legacy'
+            });
+            return this._client;
+          }
         } catch (_) { return null; }
+        return null;
       }
     };
 
@@ -527,10 +535,10 @@
       payChannelsNote: $('payChannelsNote'),
       redeemCode: $('redeemCode'), btnRedeem: $('btnRedeem'), walletMsg: $('walletMsg'),
       loginModal: $('loginModal'), btnCloseLogin: $('btnCloseLogin'),
-      loginPhone: $('loginPhone'), errPhone: $('errPhone'),
+      loginEmail: $('loginEmail'), errEmail: $('errEmail'),
       loginCode: $('loginCode'), errCode: $('errCode'),
       btnSendCode: $('btnSendCode'), btnPhoneLogin: $('btnPhoneLogin'),
-      btnWechatLogin: $('btnWechatLogin'), loginMsg: $('loginMsg')
+      loginMsg: $('loginMsg')
     };
 
     /* ---------- 渲染：步骤条 ---------- */

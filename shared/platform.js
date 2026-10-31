@@ -21,31 +21,40 @@
     var CONFIG_ID = 'default';
 
 
-    /* WorkBuddy 云服务 publicConfig（仅含可公开的前端配置，密钥在服务端）
-       endpoint 用「本站源」：server.js 的 /.cloud/* 同源反代到 WorkBuddy 云，
-       浏览器不触发 CORS 预检（云端对 OPTIONS 返回 403）。file:// 场景回退到云站。*/
-    var CLOUD_FALLBACK_ENDPOINT = 'https://ai-avatar-studio-50356.app.workbuddy.host';
+    /* 2026-10-31 起不再依赖 WorkBuddy 云：登录/账本/文件全部由本站 server/ 提供，
+     * 浏览器侧通过 shared/local-cloud.js 暴露同名 SDK（auth/database/storage）。
+     * 保留变量名 PUBLIC_CONFIG 只为不打断已有调用点（如产品页读 productSlug）。 */
     var PUBLIC_CONFIG = {
       endpoint: (window.location && window.location.origin && window.location.origin !== 'null')
-        ? window.location.origin : CLOUD_FALLBACK_ENDPOINT,
-      oauthRelayBaseUrl: 'https://www.workbuddy.cn/v2/as/genie-baas/oauth',
-      publishableKey: 'wbpk_eoMql05K7PT2JgZUKFFOo9_9vLkFanCYcm67RRrIgxoEnsGnDS52YEM'
+        ? window.location.origin : '',
+      selfHosted: true
     };
 
-    /* --- cloudService：WorkBuddy 云服务客户端（SDK 缺失/加载失败时优雅降级为 null） --- */
+    /* --- cloudService：自建服务客户端（SDK 缺失时优雅降级为 null） ---
+     * 主路径是 shared/local-cloud.js；保留 WorkBuddyCloud 分支只为两件事：
+     * ① 旧测试夹具（mock 的是 window.WorkBuddyCloud）仍可复用；
+     * ② 万一 local-cloud.js 版本没跟上，页面不至于整块功能塌掉。 */
     var cloudService = {
       _client: null,
       getClient: function () {
         if (this._client) { return this._client; }
-        if (!window.WorkBuddyCloud || !window.WorkBuddyCloud.createWorkBuddyCloud) { return null; }
         try {
-          this._client = window.WorkBuddyCloud.createWorkBuddyCloud({
-            endpoint: PUBLIC_CONFIG.endpoint,
-            oauthRelayBaseUrl: PUBLIC_CONFIG.oauthRelayBaseUrl,
-            publishableKey: PUBLIC_CONFIG.publishableKey
-          });
-          return this._client;
+          if (window.LocalCloud && window.LocalCloud.createClient) {
+            this._client = window.LocalCloud.createClient();
+            return this._client;
+          }
+          if (window.WorkBuddyCloud && window.WorkBuddyCloud.createWorkBuddyCloud) {
+            /* 旧 SDK 形状要求三个字段都在（缺一会直接抛错）。这里用占位值满足它，
+             * 实际不会发出任何云端请求 —— 只是为了旧夹具/旧缓存页面不整块塌掉。 */
+            this._client = window.WorkBuddyCloud.createWorkBuddyCloud({
+              endpoint: PUBLIC_CONFIG.endpoint || 'http://localhost',
+              oauthRelayBaseUrl: 'legacy',
+              publishableKey: 'legacy'
+            });
+            return this._client;
+          }
         } catch (_) { return null; }
+        return null;
       }
     };
 
@@ -289,6 +298,10 @@
 
   Platform.setup = function (ctx) {
     var els = ctx.els;
+    /* 登录方式从「手机号」换成「邮箱」：旧页面/旧测试仍传 loginPhone/errPhone，
+     * 这里做一次别名，避免任何一处漏改就白屏。 */
+    if (!els.loginEmail && els.loginPhone) { els.loginEmail = els.loginPhone; }
+    if (!els.errEmail && els.errPhone) { els.errEmail = els.errPhone; }
     /* 钱包弹窗的节点由平台层生成，页面不必再逐个列出它们的 id；
        页面漏了（或以后新增节点）就在这里补齐，避免「点开是空弹窗」。 */
     ['walletModal', 'btnCloseWallet', 'walletBalanceBig', 'productGrid',
@@ -737,15 +750,16 @@
     }
 
     /* ---------- 登录弹窗 ---------- */
+    var EMAIL_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
     function openLogin() {
-      els.loginPhone.value = '';
+      els.loginEmail.value = '';
       els.loginCode.value = '';
-      showFieldErr(els.errPhone, '', false);
+      showFieldErr(els.errEmail, '', false);
       showFieldErr(els.errCode, '', false);
       showLoginMsg('');
       pendingOtp = null;
       els.loginModal.hidden = false;
-      els.loginPhone.focus();
+      els.loginEmail.focus();
     }
     function closeLogin() {
       els.loginModal.hidden = true;
@@ -779,30 +793,30 @@
       countdownTimer = setInterval(tick, 1000);
     }
 
-    /* 获取验证码：先本地校验手机号，再调 sendOtp（发送与验证分离） */
+    /* 获取验证码：先本地校验邮箱，再调 sendOtp（发送与验证分离） */
     function sendCodeHandler() {
-      var phone = els.loginPhone.value.trim();
-      if (!/^1\d{10}$/.test(phone)) {
-        showFieldErr(els.errPhone, '', true);
+      var email = els.loginEmail.value.trim();
+      if (!EMAIL_RE.test(email)) {
+        showFieldErr(els.errEmail, '', true);
         return;
       }
-      showFieldErr(els.errPhone, '', false);
+      showFieldErr(els.errEmail, '', false);
       var cloud = cloudService.getClient();
-      if (!cloud) { showLoginMsg('云服务未就绪，请刷新页面后重试', true); return; }
+      if (!cloud) { showLoginMsg('服务未就绪，请刷新页面后重试', true); return; }
       els.btnSendCode.disabled = true;
-      cloud.auth.sendOtp({ phone: phone }).then(function (res) {
+      cloud.auth.sendOtp({ email: email }).then(function (res) {
         if (res && res.error) {
           els.btnSendCode.disabled = false;
           showLoginMsg((res.error && res.error.message) || '验证码发送失败，请稍后重试', true);
           return;
         }
         pendingOtp = {
-          phone: phone,
+          email: email,
           verificationId: res.data.verificationId,
           isExistingUser: res.data.isExistingUser
         };
         startCountdown(60);
-        showLoginMsg('验证码已发送，请查收短信');
+        showLoginMsg('验证码已发送，请查收邮箱（含垃圾邮件箱）');
       }).catch(function () {
         els.btnSendCode.disabled = false;
         showLoginMsg('验证码发送失败，请检查网络后重试', true);
@@ -811,23 +825,23 @@
 
     /* 登录/注册：复用已保存的 challenge，提交验证码时不重新发送 */
     function submitPhoneLogin() {
-      var phone = els.loginPhone.value.trim();
+      var email = els.loginEmail.value.trim();
       var code = els.loginCode.value.trim();
-      if (!pendingOtp || pendingOtp.phone !== phone) {
-        showFieldErr(els.errPhone, '', true);
-        showLoginMsg('请先为当前手机号获取验证码', true);
+      if (!pendingOtp || pendingOtp.email !== email) {
+        showFieldErr(els.errEmail, '', true);
+        showLoginMsg('请先为当前邮箱获取验证码', true);
         return;
       }
-      if (!/^\d{4,6}$/.test(code)) {
+      if (!/^\d{6}$/.test(code)) {
         showFieldErr(els.errCode, '', true);
         return;
       }
       showFieldErr(els.errCode, '', false);
       var cloud = cloudService.getClient();
-      if (!cloud) { showLoginMsg('云服务未就绪，请刷新页面后重试', true); return; }
+      if (!cloud) { showLoginMsg('服务未就绪，请刷新页面后重试', true); return; }
       els.btnPhoneLogin.disabled = true;
       cloud.auth.verifyOtp({
-        phone: pendingOtp.phone,
+        email: pendingOtp.email,
         verificationId: pendingOtp.verificationId,
         isExistingUser: pendingOtp.isExistingUser,
         token: code
@@ -847,27 +861,7 @@
       });
     }
 
-    /* 微信网页登录：signInWithOAuth 返回跳转地址，同标签页前往 */
-    function loginWithWechat() {
-      var cloud = cloudService.getClient();
-      if (!cloud) { showLoginMsg('云服务未就绪，请刷新页面后重试', true); return; }
-      els.btnWechatLogin.disabled = true;
-      var back = new URL(location.href);
-      back.pathname = callbackPath; /* 回调落产品页，避免静态托管 404 丢单次 code */
-      ['code', 'state', 'provider'].forEach(function (k) { back.searchParams.delete(k); });
-      cloud.auth.signInWithOAuth({ provider: 'wechat', redirectTo: back.toString() })
-        .then(function (res) {
-          els.btnWechatLogin.disabled = false;
-          if (res && res.error) {
-            showLoginMsg((res.error && res.error.message) || '暂时无法使用微信登录', true);
-            return;
-          }
-          if (res && res.data && res.data.url) { location.assign(res.data.url); }
-        }).catch(function () {
-          els.btnWechatLogin.disabled = false;
-          showLoginMsg('无法发起微信登录，请稍后重试', true);
-        });
-    }
+    /* 第三方登录（微信/WorkBuddy）已随云服务下线：只保留邮箱验证码一种入口 */
 
     function bindAuthEvents() {
       els.btnLogin.addEventListener('click', openLogin);
@@ -895,11 +889,10 @@
           if (typeof ctx.onViewTxns === 'function') { ctx.onViewTxns(); }
         });
       }
-      els.loginPhone.addEventListener('input', function () { showFieldErr(els.errPhone, '', false); });
+      els.loginEmail.addEventListener('input', function () { showFieldErr(els.errEmail, '', false); });
       els.loginCode.addEventListener('input', function () { showFieldErr(els.errCode, '', false); });
       els.btnSendCode.addEventListener('click', sendCodeHandler);
       els.btnPhoneLogin.addEventListener('click', submitPhoneLogin);
-      els.btnWechatLogin.addEventListener('click', loginWithWechat);
       els.btnSignOut.addEventListener('click', function () {
         var cloud = cloudService.getClient();
         Store.state.user = null;

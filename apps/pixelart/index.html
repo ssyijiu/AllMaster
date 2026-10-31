@@ -180,33 +180,27 @@
       </div>
       <p class="modal-desc">登录后积分全平台通用。不登录也可以先逛逛。</p>
 
-      <span class="group-label">手机验证码登录 / 注册</span>
-      <label class="field-label" for="loginPhone">手机号</label>
+      <span class="group-label">邮箱验证码登录 / 注册</span>
+      <label class="field-label" for="loginEmail">邮箱</label>
       <div class="phone-row">
-        <input type="tel" id="loginPhone" class="text-input mono" inputmode="numeric" maxlength="11"
-               placeholder="请输入 11 位手机号" autocomplete="tel" />
+        <input type="email" id="loginEmail" class="text-input mono" maxlength="254"
+               placeholder="you@example.com" autocomplete="email" />
         <button class="btn secondary small" id="btnSendCode" type="button">获取验证码</button>
       </div>
-      <p class="field-error" id="errPhone" hidden>请输入正确的 11 位手机号</p>
+      <p class="field-error" id="errEmail" hidden>请输入正确的邮箱地址</p>
 
       <label class="field-label" for="loginCode">验证码</label>
       <input type="text" id="loginCode" class="text-input mono" inputmode="numeric" maxlength="6"
-             placeholder="短信验证码" autocomplete="one-time-code" />
+             placeholder="6 位邮箱验证码" autocomplete="one-time-code" />
       <p class="field-error" id="errCode" hidden>请输入正确的验证码</p>
 
       <button class="btn primary big" id="btnPhoneLogin" type="button">登录 / 注册</button>
-
-      <div class="login-divider"><span>或</span></div>
-      <button class="btn ghost big" id="btnWechatLogin" type="button">
-        <svg class="icon icon-20" aria-hidden="true"><use href="#i-message-circle"/></svg>
-        微信扫码 / 一键登录
-      </button>
       <p class="hint" id="loginMsg"></p>
     </div>
   </div>
 
   <!-- ===== script 顺序固定：云 SDK（本地副本，国内不走 jsDelivr）→ 平台层 → 产品层 ===== -->
-  <script defer src="/shared/workbuddy-cloud.global.js?v=20261027"></script>
+  <script defer src="/shared/local-cloud.js?v=20261031a"></script>
   <script defer src="/shared/platform.js?v=20261031h"></script>
   <script defer src="/apps/pixelart/app.js?v=20261031a"></script>
 </body>

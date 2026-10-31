@@ -3,6 +3,10 @@
 .pay-config.json
 .pay-state.json
 .pixelart-config.json
+.mail-config.json
+
+# ===== 自建数据库与用户文件（SQLite 账本 + 上传文件，本地开发默认落这里）=====
+.data/
 
 # ===== WorkBuddy 平台文件 =====
 .wbapp_*.genie

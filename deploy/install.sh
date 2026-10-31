@@ -41,6 +41,13 @@ echo "==> 2/8 创建运行用户与目录"
 id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --home "$APP_DIR" --shell /usr/sbin/nologin "$APP_USER"
 mkdir -p "$APP_DIR" /var/log/caddy
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+# 自建数据目录：SQLite 账本 + 用户文件。刻意放在代码目录之外 ——
+# push.sh 是覆盖式解压，业务数据绝不能跟着代码一起被覆盖或误删。
+DATA_DIR="${DATA_DIR:-/opt/allmaster-data}"
+mkdir -p "$DATA_DIR"/storage "$DATA_DIR"/backups "$DATA_DIR"/outbox
+chown -R "$APP_USER:$APP_USER" "$DATA_DIR"
+chmod 700 "$DATA_DIR"
+echo "  DATA_DIR=$DATA_DIR（库文件：$DATA_DIR/dotbeads.db）"
 
 echo "==> 3/8 部署代码（首次请先把仓库 clone/rsync 到 $APP_DIR）"
 HAVE_CODE=1
@@ -61,7 +68,12 @@ if [ -f "$APP_DIR/deploy/allmaster.service" ]; then
   sed -e "s#/opt/allmaster#$APP_DIR#g" \
       -e "s#^ExecStart=.*#ExecStart=$NODE_BIN $APP_DIR/server.js#" \
       "$APP_DIR/deploy/allmaster.service" > /etc/systemd/system/allmaster.service
+  # DATA_DIR 单独钉死：上面的全局替换会把 /opt/allmaster-data 也跟着改写，
+  # 这里先删掉模板里的行，再按实际 DATA_DIR 插回去（systemd 同名变量后者生效）。
+  sed -i "/^Environment=DATA_DIR=/d" /etc/systemd/system/allmaster.service
+  sed -i "/^Environment=PORT=/a Environment=DATA_DIR=$DATA_DIR" /etc/systemd/system/allmaster.service
   echo "  ExecStart=$NODE_BIN $APP_DIR/server.js"
+  echo "  DATA_DIR=$DATA_DIR"
   systemctl daemon-reload
   if [ "$HAVE_CODE" = "1" ]; then
     systemctl enable --now allmaster

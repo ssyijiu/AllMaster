@@ -12,6 +12,9 @@ WorkingDirectory=/opt/allmaster
 Environment=NODE_ENV=production
 # 内部端口 8080：未备案前直接用 IP:8080 访问；域名备案后由 Caddy 反代到本端口
 Environment=PORT=8080
+# 自建数据目录（SQLite 库 + 用户文件）：放在代码目录之外，
+# 这样发布时的覆盖式解压永远碰不到业务数据。install.sh 会创建并授权。
+Environment=DATA_DIR=/opt/allmaster-data
 # 用 env 查找 node：不同机器安装位置不同（广州 nvm → /usr/local/bin/node，雅加达 apt → /usr/bin/node）
 # install.sh 会把这一行改写成探测到的绝对路径，这里保留 env 形式作为兜底
 ExecStart=/usr/bin/env node /opt/allmaster/server.js

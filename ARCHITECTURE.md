@@ -6,28 +6,66 @@
 > **平台名称：「全员大师」**（多产品 AI 工具平台，共用后端/支付/积分体系）。
 > **第一个产品：「头像制作大师」**（apps/avatar，已上线）。
 
+---
+
+## 0. 2026-10-31 架构变更：脱离 WorkBuddy 云，改为自建服务
+
+**为什么**：云端资源点耗尽 → 云服务整项目被暂停（`auth/v1/*` 返回 401 `invalid_client`、`rest/v1/*` 返回 404），
+登录、余额、明细、生成扣费、支付入账全停。继续把账号与账本寄生在别人的额度上不可接受。
+
+**现在是什么**：所有数据与登录都在自己的服务器上，**不再依赖任何第三方云**。
+
+| 原来 | 现在 | 代码 |
+|---|---|---|
+| 云端 auth（手机验证码 + 微信/WorkBuddy 登录） | **邮箱验证码登录**（6 位、10 分钟、同邮箱 60s 冷却） | `server/auth.js` + `server/mail.js` |
+| 云端 PG（`app_wallet_txns` / `app_orders` / …） | **SQLite**（Node 22 内置 `node:sqlite`，WAL 模式） | `server/db.js` |
+| 云端 RPC（wallet_* / order_*） | 本地同名实现，**返回形状完全一致** | `server/wallet.js` + `server/local-cloud.js` |
+| 云端 storage + 签名 URL | 本机磁盘 + 本站签名直链 `/files/<key>?e=&s=` | `server/storage.js` |
+| 浏览器 云 SDK（`workbuddy-cloud.global.js`） | 同名「假 SDK」`shared/local-cloud.js`（auth/database/storage 形状不变） | — |
+
+**关键设计**：`server/local-cloud.js` 让 `server/orders.js`（生成单状态机）与前端业务代码**一行都不用改**，
+只换底层数据源。这是迁移能在一晚完成、且回归全绿的原因。
+
+**数据位置**：`DATA_DIR`（生产 `systemctl cat allmaster | grep DATA_DIR` → `/opt/allmaster-data`），
+刻意放在代码目录之外 —— `deploy/push.sh` 是覆盖式解压，业务数据绝不能跟着代码被覆盖。
+
+**运维必读**：
+- 备份：`deploy/backup.sh`（crontab 每日，库用 `VACUUM INTO` 一致性快照，保留 14 天）
+- 运营命令行：`node server/admin-cli.js help`（发兑换码 / 人工充值 / 巡检 / 查订单 / 查余额）
+- 邮件通道：`.mail-config.json`（`smtp` 465 或 `resend` HTTP）；**未配置时验证码只写 `$DATA_DIR/outbox/`，用户收不到**
+- 回滚：`LEGACY_CLOUD=1` 可让 `/.cloud/*` 反代重新生效（云服务恢复时用于对账，平时不要开）
+
+---
+
 ## 1. 项目概览
 
 - **平台**：全员大师（多产品平台仓库，一个后端 + 一套积分/支付 + 一个部署域名）
 - **第一个产品**：头像制作大师（AI Avatar Studio，`apps/avatar/`）
-- **部署链接**：https://ai-avatar-studio-50356.app.workbuddy.host/?sharecode=25HFTCUZ7J
-- **形态**：单端口 Node HTTP 服务（server.js），发布于 WorkBuddy sites，云端数据用 WorkBuddy 云服务（Genie-BaaS）
-- **核心能力**：AI 头像生成（多 Provider）、积分钱包（云端账本 RPC）、登录/云同步、虎皮椒支付、后台配置
+- **部署链接**：https://dotbeads.online（雅加达备用）/ `http://123.207.22.47:8080`（广州主生产）
+- **形态**：单端口 Node HTTP 服务（server.js），**自建数据层**（SQLite + 本机文件，见第 0 节）
+- **核心能力**：AI 头像生成（多 Provider）、积分钱包（本地账本事务）、邮箱验证码登录、支付、运营 CLI
 
-### 目录结构（2026-10-25 拆分后）
+### 目录结构（2026-10-31 自建服务）
 
 ```
-server.js                    # HTTP 服务：静态路由 + /api/ai 代理 + 支付回调 + 密钥下发
+server.js                    # HTTP 服务：静态路由 + /api/ai 代理 + 支付回调 + 自建 API 分发
+server/                      # ★ 自建后端（不进静态下发，serveStatic 对 server/ 返回 403）
+  db.js                      #   SQLite 建库/schema/事务/会话密钥
+  wallet.js                  #   账本：consume/refund/redeem/payCredit/grant（幂等 + -2 免费下限）
+  auth.js                    #   邮箱验证码 + HMAC 会话（sessions 表可吊销）
+  mail.js                    #   邮件通道：dev outbox / SMTP 465 / Resend HTTP
+  storage.js                 #   本机文件存储 + HMAC 签名直链
+  local-cloud.js             #   RPC 兼容层：让 orders.js 零改动切到本地库
+  api.js                     #   /api/auth/* /api/db/query /api/rpc/* /api/storage/* /files/*
+  orders.js                  #   生成单状态机（不变）
+  admin-cli.js               #   运营命令行（兑换码/充值/巡检）
 shared/                      # ★ 平台层：所有产品共用，改动需评估对全部产品的影响
-  platform.js                #   登录/钱包/支付/云服务客户端，window.Platform.setup(ctx)
-  base.css                   #   设计 token + 通用组件样式（按钮/弹窗/输入框等）
+  platform.js                #   登录/钱包/支付，window.Platform.setup(ctx)
+  local-cloud.js             #   浏览器端「假 SDK」：auth/database/storage 同名 API
+  base.css                   #   设计 token + 通用组件样式
 apps/avatar/                 # ★ 产品层：头像产品专属
-  index.html                 #   页面骨架（head + body 结构 + 3 个 script 引入）
-  app.js                     #   应用逻辑（Store/风格/生成/历史），IIFE，调用 Platform.setup
-  avatar.css                 #   产品页专属样式
-admin.html                   # 平台后台（配置 Provider/风格/套餐/密钥，暂在根目录，未拆分）
-package.json                 # 无依赖，start = node server.js
-.pay-config.json             # 支付通道状态（本地缓存，勿删）
+admin.html                   # 平台后台（仍是云端版本，暂不可用，见页首提示）
+deploy/                      # install.sh / push.sh / backup.sh / allmaster.service
 ```
 
 ## 2. 分层规则（最重要）
