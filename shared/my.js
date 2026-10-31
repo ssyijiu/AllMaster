@@ -46,7 +46,6 @@
     redeemCode: $('redeemCode'),
     btnRedeem: $('btnRedeem'),
     walletMsg: $('walletMsg'),
-    txnHistory: $('txnHistory'),
     /* 本页自有 */
     tabWorks: $('tabWorks'),
     tabTxns: $('tabTxns'),
@@ -78,6 +77,8 @@
     userChipTitle: '已登录，作品与积分全平台通用',
     productSlug: '',
     onLoginSuccess: function () { loadAll(); },
+    /* 钱包弹窗底部的「查看积分明细」：本页不跳转，直接切到这个 tab */
+    onViewTxns: function () { switchTab('txns'); },
     onSignOut: function () {
       Store.state.works = [];
       Store.state.pruned = 0;
@@ -498,44 +499,11 @@
     }).catch(rollback);
   }
 
-  /* ---------- 积分明细 ---------- */
-  var TXN_KIND_TEXT = { consume: '生成消费', refund: '失败退回', redeem: '兑换码兑换', grant: '管理员赠送', pay: '充值到账' };
+  /* ---------- 积分明细 ----------
+   * 条目渲染复用平台层（Platform.setup 返回的 renderTxnList）：
+   * 钱包弹窗与这一页原本各写一套，样式/文案迟早分叉成两样。 */
 
-  function fmtTxnTime(iso) {
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) { return ''; }
-    var p = function (n) { return n < 10 ? '0' + n : String(n); };
-    return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + p(d.getHours()) + ':' + p(d.getMinutes());
-  }
-
-  function maskRedeemCode(ref) {
-    var s = String(ref || '');
-    return s.length <= 4 ? s : s.slice(0, 2) + '****' + s.slice(-2);
-  }
-
-  function renderTxns(rows) {
-    els.txnList.innerHTML = '';
-    if (!rows.length) {
-      els.txnList.innerHTML = '<p class="hint">暂无积分记录</p>';
-      return;
-    }
-    rows.forEach(function (t) {
-      var item = document.createElement('div');
-      item.className = 'txn-item';
-      item.innerHTML =
-        '<div class="t-main"><div class="t-kind"></div><div class="t-note"></div></div>' +
-        '<div class="t-credits"></div><div class="t-time"></div>';
-      var credits = Number(t.credits) || 0;
-      item.querySelector('.t-kind').textContent = TXN_KIND_TEXT[t.kind] || t.kind || '记录';
-      item.querySelector('.t-note').textContent =
-        t.note || (t.kind === 'redeem' ? '兑换码 ' + maskRedeemCode(t.ref) : '');
-      var c = item.querySelector('.t-credits');
-      c.textContent = (credits > 0 ? '+' : '') + credits;
-      c.classList.add(credits > 0 ? 'plus' : 'minus');
-      item.querySelector('.t-time').textContent = fmtTxnTime(t.created_at);
-      els.txnList.appendChild(item);
-    });
-  }
+  function renderTxns(rows) { auth.renderTxnList(els.txnList, rows); }
 
   function renderTxnsEmpty() { els.txnList.innerHTML = '<p class="hint">登录后查看积分明细</p>'; }
 
@@ -588,6 +556,14 @@
   function boot() {
     els.tabWorks.addEventListener('click', function () { switchTab('works'); });
     els.tabTxns.addEventListener('click', function () { switchTab('txns'); });
+    /* 深链接：首页钱包弹窗的「查看积分明细」指向 /my#txns，直接落在明细 tab；
+       从 /my 内部点同一个链接只改 hash，也能正确切换。 */
+    function syncTabFromHash() {
+      if (location.hash === '#txns') { switchTab('txns'); }
+      else if (location.hash === '#works') { switchTab('works'); }
+    }
+    window.addEventListener('hashchange', syncTabFromHash);
+    syncTabFromHash();
     /* 兑换 / 充值到账后明细会变：作废内存与本地缓存，正在看明细 tab 时立刻重拉 */
     document.addEventListener('platform:balance-changed', function () {
       txnsCache.loaded = false;

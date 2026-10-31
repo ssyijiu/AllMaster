@@ -233,8 +233,69 @@
     });
   };
 
+  /* =========================================================
+   * 积分钱包弹窗：全平台唯一一份标记
+   * ---------------------------------------------------------
+   * 2026-10-31：这份 HTML 原来在 avatar / pixelart / my 三个页面各抄一份，
+   * 改一处漏两处——/my 的钱包因此一直和首页长得不一样（余额卡没黄底、
+   * 兑换按钮样式不同）。现在由平台层生成并挂到 body，页面只留一个
+   * #btnWallet 入口，结构只有一个来源。
+   * 本文件以 defer 加载，执行时 body 已解析完；万一没有（老式同步引用），
+   * 退到 DOMContentLoaded 再挂。
+   * ========================================================= */
+  var WALLET_MODAL_HTML = [
+    '<div class="modal-mask" id="walletModal" hidden>',
+    '  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="walletTitle">',
+    '    <div class="modal-head">',
+    '      <h3 id="walletTitle">积分钱包</h3>',
+    '      <button class="btn ghost wallet-close" id="btnCloseWallet" type="button" aria-label="关闭钱包">',
+    '        <svg class="icon icon-16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4 L12 12 M12 4 L4 12"/></svg>',
+    '      </button>',
+    '    </div>',
+    '    <p class="modal-desc">积分全平台通用：1 积分 = 生成 1 次；生成失败自动退回；新用户有 2 次免费体验。</p>',
+    '    <p class="wallet-balance">',
+    '      <span class="wb-label">当前余额</span>',
+    '      <span class="wb-num"><b id="walletBalanceBig">–</b>积分</span>',
+    '    </p>',
+    '    <span class="group-label">充值套餐</span>',
+    '    <div class="product-grid" id="productGrid"></div>',
+    '    <p class="hint" id="payChannelsNote"></p>',
+    '    <div class="login-divider"><span>或</span></div>',
+    '    <span class="group-label">兑换码兑换</span>',
+    '    <div class="phone-row">',
+    '      <input type="text" id="redeemCode" class="text-input mono" placeholder="输入兑换码，如 AVXXXXXXXX" />',
+    '      <button class="btn primary" id="btnRedeem" type="button">兑换</button>',
+    '    </div>',
+    '    <p class="hint" id="walletMsg"></p>',
+    '    <a class="btn secondary big wallet-more" id="walletMore" href="/my#txns">查看积分明细 →</a>',
+    '  </div>',
+    '</div>'
+  ].join('\n');
+
+  Platform.mountWalletModal = function () {
+    if (!document.body) { return false; }
+    var old = document.getElementById('walletModal');
+    if (old && old.parentNode) { old.parentNode.removeChild(old); }
+    var host = document.createElement('div');
+    host.innerHTML = WALLET_MODAL_HTML;
+    var node = host.firstElementChild;
+    if (!node) { return false; }
+    document.body.appendChild(node);
+    return true;
+  };
+  if (!Platform.mountWalletModal()) {
+    document.addEventListener('DOMContentLoaded', function () { Platform.mountWalletModal(); });
+  }
+
   Platform.setup = function (ctx) {
     var els = ctx.els;
+    /* 钱包弹窗的节点由平台层生成，页面不必再逐个列出它们的 id；
+       页面漏了（或以后新增节点）就在这里补齐，避免「点开是空弹窗」。 */
+    ['walletModal', 'btnCloseWallet', 'walletBalanceBig', 'productGrid',
+     'payChannelsNote', 'redeemCode', 'btnRedeem', 'walletMsg', 'walletMore'
+    ].forEach(function (id) {
+      if (!els[id]) { els[id] = document.getElementById(id); }
+    });
     var Store = ctx.store;
     var cloudService = Platform.cloud;
     var showHint = ctx.showHint || function () {};
@@ -419,7 +480,6 @@
       els.walletModal.hidden = false;
       walletService.refresh();
       loadWalletProducts();
-      loadTxnHistory();
     }
     function closeWallet() {
       els.walletModal.hidden = true;
@@ -462,7 +522,9 @@
         els.productGrid.innerHTML = '<p class="hint">套餐加载失败，请稍后重试</p>';
       });
     }
-    /* 积分明细：读自己的账本流水（RLS 限制只能看本人，只读） */
+    /* 积分明细：读自己的账本流水（RLS 限制只能看本人，只读）
+     * 渲染只此一份：弹窗里的明细已去掉（底部改成去 /my 的入口），
+     * /my 的「积分明细」tab 复用这里，避免两处各写一套条目结构。 */
     var TXN_KIND_TEXT = { consume: '生成消费', refund: '失败退回', redeem: '兑换码兑换', grant: '管理员赠送', pay: '充值到账' };
     function fmtTxnTime(iso) {
       var d = new Date(iso);
@@ -475,10 +537,12 @@
       if (s.length <= 4) { return s; }
       return s.slice(0, 2) + '****' + s.slice(-2);
     }
-    function renderTxnHistory(rows) {
-      els.txnHistory.innerHTML = '';
+    function renderTxnList(container, rows) {
+      if (!container) { return; }
+      rows = rows || [];
+      container.innerHTML = '';
       if (!rows.length) {
-        els.txnHistory.innerHTML = '<p class="hint">暂无积分记录</p>';
+        container.innerHTML = '<p class="hint">暂无积分记录</p>';
         return;
       }
       rows.forEach(function (t) {
@@ -495,23 +559,8 @@
         creditEl.textContent = (credits > 0 ? '+' : '') + credits;
         creditEl.classList.add(credits > 0 ? 'plus' : 'minus');
         item.querySelector('.t-time').textContent = fmtTxnTime(t.created_at);
-        els.txnHistory.appendChild(item);
+        container.appendChild(item);
       });
-    }
-    function loadTxnHistory() {
-      var cloud = cloudService.getClient();
-      if (!cloud || !cloud.database || !cloud.database.from) {
-        els.txnHistory.innerHTML = '<p class="hint">暂无积分记录</p>';
-        return;
-      }
-      els.txnHistory.innerHTML = '<p class="hint">加载中…</p>';
-      cloud.database.from('app_wallet_txns').select('*')
-        .order('created_at', { ascending: false }).limit(30)
-        .then(function (res) {
-          renderTxnHistory((res && res.data) || []);
-        }).catch(function () {
-          els.txnHistory.innerHTML = '<p class="hint">明细加载失败，请稍后重试</p>';
-        });
     }
     function startPay(product) {
       if (!Store.state.user) { openLogin(); return; }
@@ -549,7 +598,6 @@
         els.redeemCode.value = '';
         showWalletMsg('兑换成功，当前余额 ' + balance + ' 积分');
         notifyBalanceChanged();
-        if (!els.walletModal.hidden) { loadTxnHistory(); }
       }).catch(function (err) {
         showWalletMsg(err.message || '兑换失败', true);
       }).then(function () {
@@ -827,6 +875,16 @@
       els.redeemCode.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') { doRedeem(); }
       });
+      /* 弹窗底部「查看积分明细」：在 /my 上就不用再跳一次页，
+         关掉弹窗直接切到明细 tab；其它页面按 href 正常导航到 /my#txns */
+      if (els.walletMore) {
+        els.walletMore.addEventListener('click', function (e) {
+          if (location.pathname !== '/my') { return; }
+          e.preventDefault();
+          closeWallet();
+          if (typeof ctx.onViewTxns === 'function') { ctx.onViewTxns(); }
+        });
+      }
       els.loginPhone.addEventListener('input', function () { showFieldErr(els.errPhone, '', false); });
       els.loginCode.addEventListener('input', function () { showFieldErr(els.errCode, '', false); });
       els.btnSendCode.addEventListener('click', sendCodeHandler);
@@ -858,7 +916,8 @@
       loadPayChannels: loadPayChannels,
       handlePaidReturn: handlePaidReturn,
       bindAuthEvents: bindAuthEvents,
-      renderAuthUI: renderAuthUI
+      renderAuthUI: renderAuthUI,
+      renderTxnList: renderTxnList
     };
   };
 })();

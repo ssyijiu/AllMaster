@@ -399,23 +399,60 @@
     .login-divider::before, .login-divider::after {
       content: ''; flex: 1; height: 1px; background: var(--border-soft);
     }
+    /* 余额卡：底色与顶栏积分 pill 用同一组 --pill-* token（淡黄），
+       不要再各产品各改一份 #FFD02F——那样顶栏和弹窗永远是两种黄。 */
     .wallet-balance {
-      margin: var(--space-2) 0 var(--space-3);
-      font-size: var(--text-sm); color: var(--meta);
+      background: var(--pill-bg);
+      border-radius: var(--radius-lg);
+      padding: 16px 20px 18px;
+      margin: var(--space-4) 0 var(--space-2);
+      display: flex; flex-direction: column; gap: 4px;
     }
-    .wallet-balance b { font-size: 22px; color: var(--text); }
+    .wallet-balance .wb-label {
+      font-size: var(--text-sm); font-weight: var(--weight-emphasis);
+      color: rgba(31, 29, 26, 0.72);
+    }
+    .wallet-balance .wb-num {
+      display: flex; align-items: baseline; gap: 8px;
+      font-size: 15px; font-weight: 700; color: #1F1D1A;
+    }
+    .wallet-balance b {
+      font-size: 44px; line-height: 1.1; letter-spacing: -0.02em;
+      font-weight: 800; color: #1F1D1A;
+    }
     .product-grid {
       display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2);
     }
     .product-card {
-      border: 1px solid var(--border-soft); border-radius: 10px;
-      padding: var(--space-3); text-align: center;
-      display: flex; flex-direction: column; gap: 4px;
+      background: #F7F8FA; border: 1px solid #E5E7EC; border-radius: 14px;
+      padding: var(--space-3) var(--space-2); text-align: center;
+      display: flex; flex-direction: column; gap: 3px;
     }
     .product-card .p-name { font-size: var(--text-xs); color: var(--meta); }
-    .product-card .p-credits { font-size: 18px; font-weight: 500; color: var(--text); }
+    .product-card .p-credits { font-size: 18px; font-weight: 700; color: var(--fg); }
     .product-card .p-price { font-size: var(--text-xs); color: var(--meta); }
-    .product-card .btn { margin-top: 4px; }
+    .product-card .btn {
+      margin-top: 6px; height: 30px; font-size: var(--text-xs);
+      border-radius: var(--radius-full);
+    }
+    /* 钱包弹窗右上关闭按钮（结构由平台层生成，这里给尺寸，不依赖产品图标集） */
+    .wallet-close {
+      width: 32px; height: 32px; padding: 0; flex: none;
+      border-radius: var(--radius-full);
+    }
+    /* 弹窗底部：引导到 /my 的积分明细
+       .btn.big 自带 radius-md，这里要压过它才成 pill；
+       配色写死中性值（不跟主题的 secondary），三个页面看起来才是同一个按钮 */
+    .btn.wallet-more {
+      margin-top: var(--space-4);
+      border-radius: var(--radius-full);
+      text-decoration: none;
+      background: var(--surface);
+      border-color: #E5E7EC;
+      color: #1F1D1A;
+      font-weight: 700;
+    }
+    .btn.wallet-more:hover { background: #F7F8FA; }
     .txn-list {
       max-height: 200px; overflow-y: auto;
       border: 1px solid var(--border-soft); border-radius: 10px;

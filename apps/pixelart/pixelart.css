@@ -71,11 +71,7 @@
       font-size: 11px; letter-spacing: 0.18em; color: #7A7A7A; font-weight: 600; padding-bottom: 2px; }
 
     /* 顶栏 pill（积分 / 我的）配色统一在 base.css 的 `.btn.pill`，此处不再覆写 */
-    /* 兑换按钮：墨底黄字（设计稿） */
-    #btnRedeem {
-      background: #1F1D1A; border-color: transparent; color: #FFD02F; font-weight: 700;
-    }
-    #btnRedeem:hover { background: #3A3730; }
+    /* 兑换按钮不再单独覆写：统一用 .btn.primary，与「购买」同一套视觉 */
     /* 获取验证码：浅黄底（设计稿） */
     #btnSendCode {
       background: #FFE9A9; border-color: transparent; color: #1F1D1A; font-weight: 600;
@@ -401,32 +397,6 @@
       display: inline-flex; align-items: center; justify-content: center;
     }
     .btn-close-modal:hover { background: #E8EAEE; color: var(--fg); }
-
-    /* ===== 钱包弹窗（设计稿 04） ===== */
-    .wallet-balance {
-      background: #FFD02F; border-radius: var(--radius-lg);
-      padding: 16px 20px 18px; margin: var(--space-4) 0 var(--space-2);
-      display: flex; flex-direction: column; gap: 4px;
-    }
-    .wallet-balance .wb-label { font-size: var(--text-sm); font-weight: var(--weight-emphasis); color: rgba(31, 29, 26, 0.72); }
-    .wallet-balance .wb-num { display: flex; align-items: baseline; gap: 8px; }
-    .wallet-balance b {
-      font-size: 44px; line-height: 1.1; color: #1F1D1A;
-      font-weight: 800; letter-spacing: -0.02em;
-    }
-    .wallet-balance .wb-num { font-size: 15px; font-weight: 700; color: #1F1D1A; }
-    .product-card {
-      background: #F7F8FA; border: 1px solid #E5E7EC; border-radius: 14px;
-      padding: var(--space-3) var(--space-2); gap: 3px;
-    }
-    .product-card .p-credits { font-size: 18px; font-weight: 700; color: var(--fg); }
-    .product-card .btn { margin-top: 6px; height: 30px; font-size: var(--text-xs); border-radius: var(--radius-full); }
-    .txn-list {
-      border: none; background: #F7F8FA; border-radius: 14px; max-height: 220px;
-    }
-    .txn-item { border-bottom: 1px solid #E5E7EC; padding: 10px 14px; font-size: var(--text-sm); }
-    .txn-item .t-credits.minus { color: var(--fg); }
-    .txn-item .t-credits.plus { color: #2E9E63; }
 
     /* ===== 响应式 ===== */
     @media (max-width: 899px) {

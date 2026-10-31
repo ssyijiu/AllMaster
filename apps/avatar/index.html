@@ -6,8 +6,8 @@
   <meta name="description" content="成像 DotAvatar：点一下，换头像。上传照片，选择风格，调用 AI 生成个性头像。一张照片，百个你。" data-page-node-id="udNGZ7HREtTvGHZR9xxAuc" />
   <title>成像 DotAvatar · 点一下，换头像</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='22' fill='%23FFD02F'/%3E%3Cpath d='M48.6 19.2 A 14 14 0 1 0 58.6 24.9' stroke='%231F1D1A' stroke-width='10' stroke-linecap='round' fill='none'/%3E%3Ccircle cx='55' cy='18' r='5' fill='%231F1D1A'/%3E%3Cpath d='M25 80 C25 61 34 52 47 52 C60 52 69 61 69 80' stroke='%231F1D1A' stroke-width='10' stroke-linecap='round' fill='none'/%3E%3C/svg%3E" data-page-node-id="CWEfNv9byZuou93P0EnGlw" />
-  <link rel="stylesheet" href="/shared/base.css?v=20261031d" />
-  <link rel="stylesheet" href="/apps/avatar/avatar.css?v=20261031d" />
+  <link rel="stylesheet" href="/shared/base.css?v=20261031e" />
+  <link rel="stylesheet" href="/apps/avatar/avatar.css?v=20261031e" />
 </head>
 <body data-page-node-id="AUKLLjIrJEZnWvEZPPCk8m">
   <!-- ===== Section S1: SVG 图标 Sprite（Lucide 规格：viewBox 24 / stroke 1.5 / currentColor） ===== -->
@@ -226,32 +226,6 @@
     </div>
   </div>
 
-  <!-- ===== Section S6b: 积分钱包弹窗 ===== -->
-  <div class="modal-mask" id="walletModal" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="walletTitle">
-      <div class="modal-head">
-        <h3 id="walletTitle">积分钱包</h3>
-        <button class="btn ghost btn-remove-photo" id="btnCloseWallet" type="button" aria-label="关闭钱包" style="width:32px;height:32px;">
-          <svg class="icon icon-16" aria-hidden="true"><use href="#i-x"/></svg>
-        </button>
-      </div>
-      <p class="modal-desc">1 积分 = 生成 1 次头像。生成失败会自动退回积分；新用户有 2 次免费体验。</p>
-      <p class="wallet-balance"><span class="wb-label">当前余额</span><span class="wb-num"><b id="walletBalanceBig">–</b>积分</span></p>
-      <span class="group-label">充值套餐</span>
-      <div class="product-grid" id="productGrid"></div>
-      <p class="hint" id="payChannelsNote"></p>
-      <div class="login-divider"><span>或</span></div>
-      <span class="group-label">兑换码兑换</span>
-      <div class="phone-row">
-        <input type="text" id="redeemCode" class="text-input mono" placeholder="输入兑换码，如 AVXXXXXXXX" />
-        <button class="btn secondary small" id="btnRedeem" type="button">兑换</button>
-      </div>
-      <p class="hint" id="walletMsg"></p>
-      <span class="group-label">积分明细</span>
-      <div class="txn-list" id="txnHistory"><p class="hint">加载中…</p></div>
-    </div>
-  </div>
-
   <!-- ===== Section S6: 大图预览弹窗 ===== -->
   <div class="lightbox-mask" id="lightbox" hidden data-page-node-id="ACUfydyGlTAWcYpAOBP0nr">
     <div class="lightbox-body" role="dialog" aria-modal="true" aria-label="图片预览" data-page-node-id="JIgHlO0zW1HTExix3hTqob">
@@ -264,7 +238,7 @@
 
   <!-- ===== Section J0: WorkBuddy 云服务 SDK（CDN 形式，单文件无构建） ===== -->
   <script defer src="/shared/workbuddy-cloud.global.js?v=20261027"></script>
-  <script defer src="/shared/platform.js?v=20261031e"></script>
-  <script defer src="/apps/avatar/app.js?v=20261031b"></script>
+  <script defer src="/shared/platform.js?v=20261031f"></script>
+  <script defer src="/apps/avatar/app.js?v=20261031c"></script>
 </body>
 </html>

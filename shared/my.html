@@ -6,7 +6,7 @@
   <title>我的作品 · 点豆科技</title>
   <meta name="description" content="点豆科技账号下的作品与积分明细：头像与拼豆图纸云端保存，换设备登录即可查看。" />
   <link rel="icon" href="/apps/pixelart/assets/brand/logo-v3-round.svg" />
-  <link rel="stylesheet" href="/shared/base.css?v=20261031d" />
+  <link rel="stylesheet" href="/shared/base.css?v=20261031e" />
   <link rel="stylesheet" href="/shared/my.css?v=20261031a" />
 </head>
 <body>
@@ -103,29 +103,6 @@
     </div>
   </div>
 
-  <div class="modal-mask" id="walletModal" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="walletTitle">
-      <div class="modal-head">
-        <h3 id="walletTitle">积分钱包</h3>
-        <button class="btn ghost" id="btnCloseWallet" type="button" aria-label="关闭钱包">×</button>
-      </div>
-      <p class="modal-desc">积分全平台通用：1 积分 = 生成 1 次；生成失败自动退回；新用户有 2 次免费体验。</p>
-      <p class="wallet-balance"><span class="wb-label">当前余额</span><span class="wb-num"><b id="walletBalanceBig">–</b>积分</span></p>
-      <span class="group-label">充值套餐</span>
-      <div class="product-grid" id="productGrid"></div>
-      <p class="hint" id="payChannelsNote"></p>
-      <div class="login-divider"><span>或</span></div>
-      <span class="group-label">兑换码兑换</span>
-      <div class="phone-row">
-        <input type="text" id="redeemCode" class="text-input mono" placeholder="输入兑换码" />
-        <button class="btn secondary small" id="btnRedeem" type="button">兑换</button>
-      </div>
-      <p class="hint" id="walletMsg"></p>
-      <span class="group-label">最近流水</span>
-      <div class="txn-list" id="txnHistory"><p class="hint">加载中…</p></div>
-    </div>
-  </div>
-
   <div class="lightbox-mask" id="lightbox" hidden>
     <div class="lightbox-body" role="dialog" aria-modal="true" aria-label="图片预览">
       <img id="lightboxImg" alt="作品预览" />
@@ -134,7 +111,7 @@
   </div>
 
   <script defer src="/shared/workbuddy-cloud.global.js?v=20261027"></script>
-  <script defer src="/shared/platform.js?v=20261031e"></script>
-  <script defer src="/shared/my.js?v=20261031d"></script>
+  <script defer src="/shared/platform.js?v=20261031f"></script>
+  <script defer src="/shared/my.js?v=20261031e"></script>
 </body>
 </html>

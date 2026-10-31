@@ -48,8 +48,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     payChannelsNote: $('payChannelsNote'),
     redeemCode: $('redeemCode'),
     btnRedeem: $('btnRedeem'),
-    walletMsg: $('walletMsg'),
-    txnHistory: $('txnHistory')
+    walletMsg: $('walletMsg')
   };
 
   /* ---------- 产品状态 ---------- */

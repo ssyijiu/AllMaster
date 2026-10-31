@@ -6,8 +6,8 @@
   <meta name="description" content="点豆 DotBeads：上传图片，AI 生成可编辑、可导出的拼豆图纸。点豆科技旗下产品，登录与积分全平台通用。" />
   <title>点豆 DotBeads · 点一下，豆就有</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='22' fill='%23FFD02F'/%3E%3Cpath d='M32 26 H44 C 60 26 70 35 70 48 C 70 61 60 70 44 70 H32' fill='none' stroke='%231F1D1A' stroke-width='14' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='80' cy='76' r='7' fill='%231F1D1A'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="/shared/base.css?v=20261031d" />
-  <link rel="stylesheet" href="/apps/pixelart/pixelart.css?v=20261031d" />
+  <link rel="stylesheet" href="/shared/base.css?v=20261031e" />
+  <link rel="stylesheet" href="/apps/pixelart/pixelart.css?v=20261031e" />
 </head>
 <body>
   <!-- ===== Section P1: SVG 图标 Sprite（Lucide 规格：viewBox 24 / stroke 1.5 / currentColor） ===== -->
@@ -205,34 +205,9 @@
     </div>
   </div>
 
-  <!-- ===== Section P6b: 积分钱包弹窗 ===== -->
-  <div class="modal-mask" id="walletModal" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="walletTitle">
-      <div class="modal-head">
-        <h3 id="walletTitle">积分钱包</h3>
-        <button class="btn ghost btn-close-modal" id="btnCloseWallet" type="button" aria-label="关闭钱包" style="width:32px;height:32px;">
-          <svg class="icon icon-16" aria-hidden="true"><use href="#i-x"/></svg>
-        </button>
-      </div>
-      <p class="modal-desc">积分在「点豆科技」平台全产品通用；生成拼豆图纸每次消耗 1 积分，生成失败自动退回。</p>
-      <p class="wallet-balance"><span class="wb-label">当前余额</span><span class="wb-num"><b id="walletBalanceBig">–</b>积分</span></p>
-      <span class="group-label">充值套餐</span>
-      <div class="product-grid" id="productGrid"></div>
-      <p class="hint" id="payChannelsNote"></p>
-      <div class="login-divider"><span>兑换码</span></div>
-      <div class="phone-row">
-        <input type="text" id="redeemCode" class="text-input mono" placeholder="输入兑换码" />
-        <button class="btn secondary small" id="btnRedeem" type="button">兑换</button>
-      </div>
-      <p class="hint" id="walletMsg"></p>
-      <span class="group-label">积分明细</span>
-      <div class="txn-list" id="txnHistory"><p class="hint">加载中…</p></div>
-    </div>
-  </div>
-
   <!-- ===== script 顺序固定：云 SDK（本地副本，国内不走 jsDelivr）→ 平台层 → 产品层 ===== -->
   <script defer src="/shared/workbuddy-cloud.global.js?v=20261027"></script>
-  <script defer src="/shared/platform.js?v=20261031e"></script>
-  <script defer src="/apps/pixelart/app.js?v=20261030e"></script>
+  <script defer src="/shared/platform.js?v=20261031f"></script>
+  <script defer src="/apps/pixelart/app.js?v=20261031a"></script>
 </body>
 </html>

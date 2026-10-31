@@ -526,7 +526,6 @@
       walletBalanceBig: $('walletBalanceBig'), productGrid: $('productGrid'),
       payChannelsNote: $('payChannelsNote'),
       redeemCode: $('redeemCode'), btnRedeem: $('btnRedeem'), walletMsg: $('walletMsg'),
-      txnHistory: $('txnHistory'),
       loginModal: $('loginModal'), btnCloseLogin: $('btnCloseLogin'),
       loginPhone: $('loginPhone'), errPhone: $('errPhone'),
       loginCode: $('loginCode'), errCode: $('errCode'),
