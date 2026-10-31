@@ -70,12 +70,7 @@
     .brand-en { font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
       font-size: 11px; letter-spacing: 0.18em; color: #7A7A7A; font-weight: 600; padding-bottom: 2px; }
 
-    /* 顶栏积分：浅黄圆角 pill（设计稿「✦积分 128」二版） */
-    #btnWallet {
-      background: #FFE9A9; border-color: transparent; color: #1F1D1A; font-weight: 700;
-    }
-    #btnWallet:hover { background: #FFDF7E; }
-    #btnWallet:active { background: #FFD65E; }
+    /* 顶栏 pill（积分 / 我的）配色统一在 base.css 的 `.btn.pill`，此处不再覆写 */
     /* 兑换按钮：墨底黄字（设计稿） */
     #btnRedeem {
       background: #1F1D1A; border-color: transparent; color: #FFD02F; font-weight: 700;

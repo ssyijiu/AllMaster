@@ -130,6 +130,12 @@
       --btn-danger-bg:       var(--danger);
       --btn-danger-hover:    var(--danger-hover);
 
+      /* B · Slot：顶栏 pill（「我的」入口与「积分」钱包共用一套视觉） */
+      --pill-bg:     #FFE9A9;
+      --pill-hover:  #FFDF7E;
+      --pill-active: #FFD65E;
+      --pill-text:   #1F1D1A;
+
       /* B · Slot：输入框 */
       --input-bg:           #FFFFFF;
       --input-border:       var(--border);
@@ -334,6 +340,16 @@
     .topbar-actions { display: flex; align-items: center; gap: var(--space-2); }
     /* 「我的」入口用 <a> 承担按钮外观（与积分按钮同款），链接不该有下划线 */
     .topbar-actions a.btn { text-decoration: none; }
+    /* 顶栏 pill：「我的」入口与「积分」钱包同一套视觉——浅黄底、无边框、粗字重。
+       加 .pill 即可，产品不必再为各自的钱包按钮重写配色。 */
+    .topbar-actions .btn.pill {
+      background: var(--pill-bg);
+      border-color: transparent;
+      color: var(--pill-text);
+      font-weight: 700;
+    }
+    .topbar-actions .btn.pill:hover { background: var(--pill-hover); }
+    .topbar-actions .btn.pill:active { background: var(--pill-active); }
     #btnLogin {
       height: 34px; padding: 0 14px; gap: 6px;
       border-radius: var(--radius-full);
