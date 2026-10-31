@@ -79,9 +79,12 @@ if [ -f "$APP_DIR/deploy/allmaster.service" ]; then
   # PUBLIC_ORIGIN：支付回调/回跳用的公开地址。必须显式配，不能靠 Host 头 ——
   # 备案期 dotbeads.online 由雅加达反代到本机时，Host 会被改写成 IP（腾讯云
   # 拦截 Host 带未备案域名的入站请求），拼出来的回调地址就是废的。
+  # 用 drop-in 而不是往 unit 里追加：重跑本脚本不会累积重复行。
+  mkdir -p /etc/systemd/system/allmaster.service.d
   if [ -n "$DOMAIN" ]; then
-    echo "Environment=PUBLIC_ORIGIN=https://$DOMAIN" >> /etc/systemd/system/allmaster.service
-    echo "  PUBLIC_ORIGIN=https://$DOMAIN"
+    printf '[Service]\nEnvironment=PUBLIC_ORIGIN=https://%s\n' "$DOMAIN" \
+      > /etc/systemd/system/allmaster.service.d/public-origin.conf
+    echo "  PUBLIC_ORIGIN=https://$DOMAIN（drop-in: public-origin.conf）"
   else
     echo "  ⚠ 未传 DOMAIN，PUBLIC_ORIGIN 未设置（支付回调用 Host 头兜底）"
   fi
@@ -89,9 +92,9 @@ if [ -f "$APP_DIR/deploy/allmaster.service" ]; then
   # 不配时兜底为「最早注册的账号」——迁移期够用，但库里只要有个更早的测试账号，
   # 兜底就会指到那个账号上，所以生产必须显式配。
   if [ -n "$ADMIN_EMAILS" ]; then
-    sed -i "/^Environment=ADMIN_EMAILS=/d" /etc/systemd/system/allmaster.service
-    echo "Environment=ADMIN_EMAILS=$ADMIN_EMAILS" >> /etc/systemd/system/allmaster.service
-    echo "  ADMIN_EMAILS=$ADMIN_EMAILS"
+    printf '[Service]\nEnvironment=ADMIN_EMAILS=%s\n' "$ADMIN_EMAILS" \
+      > /etc/systemd/system/allmaster.service.d/admin-emails.conf
+    echo "  ADMIN_EMAILS=$ADMIN_EMAILS（drop-in: admin-emails.conf）"
   else
     echo "  ⚠ 未传 ADMIN_EMAILS：后台管理员兜底为「最早注册的账号」"
   fi
