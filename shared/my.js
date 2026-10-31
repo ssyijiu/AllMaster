@@ -397,9 +397,20 @@
         if (rb) { rb.addEventListener('click', function () { loadWorks(); }); }
         return;
       }
-      empty.innerHTML = filter === 'pixelart'
-        ? '<b>还没有拼豆图纸</b>生成完成会自动保存到这里，图纸长期可打开。<br /><a class="btn primary" style="margin-top:14px;display:inline-block;text-decoration:none;" href="/">去生成一张</a>'
-        : '<b>还没有作品</b>生成结果会自动保存到这里。<br /><a class="btn primary" style="margin-top:14px;display:inline-block;text-decoration:none;" href="' + (filter === 'avatar' ? '/apps/avatar/' : '/') + '">去生成</a>';
+      /* 空态给出去处：全部 → 两个产品都能去；单产品筛选 → 只给对应那个 */
+      var go = {
+        pixelart: '<a class="btn primary" href="/">去创作拼豆图纸</a>',
+        avatar: '<a class="btn primary" href="/apps/avatar/">去创作头像</a>'
+      };
+      if (filter === 'pixelart' || filter === 'avatar') {
+        empty.innerHTML = (filter === 'pixelart'
+          ? '<b>还没有拼豆图纸</b>生成完成会自动保存到这里，图纸长期可打开。'
+          : '<b>还没有头像作品</b>生成结果会自动保存到这里。') +
+          '<div class="empty-actions">' + go[filter] + '</div>';
+      } else {
+        empty.innerHTML = '<b>还没有作品</b>生成结果会自动保存到这里。' +
+          '<div class="empty-actions">' + go.pixelart + go.avatar + '</div>';
+      }
       return;
     }
     empty.hidden = true;

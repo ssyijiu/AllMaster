@@ -184,6 +184,24 @@ body {
   background: rgba(255, 255, 255, 0.6);
 }
 .empty b { display: block; color: var(--fg); font-size: var(--text-base); margin-bottom: 6px; font-weight: var(--weight-emphasis); }
+/* 空态出口按钮：一行排开、放不下就换行；文字在按钮内水平垂直居中 */
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 16px;
+}
+.empty-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  text-align: center;
+  text-decoration: none;
+  line-height: 1;
+}
 
 /* ---------- 积分明细 ---------- */
 #txnList { background: #fff; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); padding: 6px 14px; }
