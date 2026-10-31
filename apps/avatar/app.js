@@ -513,6 +513,7 @@
       refRow: $('refRow'), refPick: $('refPick'), refInput: $('refInput'),
       btnPickRef: $('btnPickRef'), refSelected: $('refSelected'),
       refThumb: $('refThumb'), refName: $('refName'), refSize: $('refSize'),
+      refTip: $('refTip'),
       btnRemoveRef: $('btnRemoveRef'),
       styleGrid: $('styleGrid'), extraInput: $('extraInput'),
       btnGenerate: $('btnGenerate'),
@@ -1084,9 +1085,48 @@
       });
       els.btnRemoveRef.addEventListener('click', function () { removeReference(); });
 
+      /* 参考图拖拽：整行都能接（未选时落在按钮行、已选时落在缩略图行，等于替换）。
+         用 relatedTarget 判断是否真的离开了这一行，避免子元素间移动时高亮闪烁 */
+      var refTipDefault = els.refTip ? els.refTip.textContent : '';
+      var refBox = function () {
+        return (els.refSelected && !els.refSelected.hidden) ? els.refSelected : els.refPick;
+      };
+      var refHover = function (on) {
+        var box = refBox();
+        if (box) { box.classList[on ? 'add' : 'remove']('dragover'); }
+        if (els.refTip && els.refPick && !els.refPick.hidden) {
+          els.refTip.textContent = on ? '松开即可上传参考图' : refTipDefault;
+        }
+      };
+      els.refRow.addEventListener('dragenter', function (e) {
+        if (els.refRow.hidden) { return; }
+        e.preventDefault();
+        e.stopPropagation();
+        refHover(true);
+      });
+      els.refRow.addEventListener('dragover', function (e) {
+        if (els.refRow.hidden) { return; }
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) { e.dataTransfer.dropEffect = 'copy'; }
+      });
+      els.refRow.addEventListener('dragleave', function (e) {
+        if (els.refRow.hidden) { return; }
+        var to = e.relatedTarget;
+        if (to && els.refRow.contains(to)) { return; }
+        refHover(false);
+      });
+      els.refRow.addEventListener('drop', function (e) {
+        if (els.refRow.hidden) { return; }
+        e.preventDefault();
+        e.stopPropagation();
+        refHover(false);
+        var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (f) { acceptReference(f); }
+      });
+
       /* 拖拽（计数器方案防子元素误触发 dragleave） */
-      var dragDepth = 0;
-      els.uploadZone.addEventListener('dragenter', function (e) {
+      var dragDepth = 0;      els.uploadZone.addEventListener('dragenter', function (e) {
         e.preventDefault();
         dragDepth++;
         els.uploadZone.classList.add('dragover');

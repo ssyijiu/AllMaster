@@ -225,7 +225,17 @@
     .ref-pick {
       display: flex; align-items: center; gap: var(--space-3);
       flex-wrap: wrap; margin-top: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+      border: 1.5px dashed var(--border); border-radius: var(--radius-md);
+      background: var(--bg);
+      transition: border-color var(--motion-base) var(--ease-standard), background-color var(--motion-base) var(--ease-standard);
     }
+    /* 拖拽悬停：等价于主上传区的琥珀高亮（虚线转实线） */
+    .ref-pick.dragover,
+    .ref-selected.dragover {
+      border-style: solid; border-color: var(--amber-600); background: var(--amber-100);
+    }
+    .ref-pick.dragover .ref-tip { color: var(--amber-700); }
     .ref-pick .btn { flex: none; }
     .ref-tip {
       flex: 1 1 200px; min-width: 0;
