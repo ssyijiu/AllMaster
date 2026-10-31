@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex, nofollow" />
-  <title>头像制作大师 · 管理后台</title>
+  <title>点豆科技 · 管理后台</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23FFD02F'/%3E%3Ccircle cx='14.5' cy='13.5' r='5' fill='%231C1C1E'/%3E%3Cpath d='M5.5 26a9 9 0 0 1 18 0Z' fill='%231C1C1E'/%3E%3Cpath d='M24 4.5l1.1 2.9 2.9 1.1-2.9 1.1L24 12.5l-1.1-2.9L20 8.5l2.9-1.1L24 4.5z' fill='%231C1C1E'/%3E%3C/svg%3E" data-page-node-id="CWEfNv9byZuou93P0EnGlw" />
   <style>
     :root {
@@ -96,17 +96,13 @@
   </style>
 </head>
 <body>
-  <!-- 2026-10-31：站点已从 WorkBuddy 云迁到自建服务，本后台仍是云端版本，暂不可用。
-       运营请先用命令行：node server/admin-cli.js help（发兑换码 / 充值 / 巡检 / 查订单）。 -->
-  <div style="position:sticky;top:0;z-index:99;background:#FFF4D6;color:#7A4B00;border-bottom:1px solid #F0D48A;padding:10px 16px;font:14px/1.5 -apple-system,'Segoe UI',sans-serif">
-    <b>后台正在迁移</b>：站点已改为自建服务（自建登录/账本/存储），本页仍连着已停用的云端，暂时不可用。
-    运营操作请用服务器命令行 <code style="background:#FFF0C2;padding:1px 5px;border-radius:4px">node server/admin-cli.js help</code>（发兑换码、人工充值、巡检、查订单）。
-  </div>
+  <!-- 2026-10-31：改为自建后台（/api/admin/*，会话 + 管理员邮箱白名单）。
+       等价能力的命令行入口仍保留：node server/admin-cli.js help -->
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand">
         <span class="brand-logo">管</span>
-        <span>头像制作大师 · 管理后台</span>
+        <span>点豆科技 · 管理后台</span>
       </div>
       <div class="topbar-actions" id="topbarActions" hidden>
         <span id="whoami"></span>
@@ -117,17 +113,17 @@
   </header>
 
   <main class="page">
-    <!-- 登录门禁（手机验证码，与前台同一套云服务账号） -->
+    <!-- 登录门禁（邮箱验证码，与前台同一套自建账号） -->
     <div class="panel gate" id="gatePanel">
       <h2 class="panel-title">管理员登录</h2>
-      <p class="panel-desc">使用与前台相同的账号登录。只有站长绑定的管理员账号可以编辑配置；API Key 存放在独立的密钥表中，未登录的访客完全无法读取。</p>
-      <label class="field-label" for="gatePhone">手机号</label>
-      <input type="tel" id="gatePhone" class="text-input mono" inputmode="numeric" maxlength="11"
-             placeholder="11 位手机号" autocomplete="tel" />
+      <p class="panel-desc">使用与前台相同的邮箱登录。只有管理员白名单里的邮箱可以编辑配置；API Key 存放在服务器，页面只显示「是否已配置」，从不回传明文。</p>
+      <label class="field-label" for="gateEmail">邮箱</label>
+      <input type="email" id="gateEmail" class="text-input" maxlength="120"
+             placeholder="you@example.com" autocomplete="email" />
       <label class="field-label" for="gateCode">验证码</label>
       <div class="code-row">
         <input type="text" id="gateCode" class="text-input mono" inputmode="numeric" maxlength="6"
-               placeholder="4-6 位短信验证码" autocomplete="one-time-code" />
+               placeholder="6 位邮箱验证码" autocomplete="one-time-code" />
         <button class="btn secondary" id="btnSendCode" type="button" style="white-space:nowrap;">获取验证码</button>
       </div>
       <p class="hint err" id="gateMsg" role="alert"></p>
@@ -135,16 +131,18 @@
         <button class="btn primary" id="btnGateLogin" type="button" style="width:100%;">登录</button>
       </div>
       <div class="note-box">
-        说明：服务商 API Key 与风格配置分开存储——Key 只在登录后经加密通道读取，
-        且仅用于生成时调用对应服务商；匿名访客与未登录会话读不到任何 Key。
+        说明：服务商 API Key 只存在服务器本机（.ai-config.json，权限 600），
+        后台只能写入新 Key、看到「已配置/未配置」，读不到明文。
+        管理员身份由 ADMIN_EMAILS 环境变量或 .admin-config.json 的白名单决定。
       </div>
     </div>
 
     <!-- 非管理员提示 -->
     <div class="panel gate" id="deniedPanel" hidden>
       <h2 class="panel-title">无管理权限</h2>
-      <p class="panel-desc">当前登录账号不是本应用的管理员。如需管理权限，请联系站长在后台配置中更新管理员账号。</p>
+      <p class="panel-desc">当前登录账号不在管理员白名单里。</p>
       <p class="hint" id="deniedUid" style="font-family:var(--mono);"></p>
+      <div class="note-box" id="deniedHow" hidden></div>
       <div style="margin-top:16px;">
         <button class="btn ghost" id="btnDeniedBack" type="button">← 返回前台</button>
       </div>
@@ -167,13 +165,15 @@
       </div>
 
       <div class="panel">
-        <h2 class="panel-title">积分与订单</h2>
-        <p class="panel-desc">积分账本存于云端数据库，余额由全部流水派生、不可篡改。此处可手动充值、生成兑换码、同步线上支付订单（入账幂等，重复操作不会重复加）。</p>
+        <h2 class="panel-title">积分与兑换码</h2>
+        <p class="panel-desc">积分账本存于本机数据库，余额由全部流水派生、不可篡改。此处可手动充值、批量生成兑换码（入账幂等，重复操作不会重复加）。</p>
         <div class="grid-2">
           <div class="entry-card">
             <h4>给用户充积分</h4>
-            <label class="field-label">用户 ID（用户在前台点「积分」徽标即可查看复制）</label>
-            <input class="text-input mono" id="grantUid" placeholder="如 2113692518750093312"/>
+            <label class="field-label">用户邮箱（前台登录用的邮箱）</label>
+            <input class="text-input mono" id="grantEmail" list="userList" placeholder="user@example.com"/>
+            <datalist id="userList"></datalist>
+            <p class="hint" id="userListHint"></p>
             <label class="field-label">积分数量</label>
             <input class="text-input mono" id="grantCredits" type="number" min="1" value="10"/>
             <label class="field-label">备注（可选）</label>
@@ -193,12 +193,8 @@
             <button class="btn ghost small" id="btnCopyCodes" type="button" hidden>复制全部兑换码</button>
           </div>
         </div>
-        <div class="entry-card" style="margin-top:12px;">
-          <h4>线上支付订单同步（虎皮椒）</h4>
-          <p class="panel-desc">支付回调由服务器验签后暂存；点「同步」拉取已支付订单并入账（幂等）。用户支付回跳后通常已自动入账，此处用于兜底。</p>
-          <button class="btn secondary small" id="btnSyncPay" type="button">同步已支付订单</button>
-          <div id="payOrderList" style="margin-top:8px;"></div>
-        </div>
+        <!-- 支付订单同步：支付通道（.pay-config.json channels）尚未开通，面板先不展示；
+             开通后在此加回「同步已支付订单」，对应接口为 /api/pay/pending + wallet 入账 -->
       </div>
 
       <div style="height:16px;"></div>
@@ -216,20 +212,12 @@
     </div>
   </div>
 
-  <script src="/shared/workbuddy-cloud.global.js"></script>
+  <script src="/shared/local-cloud.js?v=20261031a"></script>
   <script>
   (function () {
     'use strict';
-    /* endpoint 用本站源：server.js 把 /.cloud/* 同源反代到 WorkBuddy 云（并改写 Origin 过白名单） */
-    var CLOUD_FALLBACK_ENDPOINT = 'https://ai-avatar-studio-50356.app.workbuddy.host';
-    var PUBLIC_CONFIG = {
-      endpoint: (window.location && window.location.origin && window.location.origin !== 'null')
-        ? window.location.origin : CLOUD_FALLBACK_ENDPOINT,
-      oauthRelayBaseUrl: 'https://www.workbuddy.cn/v2/as/genie-baas/oauth',
-      publishableKey: 'wbpk_eoMql05K7PT2JgZUKFFOo9_9vLkFanCYcm67RRrIgxoEnsGnDS52YEM'
-    };
-    var CONFIG_TABLE = 'app_config';
-    var SECRETS_TABLE = 'app_secrets';
+    /* 后台只认本站自建接口：登录用 /api/auth/*，配置与运营走 /api/admin/*
+       （会话 + 管理员邮箱白名单，见 server/admin.js） */
     var CONFIG_ID = 'default';
     /* 平台产品清单：风格按 product 字段归属产品（存量数据无该字段视为 avatar） */
     var PLATFORM_PRODUCTS = [
@@ -241,26 +229,42 @@
 
     var client = null;
     var user = null;
-    var cfg = null;        /* app_config.data：{ styles, providers(不含apiKey), adminUserId } */
-    var providerKeys = {}; /* app_secrets.data.providerKeys（备份展示；生成用 Key 在服务器） */
-    var accessKey = '';    /* app_secrets.data.accessKey：服务器管理端点鉴权 */
-    var paySecret = '';    /* app_secrets.data.paySecret：wallet_pay_claim 验签密钥，保存时必须原样回写 */
+    var cfg = null;        /* { providers, styles } */
+    var providerKeys = {}; /* 后台本次新填的 Key（明文只在内存里，保存后即丢弃） */
+    var serverHasKey = {}; /* 服务器已配置 Key 的服务商 id → true（页面只用来显示状态） */
     var pendingOtp = null;
     var countdownTimer = null;
 
     function getClient() {
       if (client) { return client; }
-      if (!window.WorkBuddyCloud || !window.WorkBuddyCloud.createWorkBuddyCloud) { return null; }
+      if (!window.LocalCloud || !window.LocalCloud.createClient) { return null; }
       try {
-        client = window.WorkBuddyCloud.createWorkBuddyCloud(PUBLIC_CONFIG);
+        client = window.LocalCloud.createClient();
         return client;
       } catch (_) { return null; }
     }
 
-    function db(table) {
-      var c = getClient();
-      if (!c || !c.database || !c.database.from) { return null; }
-      return c.database.from(table);
+    /* 后台接口统一入口：带上登录态 token，错误统一成 Error(message) */
+    function adminApi(method, apiPath, body) {
+      return getClient().auth.getAccessToken().then(function (token) {
+        var headers = { 'Content-Type': 'application/json' };
+        if (token) { headers['Authorization'] = 'Bearer ' + token; }
+        return fetch(apiPath, {
+          method: method,
+          headers: headers,
+          body: body ? JSON.stringify(body) : undefined
+        });
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (data) {
+          if (!r.ok) {
+            var e = new Error((data && data.error && data.error.message) || ('请求失败（HTTP ' + r.status + '）'));
+            e.code = (data && data.error && data.error.code) || '';
+            e.status = r.status;
+            throw e;
+          }
+          return data;
+        });
+      });
     }
 
     function esc(v) {
@@ -269,7 +273,7 @@
         .replace(/"/g, '&quot;');
     }
 
-    /* ---------- 登录：手机验证码（发送与验证分离） ---------- */
+    /* ---------- 登录：邮箱验证码（发送与验证分离） ---------- */
     function startCountdown() {
       var remain = 60;
       var btn = $('btnSendCode');
@@ -285,20 +289,22 @@
     }
 
     function sendCode() {
-      var phone = $('gatePhone').value.trim();
-      if (!/^1\d{10}$/.test(phone)) { showMsg('请输入 11 位手机号', 'err'); return; }
+      var email = $('gateEmail').value.trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { showMsg('请输入正确的邮箱地址', 'err'); return; }
       var c = getClient();
-      if (!c) { showMsg('云服务组件未就绪，请刷新页面', 'err'); return; }
+      if (!c) { showMsg('登录组件未就绪，请刷新页面', 'err'); return; }
       $('btnSendCode').disabled = true;
-      c.auth.sendOtp({ phone: phone }).then(function (res) {
+      c.auth.sendOtp({ email: email }).then(function (res) {
         if (res && res.error) {
           $('btnSendCode').disabled = false;
           showMsg('验证码发送失败：' + ((res.error && res.error.message) || '请稍后重试'), 'err');
           return;
         }
-        pendingOtp = { phone: phone, verificationId: res.data.verificationId, isExistingUser: res.data.isExistingUser };
+        pendingOtp = { email: email };
         startCountdown();
-        showMsg('验证码已发送，请查收短信', 'ok');
+        var tip = '验证码已发送，请查收邮件';
+        if (res && res.data && res.data.devCode) { tip += '（测试环境验证码：' + res.data.devCode + '）'; }
+        showMsg(tip, 'ok');
       }).catch(function () {
         $('btnSendCode').disabled = false;
         showMsg('验证码发送失败，请检查网络后重试', 'err');
@@ -306,19 +312,14 @@
     }
 
     function login() {
-      var phone = $('gatePhone').value.trim();
+      var email = $('gateEmail').value.trim();
       var code = $('gateCode').value.trim();
-      if (!pendingOtp || pendingOtp.phone !== phone) { showMsg('请先为当前手机号获取验证码', 'err'); return; }
-      if (!/^\d{4,6}$/.test(code)) { showMsg('请输入短信验证码', 'err'); return; }
+      if (!pendingOtp || pendingOtp.email !== email) { showMsg('请先为当前邮箱获取验证码', 'err'); return; }
+      if (!/^\d{4,6}$/.test(code)) { showMsg('请输入邮件里的验证码', 'err'); return; }
       var c = getClient();
-      if (!c) { showMsg('云服务组件未就绪，请刷新页面', 'err'); return; }
+      if (!c) { showMsg('登录组件未就绪，请刷新页面', 'err'); return; }
       $('btnGateLogin').disabled = true;
-      c.auth.verifyOtp({
-        phone: pendingOtp.phone,
-        verificationId: pendingOtp.verificationId,
-        isExistingUser: pendingOtp.isExistingUser,
-        token: code
-      }).then(function (res) {
+      c.auth.verifyOtp({ email: email, token: code }).then(function (res) {
         $('btnGateLogin').disabled = false;
         if (res && res.error) {
           showMsg('验证码错误或已过期，请重试', 'err');
@@ -339,56 +340,42 @@
       el.className = 'hint ' + (cls || '');
     }
 
-    /* ---------- 加载配置与密钥 ---------- */
+    /* ---------- 加载配置（一次拿全：配置 + 哪些服务商有 Key + 管理员信息） ---------- */
     function fetchAdminData() {
-      var t1 = db(CONFIG_TABLE), t2 = db(SECRETS_TABLE);
-      if (!t1 || !t2) { return Promise.reject(new Error('云服务组件未就绪，请刷新页面')); }
-      var p1 = t1.select('data').eq('id', CONFIG_ID).limit(1).then(function (res) {
-        if (res && res.error) { throw new Error('读取配置失败：' + (res.error.message || '无权限')); }
-        var rows = (res && res.data) || [];
-        return rows[0] && rows[0].data;
-      });
-      var p2 = t2.select('data').eq('id', CONFIG_ID).limit(1).then(function (res) {
-        if (res && res.error) { throw new Error('读取密钥失败：' + (res.error.message || '无权限')); }
-        var rows = (res && res.data) || [];
-        return (rows[0] && rows[0].data) || { providerKeys: {} };
-      });
-      return Promise.all([p1, p2]).then(function (out) {
-        var data = out[0] || {};
-        var sec = out[1] || {};
+      return adminApi('GET', '/api/admin/bootstrap').then(function (data) {
+        if (!data || !data.isAdmin) {
+          var e = new Error('当前账号不在管理员白名单');
+          e.notAdmin = true;
+          e.payload = data || {};
+          throw e;
+        }
+        serverHasKey = {};
+        (data.hasKeys || []).forEach(function (pid) { serverHasKey[pid] = true; });
         return {
-          adminUserId: data.adminUserId || '',
-          providers: Array.isArray(data.providers) ? data.providers : [],
-          styles: (Array.isArray(data.styles) ? data.styles : []).map(function (s) {
+          providers: (data.config && Array.isArray(data.config.providers)) ? data.config.providers : [],
+          styles: ((data.config && Array.isArray(data.config.styles)) ? data.config.styles : []).map(function (s) {
             /* 存量风格无 product 字段，默认归属第一个产品（avatar） */
             return Object.assign({}, s, { product: s.product || PLATFORM_PRODUCTS[0].id });
           }),
-          providerKeys: sec.providerKeys || {},
-          accessKey: sec.accessKey || '',
-          paySecret: sec.paySecret || ''
+          adminByFallback: !!data.adminByFallback,
+          adminEmails: data.adminEmails || []
         };
       });
     }
 
+    /* 保存：服务商 / 风格 / 本次新填的 Key 一次提交。
+       Key 合并规则在服务端：以服务商列表为准，删掉的服务商连带清掉它的 Key。 */
     function saveAdminData(payloadConfig, payloadSecrets) {
-      var t1 = db(CONFIG_TABLE);
-      if (!t1) { return Promise.reject(new Error('云服务组件未就绪')); }
-      return t1.update({ data: payloadConfig, updated_at: new Date().toISOString() })
-        .eq('id', CONFIG_ID)
-        .then(function (res) {
-          if (res && res.error) { throw new Error('保存配置失败：' + (res.error.message || '无权限')); }
-          /* 服务商 Key 走数据库端 RPC 合并：只更新 providerKeys，accessKey/paySecret
-             由数据库原样保留，前端任何旧页面/异常值都不可能再抹掉它们 */
-          var c = getClient();
-          if (!c || !c.database || !c.database.rpc) { throw new Error('云服务组件未就绪'); }
-          return c.database.rpc('admin_save_provider_keys', {
-            p_keys: JSON.parse(JSON.stringify(payloadSecrets.providerKeys || {}))
-          });
-        })
-        .then(function (res) {
-          if (res && res.error) { throw new Error('保存密钥失败：' + (res.error.message || '无权限')); }
-          return true;
-        });
+      return adminApi('POST', '/api/admin/config', {
+        providers: payloadConfig.providers,
+        styles: payloadConfig.styles,
+        providerKeys: payloadSecrets.providerKeys || {}
+      }).then(function (data) {
+        serverHasKey = {};
+        ((data && data.hasKeys) || []).forEach(function (pid) { serverHasKey[pid] = true; });
+        providerKeys = {}; /* 已落库，内存里的明文不再保留 */
+        return data;
+      });
     }
 
     /* ---------- 门禁分发 ---------- */
@@ -396,26 +383,31 @@
       user = currentUser || null;
       if (!user) { return; }
       fetchAdminData().then(function (data) {
-        /* adminUserId 兼容数组（多管理员）与旧版单字符串 */
-        var adminIds = Array.isArray(data.adminUserId)
-          ? data.adminUserId
-          : (data.adminUserId ? [data.adminUserId] : []);
-        if (!adminIds.length || adminIds.indexOf(user.id) === -1) {
-          $('gatePanel').hidden = true;
-          $('deniedPanel').hidden = false;
-          $('topbarActions').hidden = false;
-          $('whoami').textContent = '已登录：' + user.id;
-          $('deniedUid').textContent = '当前账号 ID：' + user.id;
-          return;
-        }
         cfg = data;
-        providerKeys = data.providerKeys;
-        accessKey = data.accessKey || '';
-        paySecret = data.paySecret || '';
         enterEditor();
       }).catch(function (err) {
+        if (err && err.notAdmin) { showDenied(err.payload); return; }
         showMsg((err && err.message) || '加载失败，请刷新重试', 'err');
       });
+    }
+
+    function showDenied(payload) {
+      var who = (payload && payload.user && payload.user.email) || (user && user.email) || '';
+      $('gatePanel').hidden = true;
+      $('deniedPanel').hidden = false;
+      $('topbarActions').hidden = false;
+      $('saveBar').hidden = true;
+      document.body.classList.remove('has-save-bar');
+      $('whoami').textContent = '已登录：' + who;
+      $('deniedUid').textContent = '当前账号：' + who;
+      var how = $('deniedHow');
+      var emails = (payload && payload.adminEmails) || [];
+      if (emails.length) {
+        how.hidden = false;
+        how.textContent = '管理员白名单：' + emails.join('、') + '。需要提权就在服务器上改白名单（ADMIN_EMAILS 或 .admin-config.json），改完刷新本页。';
+      } else {
+        how.hidden = true;
+      }
     }
 
     function enterEditor() {
@@ -425,9 +417,13 @@
       $('topbarActions').hidden = false;
       $('saveBar').hidden = false;
       document.body.classList.add('has-save-bar');
-      $('whoami').textContent = '已登录：' + user.id;
+      $('whoami').textContent = '已登录：' + (user.email || user.id);
       renderProviders();
       renderStyles();
+      loadUsers();
+      if (cfg.adminByFallback) {
+        showSaveMsg('提示：尚未配置管理员白名单，当前按「首个注册账号」兜底。建议在 .admin-config.json 写入 emails 后重启服务。', 'warn');
+      }
     }
 
     /* ---------- 渲染：服务商 ---------- */
@@ -435,7 +431,7 @@
       var wrap = $('providerList');
       wrap.innerHTML = '';
       cfg.providers.forEach(function (p, idx) {
-        var hasKey = !!(p.hasKey || (providerKeys[p.id] || ''));
+        var hasKey = !!(providerKeys[p.id] || serverHasKey[p.id]);
         var card = document.createElement('div');
         card.className = 'entry-card';
         card.innerHTML =
@@ -471,6 +467,10 @@
                   providerKeys[v] = providerKeys[oldId];
                   delete providerKeys[oldId];
                 }
+                if (serverHasKey[oldId]) {
+                  serverHasKey[v] = true;
+                  delete serverHasKey[oldId];
+                }
                 cfg.styles.forEach(function (s) {
                   if (s.providerId === oldId) { s.providerId = v; }
                 });
@@ -484,7 +484,7 @@
         });
         card.querySelector('input[data-key]').addEventListener('input', function () {
           var v = this.value.trim();
-          if (v) { providerKeys[p.id] = v; p.hasKey = true; }
+          if (v) { providerKeys[p.id] = v; serverHasKey[p.id] = true; }
         });
         card.querySelector('[data-del]').addEventListener('click', function () {
           if (!window.confirm('确定删除服务商「' + (p.name || p.id) + '」？绑定它的风格将被解绑（需重新绑定后才能生成）。')) { return; }
@@ -658,7 +658,7 @@
         if (ids['p:' + p.id]) { showSaveMsg('服务商 id 重复：' + p.id, 'err'); return; }
         ids['p:' + p.id] = 1;
         providerIds[p.id] = 1;
-        if (!providerKeys[p.id]) { missingKey.push(p.name || p.id); }
+        if (!providerKeys[p.id] && !serverHasKey[p.id]) { missingKey.push(p.name || p.id); }
       }
       /* 服务商改名/删除后，风格可能仍指向失效 id —— 一次性列出所有问题风格 */
       var brokenStyles = [];
@@ -671,12 +671,10 @@
         return;
       }
       var payloadConfig = {
-        adminUserId: cfg.adminUserId,
         providers: cfg.providers.map(function (p) {
           return {
             id: p.id, name: p.name, baseUrl: p.baseUrl,
-            model: p.model, apiMode: p.apiMode,
-            hasKey: !!providerKeys[p.id]
+            model: p.model, apiMode: p.apiMode
           };
         }),
         styles: cfg.styles.map(function (s) {
@@ -690,28 +688,18 @@
           };
         })
       };
-      /* 服务商 Key 经数据库端 RPC 合并写入；accessKey/paySecret 由数据库保留，不经前端 */
+      /* 新填的 Key 与配置一次提交：服务端写 app_config + .ai-config.json（生成用 Key 的权威来源） */
       var payloadSecrets = { providerKeys: providerKeys };
       $('btnSaveAll').disabled = true;
       showSaveMsg('保存中…', '');
       saveAdminData(payloadConfig, payloadSecrets).then(function () {
-        /* 生成用 Key 的权威来源是服务器（.ai-config.json）；保存后同步过去（失败不阻断保存） */
-        var syncs = Object.keys(providerKeys).map(function (pid) {
-          return fetch('/api/admin/sync-key', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-access-key': accessKey },
-            body: JSON.stringify({ providerId: pid, apiKey: providerKeys[pid] })
-          }).then(function (r) { return r && r.ok; }).catch(function () { return false; });
-        });
-        return Promise.all(syncs).then(function (results) {
-          var syncOk = results.length === 0 || results.every(function (ok) { return ok; });
-          $('btnSaveAll').disabled = false;
-          var extra = '';
-          if (missingKey.length) { extra = '注意：以下服务商尚未配置 Key，对应风格暂无法生成：' + missingKey.join('、'); }
-          else if (!syncOk) { extra = '注意：服务器 Key 同步失败（生成暂不可用），请检查网络后重新保存'; }
-          else { extra = '前台刷新即可看到最新配置'; }
-          showSaveMsg('已保存。' + extra, missingKey.length || !syncOk ? 'warn' : 'ok');
-        });
+        $('btnSaveAll').disabled = false;
+        /* Key 已落库并从内存清空，重绘一次让「Key 已配置」状态与服务端一致 */
+        renderProviders();
+        var extra = missingKey.length
+          ? ('注意：以下服务商尚未配置 Key，对应风格暂无法生成：' + missingKey.join('、'))
+          : '前台刷新即可看到最新配置';
+        showSaveMsg('已保存。' + extra, missingKey.length ? 'warn' : 'ok');
       }).catch(function (err) {
         $('btnSaveAll').disabled = false;
         showSaveMsg((err && err.message) || '保存失败，请重试', 'err');
@@ -720,11 +708,9 @@
 
     $('btnReload').addEventListener('click', function () {
       if (!cfg) { return; }
+      providerKeys = {};
       fetchAdminData().then(function (data) {
         cfg = data;
-        providerKeys = data.providerKeys;
-        accessKey = data.accessKey || '';
-        paySecret = data.paySecret || '';
         renderProviders(); renderStyles();
         showSaveMsg('已重新加载', 'ok');
       }).catch(function (err) {
@@ -732,38 +718,46 @@
       });
     });
 
-    /* ---------- 积分与订单（云端 RPC，账本权威在数据库） ---------- */
-    function rpc(name, params) {
-      var c = getClient();
-      if (!c || !c.database || !c.database.rpc) { return Promise.reject(new Error('云服务组件未就绪')); }
-      return c.database.rpc(name, params || {}).then(function (res) {
-        if (res && res.error) {
-          var e = new Error(res.error.message || '操作失败');
-          e.rawMessage = e.message;
-          throw e;
-        }
-        return res ? res.data : null;
-      });
-    }
+    /* ---------- 积分与兑换码（账本权威在本机数据库，接口在 server/admin.js） ---------- */
     function walletErrText(err) {
-      var msg = String((err && err.rawMessage) || (err && err.message) || '操作失败');
+      var msg = String((err && err.message) || '操作失败');
       var map = {
         'NOT_ADMIN': '当前账号不是管理员',
+        'NO_USER': '没有这个用户（请确认邮箱与前台登录用的一致）',
         'INVALID_CREDITS': '积分数量不合法',
-        'INVALID_PARAMS': '参数不合法',
+        'BAD_JSON': '请求格式错误，请刷新重试',
         'CODE_GEN_FAILED': '兑换码生成失败（冲突过多），请重试'
       };
       for (var k in map) { if (msg.indexOf(k) !== -1) { return map[k]; } }
       return msg;
     }
+
+    /* 用户邮箱联想：只拉最近 50 个（含余额），用于核对充值对象 */
+    function loadUsers() {
+      adminApi('GET', '/api/admin/users?limit=50').then(function (data) {
+        var rows = (data && data.data) || [];
+        var list = $('userList');
+        list.innerHTML = '';
+        rows.forEach(function (u) {
+          var opt = document.createElement('option');
+          opt.value = u.email;
+          opt.label = u.email + '（余额 ' + u.balance + '）';
+          list.appendChild(opt);
+        });
+        $('userListHint').textContent = rows.length
+          ? ('最近 ' + rows.length + ' 个账号，输入框里可直接选；余额在候选里')
+          : '暂无注册用户';
+      }).catch(function () { /* 联想失败不影响充值 */ });
+    }
     $('btnGrant').addEventListener('click', function () {
-      var uid = $('grantUid').value.trim();
+      var email = $('grantEmail').value.trim();
       var credits = parseInt($('grantCredits').value, 10);
-      if (!uid || !credits || credits <= 0) { $('grantMsg').textContent = '请填写用户 ID 与积分数量'; return; }
+      if (!email || !credits || credits <= 0) { $('grantMsg').textContent = '请填写用户邮箱与积分数量'; return; }
       $('btnGrant').disabled = true;
-      rpc('wallet_grant', { p_user: uid, p_credits: credits, p_note: $('grantNote').value.trim() })
-        .then(function (balance) {
-          $('grantMsg').textContent = '充值成功，该用户当前余额 ' + balance + ' 积分';
+      adminApi('POST', '/api/admin/grant', { email: email, credits: credits, note: $('grantNote').value.trim() })
+        .then(function (data) {
+          $('grantMsg').textContent = '充值成功，' + data.email + ' 当前余额 ' + data.balance + ' 积分';
+          loadUsers();
         })
         .catch(function (err) { $('grantMsg').textContent = walletErrText(err); })
         .then(function () { $('btnGrant').disabled = false; });
@@ -773,14 +767,13 @@
       var count = parseInt($('genCount').value, 10);
       if (!credits || credits <= 0 || !count || count <= 0) { $('genMsg').textContent = '请填写面值与张数'; return; }
       $('btnGenCodes').disabled = true;
-      var batch = 'B' + Date.now().toString(36).toUpperCase();
-      rpc('redeem_generate', { p_credits: credits, p_count: count, p_batch: batch })
-        .then(function (rows) {
-          var codes = (rows || []).map(function (r) { return r.code; });
+      adminApi('POST', '/api/admin/redeem', { credits: credits, count: count })
+        .then(function (data) {
+          var codes = (data && data.codes) || [];
           $('genResult').value = codes.join('\n');
           $('genResult').hidden = false;
           $('btnCopyCodes').hidden = false;
-          $('genMsg').textContent = '已生成 ' + codes.length + ' 张面值 ' + credits + ' 积分的兑换码（批次 ' + batch + '）';
+          $('genMsg').textContent = '已生成 ' + codes.length + ' 张面值 ' + credits + ' 积分的兑换码（批次 ' + (data.batch || '-') + '）';
         })
         .catch(function (err) { $('genMsg').textContent = walletErrText(err); })
         .then(function () { $('btnGenCodes').disabled = false; });
@@ -793,57 +786,6 @@
           $('genMsg').textContent = '已复制到剪贴板';
         }).catch(function () {});
       }
-    });
-    $('btnSyncPay').addEventListener('click', function () {
-      if (!accessKey) { $('payOrderList').innerHTML = '<p class="hint">服务器访问密钥未配置（app_secrets.accessKey）</p>'; return; }
-      $('btnSyncPay').disabled = true;
-      fetch('/api/pay/pending', { headers: { 'x-access-key': accessKey } })
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          var list = (data && data.orders) || [];
-          var paid = list.filter(function (o) { return o.status === 'paid'; });
-          if (!paid.length) {
-            $('payOrderList').innerHTML = '<p class="hint">暂无待同步的已支付订单</p>';
-            return;
-          }
-          $('payOrderList').innerHTML = '';
-          paid.forEach(function (o) {
-            var row = document.createElement('div');
-            row.className = 'entry-card';
-            row.style.marginBottom = '8px';
-            var when = o.paidAt ? new Date(o.paidAt).toLocaleString() : '-';
-            row.innerHTML =
-              '<div class="entry-head"><h4>' + esc(o.orderNo) + '</h4>' +
-              '<span class="entry-sub">' + esc(o.credits) + ' 积分 · ' + esc((o.amountCents / 100).toFixed(2)) + ' 元 · ' + esc(when) + '</span></div>' +
-              '<p class="panel-desc">用户：' + esc(o.userId) + '</p>';
-            var btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'btn primary small';
-            btn.textContent = '入账';
-            btn.addEventListener('click', function () {
-              btn.disabled = true;
-              rpc('wallet_pay_credit', { p_order_no: o.orderNo, p_user: o.userId, p_credits: o.credits })
-                .then(function () {
-                  btn.textContent = '已入账';
-                  btn.className = 'btn ghost small';
-                })
-                .catch(function (err) {
-                  btn.textContent = '入账失败';
-                  btn.disabled = false;
-                  var p = document.createElement('p');
-                  p.className = 'hint';
-                  p.textContent = walletErrText(err);
-                  row.appendChild(p);
-                });
-            });
-            row.appendChild(btn);
-            $('payOrderList').appendChild(row);
-          });
-        })
-        .catch(function () {
-          $('payOrderList').innerHTML = '<p class="hint">同步失败：无法连接支付服务（服务器未就绪？）</p>';
-        })
-        .then(function () { $('btnSyncPay').disabled = false; });
     });
 
     function showSaveMsg(msg, cls) {
@@ -879,12 +821,13 @@
     });
     $('btnSignOut').addEventListener('click', function () {
       var c = getClient();
-      user = null; cfg = null; providerKeys = {};
+      user = null; cfg = null; providerKeys = {}; serverHasKey = {};
       $('adminMain').hidden = true;
       $('deniedPanel').hidden = true;
       $('gatePanel').hidden = false;
       $('topbarActions').hidden = true;
       $('saveBar').hidden = true;
+      $('gateCode').value = '';
       document.body.classList.remove('has-save-bar');
       showMsg('已退出登录');
       if (c && c.auth.signOut) { c.auth.signOut().catch(function () {}); }
@@ -895,13 +838,15 @@
     (function startup() {
       var c = getClient();
       if (!c) {
-        showMsg('云服务组件加载失败（可能处于内置预览面板或网络受限），请刷新或在新标签页打开', 'err');
+        showMsg('登录组件加载失败（可能处于内置预览面板或网络受限），请刷新或在新标签页打开', 'err');
         return;
       }
       c.auth.getSession().then(function (res) {
         var session = res && res.data ? res.data : null;
         if (session && session.user) { boot(session.user); }
-      }).catch(function () { /* 未登录，停留在登录页 */ });
+      }).catch(function (err) {
+        showMsg('会话检查失败：' + ((err && err.message) || '请刷新重试'), 'err');
+      });
     })();
   })();
   </script>

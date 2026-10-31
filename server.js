@@ -40,8 +40,10 @@ const MAX_BODY = 25 * 1024 * 1024;
 const UPSTREAM_TIMEOUT = 300000;
 const BEAT_INTERVAL = 2000;
 
-const AI_CONFIG_FILE = path.join(ROOT, '.ai-config.json');
-const PAY_CONFIG_FILE = path.join(ROOT, '.pay-config.json');
+/* 密钥文件路径可按环境变量覆盖：本地起测试服务时应指向临时目录，
+   否则会写到仓库里真实的 .ai-config.json（踩过一次，Key 被测试值覆盖） */
+const AI_CONFIG_FILE = process.env.AI_CONFIG_FILE || path.join(ROOT, '.ai-config.json');
+const PAY_CONFIG_FILE = process.env.PAY_CONFIG_FILE || path.join(ROOT, '.pay-config.json');
 const PAY_STATE_FILE = path.join(ROOT, '.pay-state.json');
 
 /* 自建云替代（2026-10-31）：登录/账本/生成单/文件全部落到本机 SQLite + 磁盘。
@@ -53,6 +55,13 @@ const localCloud = require('./server/local-cloud').createLocalCloud({
   log: function (msg) { console.warn('[rpc] ' + msg); }
 });
 const localApi = require('./server/api');
+const localAdmin = require('./server/admin');
+/* 管理后台专用路径：会话 + 管理员邮箱白名单（不走 x-access-key）。
+   只列确切路径，其余 /api/admin/*（sync-key、orders/health）仍由下面的既有路由处理。 */
+const ADMIN_PATHS = [
+  '/api/admin/bootstrap', '/api/admin/config', '/api/admin/grant',
+  '/api/admin/redeem', '/api/admin/users'
+];
 
 /* 生成单（P3）：一次生成 = 一单，先建单扣费，成功/失败必须结算。
  * 单据与退款在本地库同一事务内完成，且幂等。 */
@@ -1139,6 +1148,15 @@ function proxyCloud(req, res) {
 const server = http.createServer((req, res) => {
   const pathOnly = req.url ? req.url.split('?')[0] : '';
   const fullUrl = new URL(req.url || '/', 'http://localhost');
+
+  /* 管理后台：会话身份 + 管理员邮箱白名单（见 server/admin.js） */
+  if (ADMIN_PATHS.indexOf(pathOnly) !== -1) {
+    localAdmin.handle(req, res, pathOnly, fullUrl).catch((e) => {
+      console.warn('[admin] ' + ((e && e.message) || e));
+      try { res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' }); res.end('{"error":{"code":"INTERNAL"}}'); } catch (_) {}
+    });
+    return;
+  }
 
   /* 自建服务（登录 / 账本 / 存储 / RPC）：取代 /.cloud 云端依赖 */
   if (pathOnly.indexOf('/api/auth/') === 0 ||

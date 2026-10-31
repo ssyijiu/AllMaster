@@ -3,6 +3,7 @@
 # 用法：
 #   sudo bash deploy/install.sh                        # 默认 dotbeads.com（广州生产机）
 #   sudo DOMAIN=demo.example.com bash deploy/install.sh  # 雅加达等第二台机器，传自己的域名
+#   sudo ADMIN_EMAILS=a@x.com,b@x.com bash deploy/install.sh  # 顺带写后台管理员白名单
 # 前置：域名已解析到本机公网 IP。中国大陆机房还需备案通过（否则 80/443 被云厂商拦截）；境外机房无此限制。
 set -euo pipefail
 
@@ -10,6 +11,7 @@ DOMAIN="${DOMAIN:-dotbeads.com}"
 APP_DIR="${APP_DIR:-/opt/allmaster}"
 APP_USER="${APP_USER:-allmaster}"
 APP_PORT="${APP_PORT:-8080}"
+ADMIN_EMAILS="${ADMIN_EMAILS:-}"
 
 echo "==> 0/8 小内存机型补 swap（2G 以内且无 swap 时创建 2G，防 OOM）"
 MEM_MB=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo)
@@ -82,6 +84,16 @@ if [ -f "$APP_DIR/deploy/allmaster.service" ]; then
     echo "  PUBLIC_ORIGIN=https://$DOMAIN"
   else
     echo "  ⚠ 未传 DOMAIN，PUBLIC_ORIGIN 未设置（支付回调用 Host 头兜底）"
+  fi
+  # 管理员邮箱白名单：/admin.html 靠它判定管理员身份（server/admin.js）。
+  # 不配时兜底为「最早注册的账号」——迁移期够用，但库里只要有个更早的测试账号，
+  # 兜底就会指到那个账号上，所以生产必须显式配。
+  if [ -n "$ADMIN_EMAILS" ]; then
+    sed -i "/^Environment=ADMIN_EMAILS=/d" /etc/systemd/system/allmaster.service
+    echo "Environment=ADMIN_EMAILS=$ADMIN_EMAILS" >> /etc/systemd/system/allmaster.service
+    echo "  ADMIN_EMAILS=$ADMIN_EMAILS"
+  else
+    echo "  ⚠ 未传 ADMIN_EMAILS：后台管理员兜底为「最早注册的账号」"
   fi
   systemctl daemon-reload
   if [ "$HAVE_CODE" = "1" ]; then
