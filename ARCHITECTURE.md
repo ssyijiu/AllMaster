@@ -35,6 +35,44 @@
 - 邮件通道：`.mail-config.json`（`smtp` 465 或 `resend` HTTP）；**未配置时验证码只写 `$DATA_DIR/outbox/`，用户收不到**
 - 回滚：`LEGACY_CLOUD=1` 可让 `/.cloud/*` 反代重新生效（云服务恢复时用于对账，平时不要开）
 
+### 0.1 过渡架构：雅加达反代 —— 临时设施，备案通过后拆除
+
+**决策（2026-10-31，用户拍板）**：数据库继续放广州，不搬到境外；
+`dotbeads.online` 在备案期通过反代连广州的库；**备案通过后下掉反代**。
+
+```
+用户浏览器 ──①──> 雅加达 163.7.10.124 (dotbeads.online)   静态页面 / JS / CSS，本机出
+                        │
+                        └──②──> 广州 123.207.22.47:8080     /api/* + /files/*
+                                 SQLite 主库 + 用户文件（全网唯一一份）
+```
+
+- **为什么不能两台各跑一套库**：SQLite 是磁盘文件，两台各一份就是两个平行世界 ——
+  在 `dotbeads.online` 注册的账号，去 IP 站看不到自己的积分和作品。
+- **为什么反代要改写 Host**（`deploy/Caddyfile-jakarta` 的 `header_up Host`）：
+  广州是境内机器且域名未备案，腾讯云对「Host 里带域名」的入站一律 302 到
+  `dnspod.qcloud.com/static/webblock.html`（**8080 端口同样拦**，与端口无关）。
+  改写成 `IP:端口` 才能过；这不是正常做法，是备案前的临时绕过。
+- **连带约束**（改 Host 带来的，已处理但不要忘）：
+  1. 支付回调不能用 Host 头拼 → 必须用 `PUBLIC_ORIGIN`（广州 systemd drop-in）；
+  2. 真实客户端 IP 靠 `X-Forwarded-For`，而 `clientIp()` **只在对端 ∈ `TRUSTED_PROXIES`** 时才信，
+     否则公网伪造该头就能绕开发码限流。
+- **铁律**：这是过渡设施，**不要在反代这一层加任何功能**（不加路由、不加缓存、不加限流、
+  不加鉴权）。所有能力都应在广州的应用里实现，否则拆除时会被一起带走。
+
+**备案通过那天的拆除清单**（一次做完，跑完即删本节）：
+
+1. 广州装 Caddy（`deploy/Caddyfile` 已写好）+ Let's Encrypt 证书，80/443 开站
+2. `PUBLIC_ORIGIN` 改成 https 正式域名；`deploy/install.sh` 按 `DOMAIN` 自动写入
+3. 虎皮椒后台把回调域名换成正式域名
+4. `dotbeads.online` 改为 **301 → 正式域名**（不要留空壳站）；
+   注意：**发信不受影响** —— Resend 的发件域名是 `dotbeads.online`，
+   只要 DNS 记录（DKIM/SPF）还在，站点 301 后邮件照发；
+   若要一并换成 `.com`，需在 Resend 重新验证域名并改 `.mail-config.json` 的 `MAIL_FROM`
+5. 删除 `deploy/Caddyfile-jakarta` 与雅加达的 Caddy 站点；雅加达可下线或降级为纯静态镜像
+6. 从 `deploy/install.sh` 里去掉「按域名选分流 Caddyfile」的分支
+7. 页脚加备案号并链接 `beian.miit.gov.cn`
+
 ---
 
 ## 1. 项目概览
