@@ -165,6 +165,17 @@ restoreAuth();                            // 最后才执行入口（→ continu
 | `GET /api/admin/orders/health?hours=` | 生成单运维快照（header `x-access-key`）；聚合数据来自云端 `order_health()`，云端内部再比一次 accessKey |
 | 密钥下发 | `app_secrets` 表经 DB 端 RPC 管理，**密钥永不进前端**（admin 保存走 base64 参数化 + md5 校验） |
 
+**⚠️ 静态资源缓存与版本戳（2026-11-01 上传失效事故）**：`serveStatic` 对带 `?v=` 的资源下发
+`Cache-Control: public, max-age=31536000, immutable`，HTML 是 `no-cache`。**同一个 `?v=` 值浏览器一年不回源**，
+所以「文件内容变了但版本号没变」= 回访用户永远跑旧 JS。11-01 的事故就是这样：脱云改造改了
+`apps/pixelart/app.js`（`loginPhone` → `loginEmail`）与 `shared/local-cloud.js`，版本号都还是 `20261031a`，
+旧 app.js 找不到 `loginPhone` 抛 null → `continueNormalStartup` 中断 → `bindUpload()` 从未执行 →
+用户看到「点击和拖拽上传都没反应」。
+现在**不用再手写版本号**：`deploy/push.sh` 会在打包前把快照解到 `/tmp/allmaster-build`，跑
+`deploy/stamp-assets.js` 按**文件内容 sha1 前 8 位**重写所有 HTML 里的 `?v=`（内容不变则 v 不变，缓存照旧命中）。
+仓库里 HTML 的 `?v=` 只是本地开发占位，线上以打戳结果为准——所以线上 HTML 的 v 看起来像 `7bd78d78` 是正常的。
+改 `server.js` 静态缓存策略、或新增带 `?v=` 的资源时，记得同步检查这个脚本的正则是否还匹配。
+
 **生成单（P3）与巡检**：所有扣积分生成必须走 `建单 → 扣费 → 成功/失败结算`（`server/orders.js`，产品代码不得自己调 `wallet_refund`）。服务端每 30 分钟把健康快照写入 `/opt/allmaster/.health/latest.json`（隐藏目录，静态服务 403；已 gitignore），超阈值同时打 `[health] WARN` 到 journalctl；每日巡视 automation 直接 ssh 读这个文件，无需把 accessKey 写进任何脚本。
 
 **⚠️ 发布与密钥覆盖（重要教训，2026-10-26 手机 401 事故）**：deploy 工具全量上传本地目录，

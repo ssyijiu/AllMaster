@@ -31,7 +31,15 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 SUBJECT="$(git log -1 --format=%s HEAD | cut -c1-64)"
 echo "==> 1/5 从 $BRANCH@$COMMIT 生成发布包（仅已提交内容）"
 echo "    $SUBJECT"
-git archive --format=tar.gz -o /tmp/allmaster.tgz HEAD
+# 先解到临时目录，按内容哈希给 HTML 里的 ?v= 重新打戳，再打包。
+# 为什么必须打戳：带 ?v= 的静态资源是 max-age=31536000, immutable，URL 不变就永远命中旧缓存；
+# 手写版本号很容易漏（2026-11-01 因此出过「上传完全没反应」的线上故障）。
+BUILD_DIR="${BUILD_DIR:-/tmp/allmaster-build}"
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR"
+git archive --format=tar HEAD | tar -x -C "$BUILD_DIR"
+node deploy/stamp-assets.js "$BUILD_DIR"
+COPYFILE_DISABLE=1 tar -czf /tmp/allmaster.tgz -C "$BUILD_DIR" .
 ls -lh /tmp/allmaster.tgz | awk '{print "    包大小:", $5}'
 
 echo "==> 2/5 上传到 $HOST"
