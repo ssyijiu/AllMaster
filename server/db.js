@@ -95,13 +95,15 @@ CREATE INDEX IF NOT EXISTS idx_orders_user   ON orders(user_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status, created_at);
 
 CREATE TABLE IF NOT EXISTS redeem_codes (
-  code       TEXT PRIMARY KEY,
-  credits    INTEGER NOT NULL,
-  used_by    TEXT,
-  used_at    INTEGER,
-  batch      TEXT,
-  created_at INTEGER NOT NULL,
-  expires_at INTEGER                   -- 到期时间(ms)；NULL = 永久（生成时显式选择才允许）
+  code          TEXT PRIMARY KEY,
+  credits       INTEGER NOT NULL,
+  used_by       TEXT,
+  used_at       INTEGER,
+  batch         TEXT,
+  created_at    INTEGER NOT NULL,
+  expires_at    INTEGER,              -- 到期时间(ms)；NULL = 永久（生成时显式选择才允许）
+  new_user_only INTEGER NOT NULL DEFAULT 0,  -- 1 = 仅限新用户（此前无任何积分流水）
+  per_user_limit INTEGER NOT NULL DEFAULT 1  -- 同一批次每人最多领几张；0 = 不限
 );
 
 /* 风格/服务商配置（原云表 app_config，公开只读 JSON） */
@@ -155,6 +157,19 @@ const MIGRATIONS = {
       d.exec('ALTER TABLE redeem_codes ADD COLUMN expires_at INTEGER');
     }
     d.exec('UPDATE redeem_codes SET expires_at = created_at + 30*24*3600*1000 WHERE expires_at IS NULL');
+  },
+  /* v3：兑换码加批次规则（2026-11-01）。解决「一批码被一个人领完」——发一批给群里，
+   * 老用户各领一张照样吃完预算，新用户一个没来。
+   * 存量码统一按「不限新老、每人每批 1 张」回填，与升级前行为一致（此前一张码一条
+   * 链接、天然一人一张），不会因为迁移突然拒掉老用户。 */
+  3: (d) => {
+    const cols = d.prepare('PRAGMA table_info(redeem_codes)').all().map((c) => c.name);
+    if (cols.indexOf('new_user_only') === -1) {
+      d.exec('ALTER TABLE redeem_codes ADD COLUMN new_user_only INTEGER NOT NULL DEFAULT 0');
+    }
+    if (cols.indexOf('per_user_limit') === -1) {
+      d.exec('ALTER TABLE redeem_codes ADD COLUMN per_user_limit INTEGER NOT NULL DEFAULT 1');
+    }
   }
 };
 

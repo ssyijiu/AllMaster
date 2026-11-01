@@ -9,6 +9,7 @@
  * 用法（在服务器上）：
  *   node server/admin-cli.js code 10 20            # 生成 20 个 10 积分的兑换码（默认 30 天有效）
  *   node server/admin-cli.js code 10 5 b --days 0  # 生成永久码；--days N 指定有效期天数
+ *   node server/admin-cli.js code 10 20 launch --new-only --per-user 1  # 拉新批次：仅新用户、每人 1 张
  *   node server/admin-cli.js codes [状态]           # 列出兑换码（unused/used/expired/all，默认 unused）
  *   node server/admin-cli.js grant a@b.com 5 备注   # 给某邮箱充值 5 积分
  *   node server/admin-cli.js orders 24             # 最近 24 小时的生成单
@@ -59,26 +60,37 @@ function help() {
 }
 
 function cmdCode() {
-  /* 用法：code <积分> [数量] [批次] [--days N]；--days 0 = 永久，默认 30 天 */
+  /* 用法：code <积分> [数量] [批次] [--days N] [--per-user N] [--new-only]
+     --days 0 = 永久（默认 30 天）；--per-user 0 = 不限（默认 1）；--new-only 仅限新用户 */
   const flags = {};
   const rest = [];
-  for (const a of argv.slice(1)) {
-    if (a.indexOf('--days=') === 0) { flags.days = Number(a.slice(7)); }
-    else if (a === '--days') { flags.pending = true; }
-    else if (flags.pending) { flags.days = Number(a); flags.pending = false; }
-    else { rest.push(a); }
+  const args = argv.slice(1);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--new-only') { flags.newOnly = true; continue; }
+    const eq = a.indexOf('=');
+    const name = eq > 0 ? a.slice(0, eq) : a;
+    if (name === '--days' || name === '--per-user') {
+      const raw = eq > 0 ? a.slice(eq + 1) : args[++i];
+      flags[name === '--days' ? 'days' : 'perUser'] = Number(raw);
+      continue;
+    }
+    rest.push(a);
   }
   const credits = Number(rest[0]);
   const count = Math.max(1, Math.min(Number(rest[1]) || 1, 500));
   const batch = rest[2] || 'cli-' + new Date().toISOString().slice(0, 10);
   const days = flags.days === undefined ? 30 : Math.floor(flags.days);
+  const perUser = flags.perUser === undefined ? 1 : Math.floor(flags.perUser);
+  const newOnly = !!flags.newOnly;
   if (Number.isNaN(days) || days < 0 || days > 3650) { throw new Error('有效期应为 0（永久）或 1~3650 天'); }
+  if (Number.isNaN(perUser) || perUser < 0 || perUser > 100) { throw new Error('每人限领应为 0（不限）或 1~100'); }
   if (!credits || credits <= 0) { throw new Error('积分必须是正整数'); }
   const now = dbmod.nowMs();
   const expiresAt = days > 0 ? now + days * 24 * 3600 * 1000 : null;
   const d = dbmod.db;
   const codes = [];
-  const stmt = d.prepare('INSERT INTO redeem_codes (code, credits, batch, created_at, expires_at) VALUES (?, ?, ?, ?, ?)');
+  const stmt = d.prepare('INSERT INTO redeem_codes (code, credits, batch, created_at, expires_at, new_user_only, per_user_limit) VALUES (?, ?, ?, ?, ?, ?, ?)');
   for (let i = 0; i < count; i++) {
     let code;
     for (let t = 0; t < 8; t++) {
@@ -87,10 +99,11 @@ function cmdCode() {
       code = null;
     }
     if (!code) { throw new Error('生成唯一码失败，请重试'); }
-    stmt.run(code, credits, batch, now, expiresAt);
+    stmt.run(code, credits, batch, now, expiresAt, newOnly ? 1 : 0, perUser);
     codes.push(code);
   }
-  console.log('批次 ' + batch + '，每码 ' + credits + ' 积分，共 ' + codes.length + ' 个，有效期 ' + (days > 0 ? days + ' 天（至 ' + fmtTime(expiresAt) + '）' : '永久') + '：\n');
+  const ruleText = (newOnly ? '仅限新用户' : '不限新老') + '，每人每批' + (perUser > 0 ? '限领 ' + perUser + ' 张' : '不限');
+  console.log('批次 ' + batch + '，每码 ' + credits + ' 积分，共 ' + codes.length + ' 个，有效期 ' + (days > 0 ? days + ' 天（至 ' + fmtTime(expiresAt) + '）' : '永久') + '；规则：' + ruleText + '\n');
   codes.forEach((c) => console.log('  ' + c));
   console.log('\n（兑换入口：站点首页钱包弹窗 → 兑换码）');
 }
@@ -105,7 +118,7 @@ function cmdCodes() {
   else if (status === 'expired') { where = 'WHERE used_by IS NULL AND expires_at IS NOT NULL AND expires_at < ?'; args.push(now); }
   else if (status !== 'all') { throw new Error('状态只支持 unused / used / expired / all'); }
   const rows = dbmod.db.prepare(
-    'SELECT code, credits, batch, created_at, expires_at, used_by, used_at FROM redeem_codes ' +
+    'SELECT code, credits, batch, created_at, expires_at, used_by, used_at, new_user_only, per_user_limit FROM redeem_codes ' +
     where + ' ORDER BY created_at DESC LIMIT 200'
   ).all(...args);
   if (!rows.length) { return console.log('没有符合条件的兑换码'); }
@@ -114,7 +127,9 @@ function cmdCodes() {
     const st = r.used_by ? '已用 ' + fmtTime(r.used_at) + ' ' + r.used_by
       : (r.expires_at && r.expires_at < now ? '已过期'
         : (r.expires_at ? '未用，' + fmtTime(r.expires_at) + ' 前有效' : '未用，永久'));
-    console.log('  ' + r.code + '  ' + r.credits + ' 积分  批次 ' + (r.batch || '-') + '  ' + st);
+    const rule = (Number(r.new_user_only) === 1 ? '仅新用户' : '不限新老') +
+      (Number(r.per_user_limit) > 0 ? '·每人' + r.per_user_limit + '张' : '·不限量');
+    console.log('  ' + r.code + '  ' + r.credits + ' 积分  批次 ' + (r.batch || '-') + '  [' + rule + ']  ' + st);
   });
 }
 

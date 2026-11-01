@@ -126,18 +126,53 @@ function redeem(userId, code) {
     throw fail('CODE_INVALID', '兑换码不含数字 0 和字母 O，请检查是否认混了字形');
   }
   return dbmod.tx((d) => {
-    const row = d.prepare('SELECT code, credits, used_by, expires_at FROM redeem_codes WHERE code = ?').get(c);
+    const row = d.prepare('SELECT code, credits, used_by, expires_at, batch, new_user_only, per_user_limit FROM redeem_codes WHERE code = ?').get(c);
     if (!row) { throw fail('CODE_INVALID', '兑换码无效'); }
     if (row.used_by) {
       /* 同一个人再次兑换自己已用掉的码：不报错、也不重复入账。
          典型场景是兑换链接被重复点开（收藏/群聊里点两次），
-         报「已被使用」会让人以为没到账，按 alreadyOwned 返回更贴合直觉。 */
+         报「已被使用」会让人以为没到账，按 alreadyOwned 返回更贴合直觉。
+         注意这一步排在批次规则之前：已经领到手的码不该再被规则拦一次。 */
       if (row.used_by === userId) {
         return { balance: balance(userId), credits: 0, code: c, alreadyOwned: true };
       }
       throw fail('CODE_INVALID', '兑换码已被使用');
     }
     if (row.expires_at && row.expires_at < dbmod.nowMs()) { throw fail('CODE_EXPIRED', '兑换码已过期'); }
+
+    /* ---- 批次规则（v3）：解决「一批码发到群里被一个人领完」----
+       规则跟着码走（生成时整批写入同一份规则），所以这里按当前码自己的配置判断。 */
+    const batch = row.batch ? String(row.batch) : '';
+    const perUserLimit = Number(row.per_user_limit);
+    if (batch && perUserLimit > 0) {
+      /* 同批次内该用户已领张数。按 used_by 计数而不是按流水：一个人领两张就是两行码。 */
+      const got = d.prepare('SELECT COUNT(*) AS n FROM redeem_codes WHERE batch = ? AND used_by = ?').get(batch, userId);
+      if ((got && Number(got.n)) >= perUserLimit) {
+        throw fail('CODE_BATCH_LIMIT',
+          perUserLimit === 1
+            ? '这批兑换码每人限领 1 张，你已经领过了'
+            : '这批兑换码每人限领 ' + perUserLimit + ' 张，你已经领满了');
+      }
+    }
+    if (Number(row.new_user_only) === 1) {
+      /* 「新用户」= 此前没有任何积分流水（没转过图 / 没充过值 / 没领过码）。
+         用流水判断而不是注册时间：注册了半年但一次没用过的账号本质仍是新用户，
+         而转过很多张图的老客，注册时间再"新"也不该算。
+
+         关键细节：同批次里自己领过的码**不算**「有流水」。
+         否则「仅新用户 + 每人 2 张」永远只能领 1 张——领完第一张他就不再是新用户了，
+         配置本身就自相矛盾。排除掉本批次的兑换记录，这个组合才有意义。 */
+      const seen = batch
+        ? d.prepare(
+          'SELECT 1 AS x FROM wallet_txns WHERE user_id = ? ' +
+          'AND NOT (kind = ? AND ref IN (SELECT code FROM redeem_codes WHERE batch = ?)) LIMIT 1'
+        ).get(userId, 'redeem', batch)
+        : d.prepare('SELECT 1 AS x FROM wallet_txns WHERE user_id = ? LIMIT 1').get(userId);
+      if (seen) {
+        throw fail('CODE_NEW_USER_ONLY', '这批兑换码是给新用户的见面礼，你的账号已有积分记录～可以直接用现有积分去转图');
+      }
+    }
+
     d.prepare('UPDATE redeem_codes SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL')
       .run(userId, dbmod.nowMs(), c);
     const again = d.prepare('SELECT used_by FROM redeem_codes WHERE code = ?').get(c);

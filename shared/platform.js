@@ -439,6 +439,8 @@
     var REDEEM_ERR_TEXT = {
       CODE_INVALID: '兑换码无效或已被使用',
       CODE_EXPIRED: '兑换码已过期',
+      CODE_BATCH_LIMIT: '这批兑换码每人限领 1 张，你已经领过了',
+      CODE_NEW_USER_ONLY: '这批兑换码是给新用户的见面礼，你的账号已有积分记录～可以直接用现有积分去转图',
       TOO_MANY: '兑换尝试太频繁，请稍后再试',
       AUTH_REQUIRED: '请先登录后再兑换',
       INSUFFICIENT_BALANCE: '积分不足'

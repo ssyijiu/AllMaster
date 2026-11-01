@@ -203,6 +203,14 @@
             <input class="text-input mono" id="genCount" type="number" min="1" max="500" value="10"/>
             <label class="field-label">有效期（天，0 = 永久；默认 30 天，到期未兑换自动作废）</label>
             <input class="text-input mono" id="genDays" type="number" min="0" max="3650" value="30"/>
+            <label class="field-label">这批码谁能领</label>
+            <label style="display:flex;align-items:center;gap:8px;margin:2px 0 6px;font-size:13px;cursor:pointer;">
+              <input type="checkbox" id="genNewOnly" style="width:16px;height:16px;cursor:pointer;"/>
+              <span>仅限新用户（此前没有任何积分流水的账号）</span>
+            </label>
+            <label class="field-label">每人每批限领（张，0 = 不限）</label>
+            <input class="text-input mono" id="genPerUser" type="number" min="0" max="100" value="1"/>
+            <p class="hint" id="genRuleHint"></p>
             <button class="btn primary small" id="btnGenCodes" type="button" style="margin-top:8px;">生成</button>
             <p class="hint" id="genMsg"></p>
             <textarea class="text-input mono" id="genResult" rows="5" hidden readonly></textarea>
@@ -880,14 +888,33 @@
         .catch(function (err) { $('grantMsg').textContent = walletErrText(err); })
         .then(function () { $('btnGrant').disabled = false; });
     });
+    /* 规则摘要：生成前让管理员一眼看到「这批码会怎么被限制」，避免发出去才发现配错 */
+    function renderGenRuleHint() {
+      var newOnly = $('genNewOnly').checked;
+      var limit = parseInt($('genPerUser').value, 10);
+      var text;
+      if (isNaN(limit) || limit < 0) { text = '每人限领请填 0（不限）或 1~100'; }
+      else if (!newOnly && limit === 0) { text = '⚠️ 不限新老、每人也不限量：谁拿到链接谁就能一直领，慎重'; }
+      else if (!newOnly) { text = '不限新老，每人最多领 ' + limit + ' 张'; }
+      else if (limit === 0) { text = '仅限新用户，每人可领多张'; }
+      else { text = '仅限新用户，每人最多领 ' + limit + ' 张'; }
+      $('genRuleHint').textContent = text;
+    }
+    $('genNewOnly').addEventListener('change', renderGenRuleHint);
+    $('genPerUser').addEventListener('input', renderGenRuleHint);
+    renderGenRuleHint();
+
     $('btnGenCodes').addEventListener('click', function () {
       var credits = parseInt($('genCredits').value, 10);
       var count = parseInt($('genCount').value, 10);
       var days = parseInt($('genDays').value, 10);
+      var perUser = parseInt($('genPerUser').value, 10);
+      var newOnly = $('genNewOnly').checked;
       if (!credits || credits <= 0 || !count || count <= 0) { $('genMsg').textContent = '请填写面值与张数'; return; }
       if (isNaN(days) || days < 0 || days > 3650) { $('genMsg').textContent = '有效期应为 0（永久）或 1~3650 天'; return; }
+      if (isNaN(perUser) || perUser < 0 || perUser > 100) { $('genMsg').textContent = '每人限领应为 0（不限）或 1~100'; return; }
       $('btnGenCodes').disabled = true;
-      adminApi('POST', '/api/admin/redeem', { credits: credits, count: count, expiresInDays: days })
+      adminApi('POST', '/api/admin/redeem', { credits: credits, count: count, expiresInDays: days, newUserOnly: newOnly, perUserLimit: perUser })
         .then(function (data) {
           var codes = (data && data.codes) || [];
           $('genResult').value = codes.join('\n');
@@ -895,8 +922,9 @@
           $('btnCopyCodes').hidden = false;
           $('btnCopyLinks').hidden = false;
           $('btnCopyLinks').textContent = '复制全部链接（' + codes.length + ' 条）';
+          var rule = (newOnly ? '仅限新用户' : '不限新老') + (perUser > 0 ? '，每人每批最多 ' + perUser + ' 张' : '，每人数量不限');
           $('genMsg').textContent = '已生成 ' + codes.length + ' 张面值 ' + credits + ' 积分的兑换码（批次 ' + (data.batch || '-') +
-            (days > 0 ? '，' + days + ' 天内有效' : '，永久有效') + '）';
+            (days > 0 ? '，' + days + ' 天内有效' : '，永久有效') + '；' + rule + '）';
           loadRedeemList();
         })
         .catch(function (err) { $('genMsg').textContent = walletErrText(err); })
@@ -1013,10 +1041,15 @@
           } else {
             $('redeemRows').innerHTML = rows.map(function (r) {
               var usedInfo = r.status === 'used' ? (r.usedBy || '—') + '<br>' + fmtTs(r.usedAt) : '—';
+              /* 批次规则挂在批次下面一行小字：不额外占一列，但发码前能一眼确认限得对不对 */
+              var ruleText = (r.newUserOnly ? '仅新用户' : '不限新老') +
+                (r.perUserLimit > 0 ? ' · 每人 ' + r.perUserLimit + ' 张' : ' · 不限量');
+              var batchCell = (r.batch || '—') +
+                '<br><span style="font-size:12px;color:#6B7280;">' + ruleText + '</span>';
               return '<tr>' +
                 '<td class="mono">' + r.code + '</td>' +
                 '<td>' + r.credits + '</td>' +
-                '<td>' + (r.batch || '—') + '</td>' +
+                '<td>' + batchCell + '</td>' +
                 '<td>' + fmtTs(r.createdAt) + '</td>' +
                 '<td>' + (r.expiresAt ? fmtTs(r.expiresAt) : '永久') + '</td>' +
                 '<td><span class="redeem-badge ' + r.status + '">' + (STATUS_TEXT[r.status] || r.status) + '</span></td>' +

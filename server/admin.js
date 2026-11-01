@@ -356,6 +356,13 @@ async function handleRedeem(req, res) {
     return sendJson(res, 400, { error: { code: 'INVALID_EXPIRY', message: '有效期应为 0（永久）或 1~3650 天' } });
   }
   if (credits <= 0) { return sendJson(res, 400, { error: { code: 'INVALID_CREDITS', message: '面值必须是正整数' } }); }
+  /* 批次规则：newUserOnly = 仅限此前无积分流水的新账号；perUserLimit = 同批每人最多领几张
+     （0 = 不限）。默认「不限新老 + 每人 1 张」，与升级前一致；拉新活动把 newUserOnly 打开。 */
+  const newUserOnly = body.newUserOnly === true || body.newUserOnly === 1 || body.newUserOnly === '1';
+  const perUserLimitRaw = body.perUserLimit === undefined || body.perUserLimit === '' ? 1 : Math.floor(Number(body.perUserLimit));
+  if (Number.isNaN(perUserLimitRaw) || perUserLimitRaw < 0 || perUserLimitRaw > 100) {
+    return sendJson(res, 400, { error: { code: 'INVALID_PER_USER_LIMIT', message: '每人限领应为 0（不限）或 1~100' } });
+  }
   const batch = cleanStr(body.batch, 40) || ('ADM' + Date.now().toString(36).toUpperCase());
   const now = dbmod.nowMs();
   const expiresAt = days > 0 ? now + days * 24 * 3600 * 1000 : null;
@@ -363,7 +370,7 @@ async function handleRedeem(req, res) {
   try {
     /* 一批码在一个事务里落库：要么全成，要么一张都不发 */
     dbmod.tx((d) => {
-      const stmt = d.prepare('INSERT INTO redeem_codes (code, credits, batch, created_at, expires_at) VALUES (?, ?, ?, ?, ?)');
+      const stmt = d.prepare('INSERT INTO redeem_codes (code, credits, batch, created_at, expires_at, new_user_only, per_user_limit) VALUES (?, ?, ?, ?, ?, ?, ?)');
       for (let i = 0; i < count; i++) {
         let code = '';
         for (let t = 0; t < 8; t++) {
@@ -371,14 +378,17 @@ async function handleRedeem(req, res) {
           if (!d.prepare('SELECT 1 FROM redeem_codes WHERE code = ?').get(candidate)) { code = candidate; break; }
         }
         if (!code) { throw new Error('CODE_GEN_FAILED'); }
-        stmt.run(code, credits, batch, now, expiresAt);
+        stmt.run(code, credits, batch, now, expiresAt, newUserOnly ? 1 : 0, perUserLimitRaw);
         codes.push(code);
       }
     });
   } catch (e) {
     return sendJson(res, 400, { error: { code: 'CODE_GEN_FAILED', message: '兑换码生成失败（冲突过多），请重试' } });
   }
-  return sendJson(res, 200, { ok: true, batch: batch, credits: credits, expiresInDays: days, expiresAt: expiresAt, codes: codes });
+  return sendJson(res, 200, {
+    ok: true, batch: batch, credits: credits, expiresInDays: days, expiresAt: expiresAt,
+    newUserOnly: newUserOnly, perUserLimit: perUserLimitRaw, codes: codes
+  });
 }
 
 /* 兑换码列表：状态筛选 + 批次筛选 + 分页 + 汇总。
@@ -408,7 +418,7 @@ function handleRedeemList(req, res, url) {
   const d = dbmod.db;
   const total = d.prepare('SELECT COUNT(*) AS c FROM redeem_codes ' + whereSql).get(...args).c;
   const rows = d.prepare(
-    'SELECT code, credits, batch, created_at, expires_at, used_by, used_at FROM redeem_codes ' +
+    'SELECT code, credits, batch, created_at, expires_at, used_by, used_at, new_user_only, per_user_limit FROM redeem_codes ' +
     whereSql + ' ORDER BY created_at DESC, code LIMIT ? OFFSET ?'
   ).all(...args, pageSize, (page - 1) * pageSize);
 
@@ -427,6 +437,8 @@ function handleRedeemList(req, res, url) {
       code: r.code,
       credits: r.credits,
       batch: r.batch || '',
+      newUserOnly: Number(r.new_user_only) === 1,
+      perUserLimit: Number(r.per_user_limit) || 0,
       createdAt: r.created_at,
       expiresAt: r.expires_at,
       usedBy: r.used_by || '',
