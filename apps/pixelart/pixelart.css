@@ -266,9 +266,12 @@
       display: flex; align-items: center; justify-content: center;
       font-size: 24px; font-weight: 700; color: var(--muted);
     }
-    .group-hint {
-      margin: var(--space-2) 0 0;
-      font-size: var(--text-xs); color: var(--meta); line-height: 1.6;
+    /* 画风说明行：选中画风的生成效果说明，位置在「选择画风」标题下、网格上方
+       大小/字重/颜色与「想调整的地方（可选）」的 .field-label（base.css）保持一致 */
+    .style-desc {
+      margin: 0 0 var(--space-3);
+      font-size: var(--text-sm); font-weight: var(--weight-emphasis);
+      color: var(--fg-2); line-height: 1.6;
     }
 
     /* ===== 备注（单行输入） ===== */
