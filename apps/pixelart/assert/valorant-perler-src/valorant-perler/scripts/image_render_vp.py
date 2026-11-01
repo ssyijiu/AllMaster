@@ -59,6 +59,7 @@ DEFAULT_OUTPUT_FORMAT = "png"
 POLL_INTERVAL = 5
 POLL_TIMEOUT = 600
 POLL_MAX_MISSES = 5   # 轮询连续失败（连不上 / 5xx）多少次才放弃；查询是幂等的，单次抖动不整单失败
+RETRY_BACKOFF = 2.0   # 提交/取图的连接层重试间隔（秒）；只重连接异常与 502/503
 
 
 def fail(message: str) -> None:
@@ -186,11 +187,35 @@ def service_error(resp: requests.Response) -> str:
     return json.dumps(body, ensure_ascii=False)[:2000]
 
 
-def request(method: str, url: str, step: str, **kwargs) -> requests.Response:
-    try:
-        return requests.request(method, url, **kwargs)
-    except requests.RequestException as exc:
-        fail(f"{step}：连不上渲染服务 {url}（{exc.__class__.__name__}: {exc}）")
+def request(method: str, url: str, step: str, retry: int = 1, **kwargs) -> requests.Response:
+    """发一次请求；retry 是连接层异常与 502/503 的额外重试次数（项目重试纪律：只重这两类，
+    上游明确拒绝的错误不重试，免得白烧额度）。
+
+    上传图片时必须用 files=lambda: {...} 而不是已打开的句柄：句柄被第一次发送读完后，
+    重试再传就是 0 字节（历史事故：HTTP 400 file_zero_bytes，见 image_render.py 同名修复）。
+    """
+    attempt = 0
+    while True:
+        params = dict(kwargs)
+        files = params.get("files")
+        if callable(files):
+            params["files"] = files()
+        try:
+            resp = requests.request(method, url, **params)
+        except requests.RequestException as exc:
+            if attempt < retry:
+                attempt += 1
+                print(f"[WARN] {step}：连接异常（{exc.__class__.__name__}），"
+                      f"{RETRY_BACKOFF:.0f}s 后重试", flush=True)
+                time.sleep(RETRY_BACKOFF)
+                continue
+            fail(f"{step}：连不上渲染服务 {url}（{exc.__class__.__name__}: {exc}）")
+        if resp.status_code in (502, 503) and attempt < retry:
+            attempt += 1
+            print(f"[WARN] {step}：HTTP {resp.status_code}，{RETRY_BACKOFF:.0f}s 后重试", flush=True)
+            time.sleep(RETRY_BACKOFF)
+            continue
+        return resp
 
 
 def health() -> None:
@@ -219,9 +244,10 @@ def submit(base: str, image: Path | None, form: dict, headers: dict) -> dict:
         resp = request("POST", f"{base}/render/submit", "提交", headers=headers, json=form, timeout=180)
     else:
         mime = mimetypes.guess_type(image.name)[0] or "application/octet-stream"
-        with image.open("rb") as fh:
-            resp = request("POST", f"{base}/render/submit", "提交", headers=headers,
-                           data=form, files={"image": (image.name, fh, mime)}, timeout=180)
+        # 先读进内存再上传：重试时不必重开文件，字节数也不会因为句柄耗尽变成 0
+        raw = image.read_bytes()
+        resp = request("POST", f"{base}/render/submit", "提交", headers=headers,
+                       data=form, files=lambda: {"image": (image.name, raw, mime)}, timeout=180)
     if resp.status_code != 200:
         fail(f"提交：HTTP {resp.status_code}，{service_error(resp)}")
     body = resp.json()

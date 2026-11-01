@@ -43,7 +43,13 @@ const DEFAULT_TASK_ROOT = process.env.PIXELART_TASK_ROOT || path.join(ROOT, '.pi
 const SAMPLE_DIR = process.env.PIXELART_SAMPLE_DIR || path.join(ROOT, '.pixelart-samples');
 const TRACE_LOG = process.env.PIXELART_CLEANUP_TRACE || path.join(ROOT, '.pixelart-cleanup-trace.jsonl');
 try { fs.mkdirSync(SAMPLE_DIR, { recursive: true }); } catch (_) {}
-const GEN_TIMEOUT_MS = 8 * 60 * 1000;   // 生图+切格上限（实测约 1 分钟）
+/* 生图+切格上限。必须大于 python 侧最坏预算，否则引擎先 SIGKILL，用户看到的是「进程被中止」，
+   而不是 python 自己讲得清的原因（实测正常约 1 分钟，这里只兜死循环）：
+     apinebula  HTTP_TIMEOUT 300s × 重试 2 次 + 退避 ≈ 10 分钟
+     valperler  轮询 POLL_TIMEOUT 600s + 提交/取图 ≈ 11 分钟
+   两者之后还要做色块规整 + 切格 + 出图纸（约 1 分钟），故取 13 分钟。
+   改 image_render*.py 里的超时常量时，这里要同步。 */
+const GEN_TIMEOUT_MS = 13 * 60 * 1000;
 const TASK_TTL_MS = 2 * 60 * 60 * 1000; // 渲染服务只保留 2 小时，任务记录同步过期
 /* 磁盘任务目录保留时长：过期后 pruneTasks 连盘一起删（tmpdir 时代由系统清理兜底，落仓库后必须自己 GC，
    否则每单 5~10MB 图纸会慢慢吃满 40G 盘）。已完成图纸的分享链接在此窗口内仍可访问。 */
@@ -269,6 +275,45 @@ async function llmSlots(imageBase64, subject, notes) {
   return null;
 }
 
+/* ---------- 失败原因提纯 ---------- */
+
+/* python 链每进一个阶段都会把命令行打到 stdout（gen_and_recover.py 的「[阶段] cmd」），
+   真正的错误走 stderr（image_render*.py 的 fail() → 「[ERROR] xxx」）。
+   历史上这里是「退出码 + stderr + stdout」再取末尾 600 字：stdout 的尾巴正是那行命令，
+   会把 stderr 整段挤出窗口 —— 于是不管哪种失败，用户看到的都是一串 --output /opt/... 路径。
+   现在按「谁最像原因」取一行。 */
+function pickLine(text, test) {
+  const lines = String(text || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (!test || test(lines[i])) { return lines[i]; }
+  }
+  return '';
+}
+
+/* 服务器目录结构不外露：真因里若带任务目录就换成人话（.wip 的规则在前，
+   因为它更长、更具体，先命中才能替换成「临时文件」而不是整个「任务目录」） */
+function scrubPaths(s) {
+  return String(s || '')
+    .replace(/\/[^\s"']*\/\.wip\/[^\s"']*/g, '临时文件')
+    .replace(/\/[^\s"']*\.pixelart-tasks[^\s"']*/g, '任务目录')
+    .trim();
+}
+
+function explainFailure(code, signal, timedOut, stderrTail, stdoutTail) {
+  if (timedOut) { return '生成超时（超过 ' + Math.round(GEN_TIMEOUT_MS / 60000) + ' 分钟），已中止，积分已退回'; }
+  if (signal || code === null) { return '生成进程被系统中止（' + (signal || '无退出码') + '），请重试'; }
+  /* ① python 自己判定的业务错误（[ERROR] xxx） */
+  const err = pickLine(stderrTail, (l) => /^\[ERROR\]/.test(l));
+  if (err) { return scrubPaths(err.replace(/^\[ERROR\]\s*/, '')); }
+  /* ② 未捕获异常：Traceback 的末行就是 xxx: yyy */
+  const lastErr = pickLine(stderrTail);
+  if (lastErr) { return scrubPaths(lastErr); }
+  /* ③ 脚本用 SystemExit("中文原因") 退出时只打 stdout */
+  const out = pickLine(stdoutTail, (l) => /失败|错误|ERROR|Traceback|找不到|无法|Error/.test(l));
+  if (out) { return scrubPaths(out); }
+  return '生成失败（退出码 ' + code + '）';
+}
+
 /* ---------- 任务生命周期 ---------- */
 
 function findOutputHtml(workDir) {
@@ -322,14 +367,40 @@ function createEngine(options) {
     });
   }
 
+  /* 失败详情落盘：对外只给一行原因，完整 stderr/stdout 留在任务目录里备查
+     （任务目录 72h 后 GC，足够定位）。写盘任何异常都不影响退款。 */
+  function saveFailureLog(t, message, detail) {
+    if (!t || !t.workDir || !detail) { return; }
+    try {
+      const dir = path.join(t.workDir, '.wip', '日志');
+      fs.mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const body = [
+        '时间：' + new Date().toISOString(),
+        '后端：' + backend,
+        '任务：' + path.basename(t.workDir) + '  单据：' + (t.orderId || '-'),
+        '对外文案：' + message,
+        '退出码：' + detail.code + '  信号：' + (detail.signal || '-') + '  超时：' + (detail.timedOut ? '是' : '否'),
+        '',
+        '--- stderr ---',
+        detail.stderr || '(空)',
+        '',
+        '--- stdout ---',
+        detail.stdout || '(空)'
+      ].join('\n');
+      fs.writeFileSync(path.join(dir, '失败-' + stamp + '.log'), body);
+    } catch (_) { /* 日志写不进去不影响失败流程 */ }
+  }
+
   /* 任务失败统一出口：先挂 settling（前端只认 done/failed，不会误判终态）→
    * 结算退款 → 再置 failed。任何绕过这里的失败都会让单据停在 pending 等补退。 */
-  async function failTask(id, message) {
+  async function failTask(id, message, detail) {
     const t = tasks.get(id);
     if (!t) { return; }
     if (t.status === 'done' || t.status === 'failed' || t.status === 'settling') { return; }
     t.status = 'settling';
-    t.error = String(message || '生成失败').slice(0, 600).trim();
+    t.error = String(message || '生成失败').slice(0, 200).trim();
+    saveFailureLog(t, t.error, detail);
     const settle = await notifyFinish(id, 'failed', t.orderId);
     t.refunded = !!(settle && settle.refunded);
     t.status = 'failed';
@@ -419,7 +490,7 @@ function createEngine(options) {
   }
 
   /* 任务完成后收尾：判 done/failed → 成功即归档 → 通知结算方（生成单） */
-  async function finishTask(id, code, stderrTail, stdoutTail) {
+  async function finishTask(id, code, signal, timedOut, stderrTail, stdoutTail) {
     const t = tasks.get(id);
     if (!t) { return; }
     if (t.status === 'done' || t.status === 'failed' || t.status === 'settling') { return; }
@@ -434,7 +505,9 @@ function createEngine(options) {
       notifyFinish(id, 'done', t.orderId);
       return;
     }
-    await failTask(id, ('退出码 ' + code + ' ' + stderrTail + ' ' + stdoutTail).slice(-600).trim());
+    const detail = { code, signal, timedOut, stderr: stderrTail, stdout: stdoutTail };
+    if (code === 0) { return await failTask(id, '流程跑完了但没有产出图纸文件，请重试', detail); }
+    await failTask(id, explainFailure(code, signal, timedOut, stderrTail, stdoutTail), detail);
   }
 
   function startTask(id, workDir, imagePath, promptPath, subject, styleId) {
@@ -491,16 +564,19 @@ function createEngine(options) {
     let stderrTail = '';
     let stdoutTail = '';
     t.pid = child.pid;
-    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} }, GEN_TIMEOUT_MS);
+    /* 超时与「进程被杀」要分开：前者是我们主动 SIGKILL，后者是系统 OOM 之类，文案不同 */
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; try { child.kill('SIGKILL'); } catch (_) {} }, GEN_TIMEOUT_MS);
     child.stdout.on('data', (d) => { stdoutTail = (stdoutTail + d).slice(-4000); });
     child.stderr.on('data', (d) => { stderrTail = (stderrTail + d).slice(-4000); });
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       clearTimeout(timer);
-      finishTask(id, code, stderrTail, stdoutTail);
+      finishTask(id, code, signal, timedOut, stderrTail, stdoutTail);
     });
     child.on('error', (err) => {
       clearTimeout(timer);
-      failTask(id, '启动失败：' + String(err.message || err).slice(0, 300));
+      failTask(id, '启动失败：' + String(err.message || err).slice(0, 200),
+        { code: 'spawn', stderr: String((err && err.stack) || err) });
     });
   }
 
@@ -844,4 +920,5 @@ function createEngine(options) {
   };
 }
 
-module.exports = { createEngine, loadStyleGuide };
+/* explainFailure 单独导出：纯函数，给失败文案的用例直接测 */
+module.exports = { createEngine, loadStyleGuide, explainFailure };

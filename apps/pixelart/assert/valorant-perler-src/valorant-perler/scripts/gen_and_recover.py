@@ -266,17 +266,37 @@ def say(text: str) -> None:
 def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
+def _tail_line(text: str, limit: int = 300) -> str:
+    """从一段日志里挑出最像「原因」的一行：优先 [ERROR]（子脚本 fail() 的统一前缀），
+    否则取最后一行非空内容。"""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    for ln in reversed(lines):
+        if "[ERROR]" in ln:
+            return ln.replace("[ERROR]", "").strip()[:limit]
+    return (lines[-1] if lines else "")[:limit]
+
+
+_LAST_STAGE = ""
+
+
 def run_command(cmd: list[str], stage: str, player: str | None = None,
                 env: dict | None = None) -> None:
     """阶段行 `[阶段] cmd`（便于分段计时）+ 可选的玩家进度行。"""
+    global _LAST_STAGE
+    _LAST_STAGE = stage
     if player:
         say(player)
     print(f"\n[{stage}] {' '.join(cmd)}", flush=True)
-    try:
-        subprocess.run(cmd, check=True, env=env)
-    except subprocess.CalledProcessError:
+    # 子进程的 stderr 要单独收下来：失败时外面（generate.js）只能截到本进程 stdout 的尾巴，
+    # 而 stdout 的尾巴正是上面那行命令行 —— 不在这里翻译成人话，玩家就只会看到一串路径。
+    proc = subprocess.run(cmd, env=env, stderr=subprocess.PIPE, text=True)
+    if proc.stderr:
+        sys.stderr.write(proc.stderr)          # 原样转发，服务端的 stderr 里仍有完整堆栈
+    if proc.returncode != 0:
         say("这一步卡住了，我看看怎么回事")
-        raise
+        reason = _tail_line(proc.stderr) or "未留下错误信息"
+        print(f"✗ {stage}失败（退出码 {proc.returncode}）：{reason}", flush=True)
+        raise subprocess.CalledProcessError(proc.returncode, cmd)
 
 
 # —— 色块规整诊断收尾（光晕判据要靠真实数据精化，所以每单触发都要留 RAW） ——
@@ -654,7 +674,13 @@ def main() -> None:
         print(f"生图提示词：{prompt_path}")
     except Exception as exc:
         run_data["status"] = "failed"
-        run_data["error"] = str(exc)
+        # 运行记录是事后排查的第一手材料：CalledProcessError 的 str 只有「Command ... 退出码 1」，
+        # 换成「哪个阶段失败」，配合服务端落的 stderr 才能定位。
+        if isinstance(exc, subprocess.CalledProcessError):
+            run_data["error"] = f"{_LAST_STAGE}失败（退出码 {exc.returncode}）"
+            run_data["error_stage"] = _LAST_STAGE
+        else:
+            run_data["error"] = _tail_line(str(exc)) or str(exc)
         raise
     finally:
         run_data["finished_at"] = datetime.now(timezone.utc).isoformat()

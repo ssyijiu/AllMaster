@@ -581,19 +581,25 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     if (!wasRegen) { saveWorkToCloud(taskId); }
   }
 
+  /* 失败原因由服务端提纯成一行（stderr 里的业务错误，服务器路径已隐去），
+     这里只做超长保护，不再二次截短成半句话。 */
+  function failReason(st) {
+    var s = String((st && st.error) || '未知错误').replace(/\s+/g, ' ').trim();
+    return s.length > 200 ? s.slice(0, 200) + '…' : s;
+  }
+
   function onTaskFailed(st) {
     setGenerating(false);
     updateSteps();
     var wasRegen = Store.regenActive;
     Store.regenActive = false;
     if (wasRegen) {
-      studioMsg('重转失败：' + (st.error || '未知错误').slice(0, 160) + '（未扣积分，原图纸不受影响）', true);
+      studioMsg('重转失败：' + failReason(st) + '（未扣积分，原图纸不受影响）', true);
       return;
     }
     /* 退款由服务端在任务收尾时完成（order_fail 与状态变更同事务、幂等），
        前端只负责如实描述结果：refunded=true 说明钱已经回来了。 */
-    var reason = (st.error || '未知错误').slice(0, 160);
-    studioMsg('生成失败：' + reason + (st.refunded ? '（1 积分已退回）' : '（积分将自动退回，可在「我的 → 积分明细」核对）'), true);
+    studioMsg('生成失败：' + failReason(st) + (st.refunded ? '（1 积分已退回）' : '（积分将自动退回，可在「我的 → 积分明细」核对）'), true);
     if (!st.refunded) {
       /* 服务端没来得及结算（进程重启 / 内存里没这单）：立刻触发一次补退 */
       settleOrders();
