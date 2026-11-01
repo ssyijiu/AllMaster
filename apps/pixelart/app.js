@@ -581,8 +581,8 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     if (!wasRegen) { saveWorkToCloud(taskId); }
   }
 
-  /* 失败原因由服务端提纯成一行（stderr 里的业务错误，服务器路径已隐去），
-     这里只做超长保护，不再二次截短成半句话。 */
+  /* 失败原因由服务端组装好：结论在前、真因在括号里（服务器路径已隐去）。
+     这里只做超长保护，不再加「生成失败：」之类的前缀，免得和结论重复。 */
   function failReason(st) {
     var s = String((st && st.error) || '未知错误').replace(/\s+/g, ' ').trim();
     return s.length > 200 ? s.slice(0, 200) + '…' : s;
@@ -594,12 +594,12 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     var wasRegen = Store.regenActive;
     Store.regenActive = false;
     if (wasRegen) {
-      studioMsg('重转失败：' + failReason(st) + '（未扣积分，原图纸不受影响）', true);
+      studioMsg('重转没成功，' + failReason(st) + '。原图纸不受影响，也未扣积分', true);
       return;
     }
     /* 退款由服务端在任务收尾时完成（order_fail 与状态变更同事务、幂等），
        前端只负责如实描述结果：refunded=true 说明钱已经回来了。 */
-    studioMsg('生成失败：' + failReason(st) + (st.refunded ? '（1 积分已退回）' : '（积分将自动退回，可在「我的 → 积分明细」核对）'), true);
+    studioMsg(failReason(st) + (st.refunded ? '，1 积分已退回' : '，积分将自动退回，可在「我的 → 积分明细」核对'), true);
     if (!st.refunded) {
       /* 服务端没来得及结算（进程重启 / 内存里没这单）：立刻触发一次补退 */
       settleOrders();

@@ -299,19 +299,35 @@ function scrubPaths(s) {
     .trim();
 }
 
+/* 哪些真因值得说「服务不可用」：上游/网络/排队/限流这几类，用户等一下重试真有可能好。
+   其它（提示词为空、参考图丢了、内部参数错）说「服务不可用」只会诱导用户反复重试，
+   所以降级成中性的「生成失败，请重试」。 */
+const UPSTREAM_RE = /连不上|连接|Connection|Timeout|timed out|超时|HTTP 5\d\d|50[234]|rate.?limit|限流|未完成|upstream|服务未返回|取图|额度/i;
+
+/* 给玩家看的是一句结论，真因放在括号里（运维能一眼定性，玩家也不会只看到技术术语） */
+function wrapReason(reason) {
+  const head = UPSTREAM_RE.test(reason) ? '出图服务暂时不可用，请稍后重试' : '生成失败，请重试';
+  return head + '（' + reason + '）';
+}
+
 function explainFailure(code, signal, timedOut, stderrTail, stdoutTail) {
-  if (timedOut) { return '生成超时（超过 ' + Math.round(GEN_TIMEOUT_MS / 60000) + ' 分钟），已中止，积分已退回'; }
-  if (signal || code === null) { return '生成进程被系统中止（' + (signal || '无退出码') + '），请重试'; }
+  if (timedOut) {
+    return '出图服务暂时不可用，请稍后重试（生成超时：超过 '
+      + Math.round(GEN_TIMEOUT_MS / 60000) + ' 分钟未返回，已中止）';
+  }
+  if (signal || code === null) {
+    return '生成被中断，请重试（进程被系统中止：' + (signal || '无退出码') + '）';
+  }
   /* ① python 自己判定的业务错误（[ERROR] xxx） */
+  let reason = '';
   const err = pickLine(stderrTail, (l) => /^\[ERROR\]/.test(l));
-  if (err) { return scrubPaths(err.replace(/^\[ERROR\]\s*/, '')); }
+  if (err) { reason = scrubPaths(err.replace(/^\[ERROR\]\s*/, '')); }
   /* ② 未捕获异常：Traceback 的末行就是 xxx: yyy */
-  const lastErr = pickLine(stderrTail);
-  if (lastErr) { return scrubPaths(lastErr); }
+  if (!reason) { reason = scrubPaths(pickLine(stderrTail)); }
   /* ③ 脚本用 SystemExit("中文原因") 退出时只打 stdout */
-  const out = pickLine(stdoutTail, (l) => /失败|错误|ERROR|Traceback|找不到|无法|Error/.test(l));
-  if (out) { return scrubPaths(out); }
-  return '生成失败（退出码 ' + code + '）';
+  if (!reason) { reason = scrubPaths(pickLine(stdoutTail, (l) => /失败|错误|ERROR|Traceback|找不到|无法|Error/.test(l))); }
+  if (!reason) { return '生成失败（退出码 ' + code + '），请重试'; }
+  return wrapReason(reason.length > 150 ? reason.slice(0, 150) + '…' : reason);
 }
 
 /* ---------- 任务生命周期 ---------- */
