@@ -43,3 +43,6 @@ apps/pixelart/assert/算法测试原图/**/*.png
 apps/pixelart/assert/算法测试原图/**/*.jpg
 apps/pixelart/assert/算法测试原图/**/*.jpeg
 apps/pixelart/assert/算法测试原图/**/*.webp
+
+# ===== 画风示例图源素材（38MB 原图纸，示例图已裁切入库，源文件本地保留）=====
+apps/pixelart/assert/素材/
