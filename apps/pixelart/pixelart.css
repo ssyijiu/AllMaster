@@ -206,29 +206,6 @@
     .btn-remove-photo:hover { background: var(--danger-bg); color: var(--danger); }
     #errFile { margin-top: var(--space-2); }
 
-    /* ===== 主体类型分段：冷灰槽 + active 墨底反白（设计稿四版 #F2F3F6） ===== */
-    .seg {
-      display: inline-flex; gap: 2px; padding: 4px;
-      background: #F2F3F6; border-radius: 12px;
-      margin-bottom: var(--space-3);
-    }
-    .seg-btn {
-      border: none; background: transparent;
-      color: #7A7A7A;
-      height: 30px; padding: 0 var(--space-4);
-      border-radius: 9px;
-      font-size: var(--text-sm); font-weight: var(--weight-emphasis);
-      cursor: pointer; white-space: nowrap;
-      transition:
-        background-color var(--motion-fast) var(--ease-standard),
-        color var(--motion-fast) var(--ease-standard);
-    }
-    .seg-btn:hover { color: var(--fg); }
-    .seg-btn.cur {
-      background: var(--ink-900); color: #FFFFFF;
-      box-shadow: none;
-    }
-
     /* ===== 画风网格：选中黄描边（设计稿二版：白底） ===== */
     .style-grid {
       display: grid;
@@ -368,11 +345,23 @@
 
     /* ===== 最近生成（本地缩略图回看入口；图纸仅保存 72 小时） ===== */
     .recent { margin-top: var(--space-5); }
-    .recent-title {
-      margin: 0 0 var(--space-2);
-      font-size: var(--text-sm); font-weight: var(--weight-emphasis); color: var(--meta);
+    /* 对齐头像页（成像）.history-title：轻量灰标题 + 行内「我的」引导链接 */
+    .recent-title { margin: 0 0 var(--space-2); font-size: var(--text-sm); color: var(--muted); }
+    .recent-link {
+      margin-left: var(--space-1);
+      font-size: var(--text-xs); font-weight: 510;
+      color: var(--teal-700); text-decoration: none;
+      white-space: nowrap;
     }
-    .recent-strip { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+    .recent-link:hover { text-decoration: underline; }
+    /* 对齐头像页 .history-strip：横向滑动（不换行），条本身必须能缩到父宽 */
+    .recent-strip {
+      display: flex; gap: var(--space-2);
+      overflow-x: auto; padding-bottom: var(--space-1);
+      min-width: 0;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: thin;
+    }
     .recent-item {
       width: 64px; height: 64px; padding: 0;
       border: 1px solid var(--border); border-radius: var(--radius-md);

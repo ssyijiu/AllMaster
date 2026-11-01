@@ -243,6 +243,8 @@ function llmAttempt(cfg, apiKey, imageBase64, system) {
       if (typeof v !== 'string' || !v.trim()) { return {}; }
       out[k] = v.trim();
     }
+    /* 主体判读（人物/道具选项卡移除后由 LLM 判定）：只在模型明确给出 prop 时采信，其余按 character */
+    if (slots.subject_type === 'prop') { out.subject_type = 'prop'; }
     return { slots: out };
   }).catch((err) => ({ retryable: !!(err && err.name !== 'AbortError') }))
     .finally(() => clearTimeout(timer));
@@ -255,13 +257,15 @@ async function llmSlots(imageBase64, subject, notes) {
   const apiKey = (cfg.providerId && keys[cfg.providerId]) || cfg.apiKey || '';
   if (!apiKey) { return null; }
   const system = [
-    '你是拼豆图纸（像素画底稿）的提示词专家。用户会上传一张图，请分析图片并输出四个提示词段落，最终 JSON 只含这四个键：',
+    '你是拼豆图纸（像素画底稿）的提示词专家。用户会上传一张图，请分析图片并输出四个提示词段落，JSON 键见下：',
     'game_knowledge：角色/道具的身份与可核对的辨识点（发型剪影、发色分区、肤色、标志服饰配件）；从图里读，读不出就留空字符串。',
     'subject_description：具体比例、动作、表情、道具与配饰，保留图中原有特征。',
     'image_analysis：分清参考图要保留的身份辨识点与要舍弃的内容（背景、武器、特效等）。',
     'composition：取景——主体位置、占画面比例、完整入画范围，主体外透明背景。',
     '要求：全部中文；每段 1~3 句、具体可执行；不写画风与像素化要求（由其他段落负责）；',
-    '玩家备注优先于图片内容。' + (subject === 'prop' ? '主体是道具/物品，不是人像。' : '主体是人物/人形角色。'),
+    subject === null
+      ? '先判断主体类型：图中是人物/人形角色还是道具/物品，额外输出键 subject_type（"character" 或 "prop"），再按判断结果写其余四段。'
+      : '玩家备注优先于图片内容。' + (subject === 'prop' ? '主体是道具/物品，不是人像。' : '主体是人物/人形角色。'),
     (notes || '').trim() ? '玩家备注：' + notes.trim() : '',
     '只输出 JSON 对象本身，不要 markdown 代码块。'
   ].filter(Boolean).join('\n');
@@ -640,12 +644,11 @@ function createEngine(options) {
 
     const m = MIME_RE.exec(String(body.imageBase64 || ''));
     if (!m) { return sendJson(res, 400, { error: { message: '缺少图片或格式不支持（png/jpeg/webp）' } }); }
-    const subject = body.subject === 'prop' ? 'prop' : 'character';
+    /* 主体类型不再由前端选项卡决定：LLM 读图判定（subjectDetect），失败兜底按 character；
+       body.subject 保留为旧客户端兼容入参，仅作 LLM 判读失败时的回落 */
+    const subjectFallback = body.subject === 'prop' ? 'prop' : 'character';
     const styleId = String(body.styleId || 'original');
     if (!findStyle(styleId)) { return sendJson(res, 400, { error: { message: '未知画风：' + styleId } }); }
-    if (subject === 'prop' && findStyle(styleId).scope === 'character') {
-      return sendJson(res, 400, { error: { message: '该画风只支持人像主体' } });
-    }
 
     pruneTasks();
     const id = crypto.randomBytes(8).toString('hex');
@@ -658,7 +661,7 @@ function createEngine(options) {
       return sendJson(res, 500, { error: { message: '落盘失败：' + String(err.message || err).slice(0, 120) } });
     }
     tasks.set(id, {
-      status: 'running', workDir, startedAt: Date.now(), styleId, subject,
+      status: 'running', workDir, startedAt: Date.now(), styleId, subject: subjectFallback,
       /* 备注存下来：下发图纸页时要注入到 window.PIXELART_NOTE，供导出文件名使用 */
       notes: String(body.notes || '').trim().slice(0, 200),
       /* 生成单号（服务端在调用本函数前挂在 req 上）：任务结束据此结算 */
@@ -671,13 +674,25 @@ function createEngine(options) {
     sendJson(res, 200, { taskId: id });
     shrinkImage(imagePath, (smallDataUrl) => {
       const llmInput = smallDataUrl || body.imageBase64;
-      llmSlots(llmInput, subject, body.notes)
-        .then((slots) => slots || templateSlots(subject, findStyle(styleId).label, body.notes))
+      llmSlots(llmInput, null, body.notes)   /* subject 传 null：让 LLM 读图判主体 */
         .then((slots) => {
+          /* 主体判读：LLM 结果优先，失败回落 body.subject/character */
+          const subject = (slots && slots.subject_type) || subjectFallback;
+          let finalStyleId = styleId;
+          if (subject === 'prop' && findStyle(finalStyleId).scope === 'character') {
+            /* 道具图选了人物限定画风：沿用旧版道具模式行为，自动回落「还原」 */
+            finalStyleId = 'original';
+          }
+          const record = tasks.get(id);
+          if (record) { record.subject = subject; record.styleId = finalStyleId; }
+          /* LLM 结果剥掉 subject_type 后即用；无 LLM 结果回落模板槽位 */
+          const promptSlots = slots
+            ? (({ subject_type, ...texts }) => texts)(slots)
+            : templateSlots(subject, findStyle(finalStyleId).label, body.notes);
           try {
             const promptPath = path.join(workDir, 'prompt.json');
-            fs.writeFileSync(promptPath, JSON.stringify(slots, null, 2));
-            startTask(id, workDir, imagePath, promptPath, subject, styleId);
+            fs.writeFileSync(promptPath, JSON.stringify(promptSlots, null, 2));
+            startTask(id, workDir, imagePath, promptPath, subject, finalStyleId);
           } catch (err) {
             /* 走统一失败出口：否则生成单停在 pending，用户要等补退才拿回积分 */
             failTask(id, '启动失败：' + String(err.message || err).slice(0, 200));

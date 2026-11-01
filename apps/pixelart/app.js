@@ -57,9 +57,9 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     },
     /* 工作台状态 */
     imgDataUrl: null,     /* 处理后的 dataURL（≤1024px PNG） */
-    subject: 'character', /* character | prop */
+    subject: 'character', /* 仅作请求兜底：主体类型由服务端 LLM 读图判定（2026-11-02 移除人物/道具选项卡） */
     styles: [],           /* [{id,label,tip,scope,thumb}] */
-    styleId: 'official',   /* 人物默认「卡通」（原「官方同款」，三头身模板画风）；道具侧会自动回落到「还原」 */
+    styleId: 'original',   /* 默认「还原」，与画风列表首位一致；人物道具不再分栏，全 7 种画风常显 */
     generating: false,
     pollTimer: null,
     watchToken: 0,        /* SSE 观察轮次：每轮生成 +1，回调对不上号即视为已取消 */
@@ -96,9 +96,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
 
   function renderStyleStrip() {
     var strip = $('styleStrip');
-    var avail = Store.styles.filter(function (s) {
-      return Store.subject === 'prop' ? s.scope !== 'character' : true;
-    });
+    var avail = Store.styles;   /* 主体选项卡已移除：7 种画风全量常显，顺序由 /styles 下发 */
     if (!avail.some(function (s) { return s.id === Store.styleId; })) {
       Store.styleId = avail.length ? avail[0].id : 'original';
     }
@@ -211,22 +209,6 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
       $('dzEmpty').hidden = false;
       updateSteps();
     });
-  }
-
-  /* ---------- 主体类型切换 ---------- */
-  function bindSubject() {
-    var segC = $('segCharacter');
-    var segP = $('segProp');
-    function setSubject(v) {
-      Store.subject = v;
-      segC.classList.toggle('cur', v === 'character');
-      segP.classList.toggle('cur', v === 'prop');
-      segC.setAttribute('aria-checked', String(v === 'character'));
-      segP.setAttribute('aria-checked', String(v === 'prop'));
-      renderStyleStrip();
-    }
-    segC.addEventListener('click', function () { setSubject('character'); });
-    segP.addEventListener('click', function () { setSubject('prop'); });
   }
 
   /* ---------- 生成流程 ---------- */
@@ -717,7 +699,6 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     loadPayChannels();
     cloudBootstrap();
     bindUpload();
-    bindSubject();
     bindGenerate();
     loadStyles();
     restoreRecent();

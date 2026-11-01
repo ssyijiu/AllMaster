@@ -97,10 +97,6 @@
         <p class="field-error" id="errFile" hidden></p>
 
         <h2 class="panel-title"><svg class="icon icon-20" aria-hidden="true"><use href="#i-palette"/></svg>选择画风</h2>
-        <div class="seg" role="radiogroup" aria-label="主体类型">
-          <button class="seg-btn cur" id="segCharacter" type="button" role="radio" aria-checked="true">人物 / 角色</button>
-          <button class="seg-btn" id="segProp" type="button" role="radio" aria-checked="false">道具 / 物品</button>
-        </div>
         <div class="style-grid" id="styleStrip" role="radiogroup" aria-label="选择画风">
           <p class="hint">画风加载中…</p>
         </div>
@@ -157,7 +153,7 @@
         </div>
         <!-- 最近生成：localStorage 本地记录，最多 6 条；图纸已长期归档，链接随时可打开 -->
         <div class="recent" id="recentWrap" hidden>
-          <p class="recent-title">最近生成（点击回看 · 图纸已保存到「我的作品」）</p>
+          <h3 class="recent-title">最近生成 <a class="recent-link" href="/my" title="作品与积分明细都在「我的」，换设备也不丢">更多作品在「我的」→</a></h3>
           <div class="recent-strip" id="recentStrip"></div>
         </div>
       </section>
