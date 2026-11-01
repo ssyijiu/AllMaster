@@ -39,7 +39,7 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 git archive --format=tar HEAD | tar -x -C "$BUILD_DIR"
 node deploy/stamp-assets.js "$BUILD_DIR"
-COPYFILE_DISABLE=1 tar -czf /tmp/allmaster.tgz -C "$BUILD_DIR" .
+COPYFILE_DISABLE=1 tar --no-xattrs -czf /tmp/allmaster.tgz -C "$BUILD_DIR" .
 ls -lh /tmp/allmaster.tgz | awk '{print "    包大小:", $5}'
 
 echo "==> 2/5 上传到 $HOST"
