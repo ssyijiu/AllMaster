@@ -100,14 +100,36 @@ function refund(userId, ref) {
   return dbmod.tx((d) => refundCore(d, userId, ref));
 }
 
-/* 兑换码：码只能用一次，事务内抢占，避免并发双花 */
+/* 兑换码输入归一化。
+ * 码字符集是 32 个无歧义大写字符（见 admin.js ALPHABET，不含 0/O/1/I）。
+ * 用户手抄时最常见的手误：
+ *   - 小写 → 大写（toUpperCase）
+ *   - 1 / I / i / l / | / ! → L（这些字形几乎一样，且码内本来就没有 I 和 1，不会造成碰撞）
+ *   - 0 / O → 码内不存在、表内也没有形状相近的字符，无法可靠映射 → 交给调用方明确报错
+ * 分组连字符 / 空格（如 ABCD-EFGH）直接去掉，方便对照着抄。 */
+function normalizeRedeemCode(raw) {
+  return String(raw || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s\-_.]/g, '')
+    .replace(/[1I|!]/g, 'L');
+}
+
+/* 兑换码：码只能用一次，事务内抢占，避免并发双花；有效期 30 天（生成时可调，0 = 永久） */
 function redeem(userId, code) {
-  const c = String(code || '').trim().toUpperCase();
-  if (!c) { throw fail('CODE_INVALID', '兑换码无效'); }
+  if (!userId) { throw fail('AUTH_REQUIRED', '请先登录后再兑换'); }
+  const raw = String(code || '').trim().toUpperCase();
+  const c = normalizeRedeemCode(raw);
+  if (!c) { throw fail('CODE_INVALID', '请输入兑换码'); }
+  if (/[0O]/.test(c)) {
+    /* 大写归一化后仍含 0/O：码里没有这两个字符，多半是把别的看混了，明确提示比默默判无效友好 */
+    throw fail('CODE_INVALID', '兑换码不含数字 0 和字母 O，请检查是否认混了字形');
+  }
   return dbmod.tx((d) => {
-    const row = d.prepare('SELECT code, credits, used_by FROM redeem_codes WHERE code = ?').get(c);
+    const row = d.prepare('SELECT code, credits, used_by, expires_at FROM redeem_codes WHERE code = ?').get(c);
     if (!row) { throw fail('CODE_INVALID', '兑换码无效'); }
     if (row.used_by) { throw fail('CODE_INVALID', '兑换码已被使用'); }
+    if (row.expires_at && row.expires_at < dbmod.nowMs()) { throw fail('CODE_EXPIRED', '兑换码已过期'); }
     d.prepare('UPDATE redeem_codes SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL')
       .run(userId, dbmod.nowMs(), c);
     const again = d.prepare('SELECT used_by FROM redeem_codes WHERE code = ?').get(c);

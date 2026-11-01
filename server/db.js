@@ -100,7 +100,8 @@ CREATE TABLE IF NOT EXISTS redeem_codes (
   used_by    TEXT,
   used_at    INTEGER,
   batch      TEXT,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER                   -- 到期时间(ms)；NULL = 永久（生成时显式选择才允许）
 );
 
 /* 风格/服务商配置（原云表 app_config，公开只读 JSON） */
@@ -139,11 +140,33 @@ function open() {
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA);
-  const row = db.prepare('SELECT v FROM meta WHERE k = ?').get('schema_version');
-  if (!row) {
-    db.prepare('INSERT INTO meta (k, v) VALUES (?, ?)').run('schema_version', '1');
-  }
+  migrate(db);
   return db;
+}
+
+/* 顺序迁移：meta.schema_version 记录已应用到的版本，逐版执行且只执行一次。
+ * 新库直接建出最新 SCHEMA 后，迁移要能识别「列已存在」并跳过。 */
+const MIGRATIONS = {
+  /* v2：兑换码加有效期（2026-11-01）。存量码一次性回填 created_at + 30 天，
+   * 不留「永久负债」；此后管理员只有显式选「永久」才会落 NULL。 */
+  2: (d) => {
+    const cols = d.prepare('PRAGMA table_info(redeem_codes)').all().map((c) => c.name);
+    if (cols.indexOf('expires_at') === -1) {
+      d.exec('ALTER TABLE redeem_codes ADD COLUMN expires_at INTEGER');
+    }
+    d.exec('UPDATE redeem_codes SET expires_at = created_at + 30*24*3600*1000 WHERE expires_at IS NULL');
+  }
+};
+
+function migrate(d) {
+  const row = d.prepare('SELECT v FROM meta WHERE k = ?').get('schema_version');
+  let current = row ? Number(row.v) : 1;
+  for (let v = current + 1; MIGRATIONS[v]; v++) {
+    MIGRATIONS[v](d);
+    current = v;
+    d.prepare('INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v')
+      .run('schema_version', String(v));
+  }
 }
 
 /* 事务封装：回调内抛错自动回滚。BEGIN IMMEDIATE 立刻拿写锁，

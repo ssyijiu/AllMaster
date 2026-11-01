@@ -7,8 +7,9 @@
  * 发兑换码、人工充值、看订单与巡检。全部直接读写本机 SQLite，不需要登录。
  *
  * 用法（在服务器上）：
- *   node server/admin-cli.js code 10 20            # 生成 20 个 10 积分的兑换码
- *   node server/admin-cli.js codes                 # 列出未使用的码
+ *   node server/admin-cli.js code 10 20            # 生成 20 个 10 积分的兑换码（默认 30 天有效）
+ *   node server/admin-cli.js code 10 5 b --days 0  # 生成永久码；--days N 指定有效期天数
+ *   node server/admin-cli.js codes [状态]           # 列出兑换码（unused/used/expired/all，默认 unused）
  *   node server/admin-cli.js grant a@b.com 5 备注   # 给某邮箱充值 5 积分
  *   node server/admin-cli.js orders 24             # 最近 24 小时的生成单
  *   node server/admin-cli.js health                # 生成单巡检摘要
@@ -58,13 +59,26 @@ function help() {
 }
 
 function cmdCode() {
-  const credits = Number(argv[1]);
-  const count = Math.max(1, Math.min(Number(argv[2]) || 1, 500));
-  const batch = argv[3] || 'cli-' + new Date().toISOString().slice(0, 10);
+  /* 用法：code <积分> [数量] [批次] [--days N]；--days 0 = 永久，默认 30 天 */
+  const flags = {};
+  const rest = [];
+  for (const a of argv.slice(1)) {
+    if (a.indexOf('--days=') === 0) { flags.days = Number(a.slice(7)); }
+    else if (a === '--days') { flags.pending = true; }
+    else if (flags.pending) { flags.days = Number(a); flags.pending = false; }
+    else { rest.push(a); }
+  }
+  const credits = Number(rest[0]);
+  const count = Math.max(1, Math.min(Number(rest[1]) || 1, 500));
+  const batch = rest[2] || 'cli-' + new Date().toISOString().slice(0, 10);
+  const days = flags.days === undefined ? 30 : Math.floor(flags.days);
+  if (Number.isNaN(days) || days < 0 || days > 3650) { throw new Error('有效期应为 0（永久）或 1~3650 天'); }
   if (!credits || credits <= 0) { throw new Error('积分必须是正整数'); }
+  const now = dbmod.nowMs();
+  const expiresAt = days > 0 ? now + days * 24 * 3600 * 1000 : null;
   const d = dbmod.db;
   const codes = [];
-  const stmt = d.prepare('INSERT INTO redeem_codes (code, credits, batch, created_at) VALUES (?, ?, ?, ?)');
+  const stmt = d.prepare('INSERT INTO redeem_codes (code, credits, batch, created_at, expires_at) VALUES (?, ?, ?, ?, ?)');
   for (let i = 0; i < count; i++) {
     let code;
     for (let t = 0; t < 8; t++) {
@@ -73,21 +87,35 @@ function cmdCode() {
       code = null;
     }
     if (!code) { throw new Error('生成唯一码失败，请重试'); }
-    stmt.run(code, credits, batch, dbmod.nowMs());
+    stmt.run(code, credits, batch, now, expiresAt);
     codes.push(code);
   }
-  console.log('批次 ' + batch + '，每码 ' + credits + ' 积分，共 ' + codes.length + ' 个：\n');
+  console.log('批次 ' + batch + '，每码 ' + credits + ' 积分，共 ' + codes.length + ' 个，有效期 ' + (days > 0 ? days + ' 天（至 ' + fmtTime(expiresAt) + '）' : '永久') + '：\n');
   codes.forEach((c) => console.log('  ' + c));
   console.log('\n（兑换入口：站点首页钱包弹窗 → 兑换码）');
 }
 
 function cmdCodes() {
+  const status = argv[1] || 'unused'; /* unused | used | expired | all */
+  const now = dbmod.nowMs();
+  let where = '';
+  const args = [];
+  if (status === 'unused') { where = 'WHERE used_by IS NULL AND (expires_at IS NULL OR expires_at >= ?)'; args.push(now); }
+  else if (status === 'used') { where = 'WHERE used_by IS NOT NULL'; }
+  else if (status === 'expired') { where = 'WHERE used_by IS NULL AND expires_at IS NOT NULL AND expires_at < ?'; args.push(now); }
+  else if (status !== 'all') { throw new Error('状态只支持 unused / used / expired / all'); }
   const rows = dbmod.db.prepare(
-    'SELECT code, credits, batch, created_at FROM redeem_codes WHERE used_by IS NULL ORDER BY created_at DESC LIMIT 200'
-  ).all();
-  if (!rows.length) { return console.log('没有未使用的兑换码'); }
-  console.log('未使用兑换码 ' + rows.length + ' 个：');
-  rows.forEach((r) => console.log('  ' + r.code + '  ' + r.credits + ' 积分  ' + (r.batch || '-') + '  ' + fmtTime(r.created_at)));
+    'SELECT code, credits, batch, created_at, expires_at, used_by, used_at FROM redeem_codes ' +
+    where + ' ORDER BY created_at DESC LIMIT 200'
+  ).all(...args);
+  if (!rows.length) { return console.log('没有符合条件的兑换码'); }
+  console.log('兑换码（' + status + '，最多显示 200 条）：');
+  rows.forEach((r) => {
+    const st = r.used_by ? '已用 ' + fmtTime(r.used_at) + ' ' + r.used_by
+      : (r.expires_at && r.expires_at < now ? '已过期'
+        : (r.expires_at ? '未用，' + fmtTime(r.expires_at) + ' 前有效' : '未用，永久'));
+    console.log('  ' + r.code + '  ' + r.credits + ' 积分  批次 ' + (r.batch || '-') + '  ' + st);
+  });
 }
 
 function cmdGrant() {

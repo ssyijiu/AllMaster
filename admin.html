@@ -201,10 +201,51 @@
             <input class="text-input mono" id="genCredits" type="number" min="1" value="10"/>
             <label class="field-label">张数（1~500）</label>
             <input class="text-input mono" id="genCount" type="number" min="1" max="500" value="10"/>
+            <label class="field-label">有效期（天，0 = 永久；默认 30 天，到期未兑换自动作废）</label>
+            <input class="text-input mono" id="genDays" type="number" min="0" max="3650" value="30"/>
             <button class="btn primary small" id="btnGenCodes" type="button" style="margin-top:8px;">生成</button>
             <p class="hint" id="genMsg"></p>
             <textarea class="text-input mono" id="genResult" rows="5" hidden readonly></textarea>
             <button class="btn ghost small" id="btnCopyCodes" type="button" hidden>复制全部兑换码</button>
+          </div>
+        </div>
+
+        <!-- 兑换码总表：所有生成过的码与状态（未用 / 已用 / 已过期），可按状态与批次筛选 -->
+        <div class="entry-card" style="margin-top:16px;">
+          <h4>兑换码列表</h4>
+          <style>
+            #redeemTable { width: 100%; border-collapse: collapse; font-size: 13px; }
+            #redeemTable th, #redeemTable td { text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(0,0,0,.08); white-space: nowrap; }
+            #redeemTable th { color: #6B7280; font-weight: 500; }
+            #redeemTable td.mono, #redeemTable th.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+            .redeem-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+            .redeem-badge.unused { background: #FEF3C7; color: #92400E; }
+            .redeem-badge.used { background: #E5E7EB; color: #374151; }
+            .redeem-badge.expired { background: #FEE2E2; color: #991B1B; }
+          </style>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0 4px;">
+            <select class="text-input" id="redeemStatus" style="width:auto;">
+              <option value="all">全部状态</option>
+              <option value="unused" selected>未使用</option>
+              <option value="used">已使用</option>
+              <option value="expired">已过期</option>
+            </select>
+            <input class="text-input mono" id="redeemBatch" placeholder="按批次筛选（可留空）" style="width:auto;"/>
+            <button class="btn secondary small" id="btnRedeemQuery" type="button">查询</button>
+            <span class="hint" id="redeemStats"></span>
+          </div>
+          <div style="overflow-x:auto;">
+            <table id="redeemTable">
+              <thead>
+                <tr><th class="mono">兑换码</th><th>面值</th><th>批次</th><th>生成时间</th><th>有效期至</th><th>状态</th><th>使用人 / 时间</th></tr>
+              </thead>
+              <tbody id="redeemRows"><tr><td colspan="7" class="hint">加载中…</td></tr></tbody>
+            </table>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+            <button class="btn ghost small" id="btnRedeemPrev" type="button">上一页</button>
+            <span class="hint" id="redeemPageInfo"></span>
+            <button class="btn ghost small" id="btnRedeemNext" type="button">下一页</button>
           </div>
         </div>
         <!-- 支付订单同步：支付通道（.pay-config.json channels）尚未开通，面板先不展示；
@@ -462,6 +503,7 @@
       renderStyles();
       renderSettings();
       loadUsers();
+      loadRedeemList();
     }
 
     /* ---------- 渲染：生成选项（头像页参考图入口） ---------- */
@@ -817,15 +859,19 @@
     $('btnGenCodes').addEventListener('click', function () {
       var credits = parseInt($('genCredits').value, 10);
       var count = parseInt($('genCount').value, 10);
+      var days = parseInt($('genDays').value, 10);
       if (!credits || credits <= 0 || !count || count <= 0) { $('genMsg').textContent = '请填写面值与张数'; return; }
+      if (isNaN(days) || days < 0 || days > 3650) { $('genMsg').textContent = '有效期应为 0（永久）或 1~3650 天'; return; }
       $('btnGenCodes').disabled = true;
-      adminApi('POST', '/api/admin/redeem', { credits: credits, count: count })
+      adminApi('POST', '/api/admin/redeem', { credits: credits, count: count, expiresInDays: days })
         .then(function (data) {
           var codes = (data && data.codes) || [];
           $('genResult').value = codes.join('\n');
           $('genResult').hidden = false;
           $('btnCopyCodes').hidden = false;
-          $('genMsg').textContent = '已生成 ' + codes.length + ' 张面值 ' + credits + ' 积分的兑换码（批次 ' + (data.batch || '-') + '）';
+          $('genMsg').textContent = '已生成 ' + codes.length + ' 张面值 ' + credits + ' 积分的兑换码（批次 ' + (data.batch || '-') +
+            (days > 0 ? '，' + days + ' 天内有效' : '，永久有效') + '）';
+          loadRedeemList();
         })
         .catch(function (err) { $('genMsg').textContent = walletErrText(err); })
         .then(function () { $('btnGenCodes').disabled = false; });
@@ -839,6 +885,55 @@
         }).catch(function () {});
       }
     });
+
+    /* ---------- 兑换码列表（/api/admin/redeem/list） ---------- */
+    var redeemPage = 1;
+    var fmtTs = function (ms) {
+      if (!ms) { return '—'; }
+      var d = new Date(Number(ms));
+      var p = function (n) { return String(n).padStart(2, '0'); };
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+    };
+    var STATUS_TEXT = { unused: '未使用', used: '已使用', expired: '已过期' };
+    function loadRedeemList() {
+      var status = $('redeemStatus').value;
+      var batch = $('redeemBatch').value.trim();
+      $('redeemRows').innerHTML = '<tr><td colspan="7" class="hint">加载中…</td></tr>';
+      adminApi('GET', '/api/admin/redeem/list?status=' + encodeURIComponent(status) +
+        '&batch=' + encodeURIComponent(batch) + '&page=' + redeemPage + '&pageSize=50')
+        .then(function (data) {
+          var rows = (data && data.data) || [];
+          var stats = (data && data.stats) || {};
+          $('redeemStats').textContent = '共 ' + (stats.total || 0) + ' 张：未使用 ' + (stats.unused || 0) +
+            '（挂账 ' + (stats.creditsUnused || 0) + ' 积分）、已使用 ' + (stats.used || 0) + '、已过期 ' + (stats.expired || 0);
+          if (!rows.length) {
+            $('redeemRows').innerHTML = '<tr><td colspan="7" class="hint">没有符合条件的兑换码</td></tr>';
+          } else {
+            $('redeemRows').innerHTML = rows.map(function (r) {
+              var usedInfo = r.status === 'used' ? (r.usedBy || '—') + '<br>' + fmtTs(r.usedAt) : '—';
+              return '<tr>' +
+                '<td class="mono">' + r.code + '</td>' +
+                '<td>' + r.credits + '</td>' +
+                '<td>' + (r.batch || '—') + '</td>' +
+                '<td>' + fmtTs(r.createdAt) + '</td>' +
+                '<td>' + (r.expiresAt ? fmtTs(r.expiresAt) : '永久') + '</td>' +
+                '<td><span class="redeem-badge ' + r.status + '">' + (STATUS_TEXT[r.status] || r.status) + '</span></td>' +
+                '<td>' + usedInfo + '</td></tr>';
+            }).join('');
+          }
+          var totalPages = Math.max(1, Math.ceil((data.total || 0) / (data.pageSize || 50)));
+          $('redeemPageInfo').textContent = '第 ' + redeemPage + ' / ' + totalPages + ' 页（本页 ' + rows.length + ' 条）';
+          $('btnRedeemPrev').disabled = redeemPage <= 1;
+          $('btnRedeemNext').disabled = redeemPage >= totalPages;
+        })
+        .catch(function (err) {
+          $('redeemRows').innerHTML = '<tr><td colspan="7" class="hint">加载失败：' + (err.message || '未知错误') + '</td></tr>';
+        });
+    }
+    $('btnRedeemQuery').addEventListener('click', function () { redeemPage = 1; loadRedeemList(); });
+    $('redeemBatch').addEventListener('keydown', function (e) { if (e.key === 'Enter') { redeemPage = 1; loadRedeemList(); } });
+    $('btnRedeemPrev').addEventListener('click', function () { if (redeemPage > 1) { redeemPage--; loadRedeemList(); } });
+    $('btnRedeemNext').addEventListener('click', function () { redeemPage++; loadRedeemList(); });
 
     function showSaveMsg(msg, cls) {
       var el = $('saveMsg');

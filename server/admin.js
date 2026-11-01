@@ -350,13 +350,20 @@ async function handleRedeem(req, res) {
   const body = await readJson(req);
   const credits = Math.floor(Number(body.credits) || 0);
   const count = Math.max(1, Math.min(Math.floor(Number(body.count) || 1), 500));
+  /* 有效期：默认 30 天；0 = 永久（显式选择才允许，避免变成永久负债）；上限 10 年 */
+  const days = Math.floor(Number(body.expiresInDays === undefined ? 30 : body.expiresInDays));
+  if (Number.isNaN(days) || days < 0 || days > 3650) {
+    return sendJson(res, 400, { error: { code: 'INVALID_EXPIRY', message: '有效期应为 0（永久）或 1~3650 天' } });
+  }
   if (credits <= 0) { return sendJson(res, 400, { error: { code: 'INVALID_CREDITS', message: '面值必须是正整数' } }); }
   const batch = cleanStr(body.batch, 40) || ('ADM' + Date.now().toString(36).toUpperCase());
+  const now = dbmod.nowMs();
+  const expiresAt = days > 0 ? now + days * 24 * 3600 * 1000 : null;
   const codes = [];
   try {
     /* 一批码在一个事务里落库：要么全成，要么一张都不发 */
     dbmod.tx((d) => {
-      const stmt = d.prepare('INSERT INTO redeem_codes (code, credits, batch, created_at) VALUES (?, ?, ?, ?)');
+      const stmt = d.prepare('INSERT INTO redeem_codes (code, credits, batch, created_at, expires_at) VALUES (?, ?, ?, ?, ?)');
       for (let i = 0; i < count; i++) {
         let code = '';
         for (let t = 0; t < 8; t++) {
@@ -364,14 +371,80 @@ async function handleRedeem(req, res) {
           if (!d.prepare('SELECT 1 FROM redeem_codes WHERE code = ?').get(candidate)) { code = candidate; break; }
         }
         if (!code) { throw new Error('CODE_GEN_FAILED'); }
-        stmt.run(code, credits, batch, dbmod.nowMs());
+        stmt.run(code, credits, batch, now, expiresAt);
         codes.push(code);
       }
     });
   } catch (e) {
     return sendJson(res, 400, { error: { code: 'CODE_GEN_FAILED', message: '兑换码生成失败（冲突过多），请重试' } });
   }
-  return sendJson(res, 200, { ok: true, batch: batch, credits: credits, codes: codes });
+  return sendJson(res, 200, { ok: true, batch: batch, credits: credits, expiresInDays: days, expiresAt: expiresAt, codes: codes });
+}
+
+/* 兑换码列表：状态筛选 + 批次筛选 + 分页 + 汇总。
+ * 状态定义：used 优先（已兑换的码无论是否过期都算 used）；过期 = 未使用且已过 expires_at。 */
+const REDEEM_PAGE_MAX = 200;
+function handleRedeemList(req, res, url) {
+  const user = requireAdmin(req, res);
+  if (!user) { return; }
+  const q = url.searchParams;
+  const status = q.get('status') || 'all';
+  const batch = (q.get('batch') || '').trim();
+  const page = Math.max(1, Math.floor(Number(q.get('page')) || 1));
+  const pageSize = Math.max(1, Math.min(Math.floor(Number(q.get('pageSize')) || 50), REDEEM_PAGE_MAX));
+  const now = dbmod.nowMs();
+
+  const where = [];
+  const args = [];
+  if (status === 'unused') { where.push('used_by IS NULL AND (expires_at IS NULL OR expires_at >= ?)'); args.push(now); }
+  else if (status === 'expired') { where.push('used_by IS NULL AND expires_at IS NOT NULL AND expires_at < ?'); args.push(now); }
+  else if (status === 'used') { where.push('used_by IS NOT NULL'); }
+  else if (status !== 'all') {
+    return sendJson(res, 400, { error: { code: 'BAD_STATUS', message: 'status 只支持 all / unused / used / expired' } });
+  }
+  if (batch) { where.push('batch = ?'); args.push(batch); }
+  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
+  const d = dbmod.db;
+  const total = d.prepare('SELECT COUNT(*) AS c FROM redeem_codes ' + whereSql).get(...args).c;
+  const rows = d.prepare(
+    'SELECT code, credits, batch, created_at, expires_at, used_by, used_at FROM redeem_codes ' +
+    whereSql + ' ORDER BY created_at DESC, code LIMIT ? OFFSET ?'
+  ).all(...args, pageSize, (page - 1) * pageSize);
+
+  /* 汇总永远看全量（不受筛选影响），方便一眼看到还挂着多少未兑换负债 */
+  const stats = d.prepare(
+    "SELECT COUNT(*) AS total," +
+    " SUM(CASE WHEN used_by IS NOT NULL THEN 1 ELSE 0 END) AS used," +
+    " SUM(CASE WHEN used_by IS NULL AND expires_at IS NOT NULL AND expires_at < ? THEN 1 ELSE 0 END) AS expired," +
+    " SUM(CASE WHEN used_by IS NULL THEN credits ELSE 0 END) AS creditsUnused" +
+    ' FROM redeem_codes'
+  ).get(now);
+  const unused = stats.total - (stats.used || 0);
+
+  return sendJson(res, 200, {
+    data: rows.map((r) => ({
+      code: r.code,
+      credits: r.credits,
+      batch: r.batch || '',
+      createdAt: r.created_at,
+      expiresAt: r.expires_at,
+      usedBy: r.used_by || '',
+      usedAt: r.used_at,
+      status: r.used_by ? 'used' : (r.expires_at && r.expires_at < now ? 'expired' : 'unused')
+    })),
+    page: page,
+    pageSize: pageSize,
+    total: total,
+    stats: {
+      total: stats.total || 0,
+      unused: unused || 0,
+      used: stats.used || 0,
+      expired: stats.expired || 0,
+      creditsUnused: stats.creditsUnused || 0
+    },
+    error: null
+  });
 }
 
 function handleUsers(req, res, url) {
@@ -409,6 +482,7 @@ const ROUTES = {
   '/api/admin/config': { POST: handleSaveConfig },
   '/api/admin/grant': { POST: handleGrant },
   '/api/admin/redeem': { POST: handleRedeem },
+  '/api/admin/redeem/list': { GET: handleRedeemList },
   '/api/admin/users': { GET: handleUsers }
 };
 

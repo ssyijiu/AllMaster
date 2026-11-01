@@ -70,6 +70,20 @@ function createLocalCloud(deps) {
   const paySecret = d.paySecret || function () { return ''; };
   const log = d.log || function () {};
 
+  /* 兑换码尝试限流（按用户滑动窗口）：5 分钟内 10 次 + 1 小时内 50 次。
+     内存态即可：重启清零无妨——限流是刹车，不是账本。 */
+  const tries = new Map(); /* userId -> [timestamp, ...] */
+  const redeemTries = {
+    take(userId) {
+      const now = Date.now();
+      const arr = (tries.get(userId) || []).filter((t) => now - t < 3600 * 1000);
+      const ok = arr.filter((t) => now - t < 5 * 60 * 1000).length < 10 && arr.length < 50;
+      if (ok) { arr.push(now); }
+      tries.set(userId, arr);
+      return ok;
+    }
+  };
+
   const impl = {
     wallet_balance: (user, p) => {
       if (!user) { return err(401, 'AUTH_REQUIRED'); }
@@ -99,6 +113,9 @@ function createLocalCloud(deps) {
 
     wallet_redeem: (user, p) => {
       if (!user) { return err(401, 'AUTH_REQUIRED'); }
+      /* 兑换尝试限流（成功失败都算）：防止拿接口枚举试码。码空间 32^10 ≈ 2^50，
+         本来就爆破不动，这里再加一道闸让试探彻底不划算。 */
+      if (!redeemTries.take(user.id)) { return err(429, 'TOO_MANY', '兑换尝试过于频繁，请稍后再试'); }
       try {
         return ok(wallet.redeem(user.id, p.p_code));
       } catch (e) {
