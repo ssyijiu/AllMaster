@@ -128,14 +128,25 @@ function redeem(userId, code) {
   return dbmod.tx((d) => {
     const row = d.prepare('SELECT code, credits, used_by, expires_at FROM redeem_codes WHERE code = ?').get(c);
     if (!row) { throw fail('CODE_INVALID', '兑换码无效'); }
-    if (row.used_by) { throw fail('CODE_INVALID', '兑换码已被使用'); }
+    if (row.used_by) {
+      /* 同一个人再次兑换自己已用掉的码：不报错、也不重复入账。
+         典型场景是兑换链接被重复点开（收藏/群聊里点两次），
+         报「已被使用」会让人以为没到账，按 alreadyOwned 返回更贴合直觉。 */
+      if (row.used_by === userId) {
+        return { balance: balance(userId), credits: 0, code: c, alreadyOwned: true };
+      }
+      throw fail('CODE_INVALID', '兑换码已被使用');
+    }
     if (row.expires_at && row.expires_at < dbmod.nowMs()) { throw fail('CODE_EXPIRED', '兑换码已过期'); }
     d.prepare('UPDATE redeem_codes SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL')
       .run(userId, dbmod.nowMs(), c);
     const again = d.prepare('SELECT used_by FROM redeem_codes WHERE code = ?').get(c);
     if (!again || again.used_by !== userId) { throw fail('CODE_INVALID', '兑换码已被使用'); }
-    insert(d, { userId: userId, credits: Number(row.credits) || 0, kind: 'redeem', ref: c, memo: '兑换码充值' });
-    return balance(userId);
+    const credits = Number(row.credits) || 0;
+    insert(d, { userId: userId, credits: credits, kind: 'redeem', ref: c, memo: '兑换码充值' });
+    /* 返回对象（旧版本只回余额数字）：调用方据此提示「已到账 N 积分」，
+       不必靠前后余额相减去猜——前端余额可能还没拉回来，也可能是并发变动。 */
+    return { balance: balance(userId), credits: credits, code: c, alreadyOwned: false };
   });
 }
 

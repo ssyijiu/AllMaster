@@ -253,7 +253,12 @@ async function handleRpc(req, res, pathOnly) {
   const token = auth.bearer(req);
   const r = await cloud.rpc(token, fn, body);
   if (r.status === 200) { return sendJson(res, 200, { data: r.data, error: null }); }
-  return sendJson(res, r.status, { data: null, error: { code: r.text, message: r.text } });
+  /* text 有两种形状：「CODE_INVALID」或「CODE_EXPIRED: 兑换码已过期」。
+     code 只取机器码（调用方判类型用），message 保留全文（含中文原因，
+     同时保持 /CODE_/ 正则可匹配，兼容 orders.js 那类按 message 判断的旧代码）。 */
+  const txt = String(r.text || '');
+  const m = /^([A-Z_]{3,})(?::\s*([\s\S]+))?$/.exec(txt);
+  return sendJson(res, r.status, { data: null, error: { code: m ? m[1] : (txt || 'RPC_FAILED'), message: txt } });
 }
 
 /* ---------- 文件直链 /files/<key>?e=&s= ---------- */

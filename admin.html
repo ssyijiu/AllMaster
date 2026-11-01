@@ -206,8 +206,32 @@
             <button class="btn primary small" id="btnGenCodes" type="button" style="margin-top:8px;">生成</button>
             <p class="hint" id="genMsg"></p>
             <textarea class="text-input mono" id="genResult" rows="5" hidden readonly></textarea>
-            <button class="btn ghost small" id="btnCopyCodes" type="button" hidden>复制全部兑换码</button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn ghost small" id="btnCopyCodes" type="button" hidden>复制全部兑换码</button>
+              <button class="btn ghost small" id="btnCopyLinks" type="button" hidden>复制全部链接</button>
+            </div>
           </div>
+        </div>
+
+        <!-- 兑换链接：把码拼成可直接发出去的链接，用户点开登录后自动到账 -->
+        <div class="entry-card" style="margin-top:16px;">
+          <h4>兑换链接</h4>
+          <p class="hint">把码拼成链接发给用户：点开 → 登录 → 自动兑换并提示「已到账 N 积分」。设置只存在本浏览器，不影响别人。</p>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;">
+            <div style="flex:1 1 240px;min-width:200px;">
+              <label class="field-label">链接前缀</label>
+              <input class="text-input mono" id="linkOrigin" placeholder="https://dotbeads.online"/>
+            </div>
+            <div style="flex:0 0 auto;">
+              <label class="field-label">落地页</label>
+              <select class="text-input" id="linkPath" style="width:auto;">
+                <option value="/pixelart">/pixelart（拼豆·经典版）</option>
+                <option value="/">/（拼豆首页）</option>
+                <option value="/apps/avatar/">/apps/avatar/（头像）</option>
+              </select>
+            </div>
+          </div>
+          <p class="hint">示例：<code class="mono" id="linkPreview">https://dotbeads.online/pixelart?code=XXXXXXXXXX</code></p>
         </div>
 
         <!-- 兑换码总表：所有生成过的码与状态（未用 / 已用 / 已过期），可按状态与批次筛选 -->
@@ -237,9 +261,9 @@
           <div style="overflow-x:auto;">
             <table id="redeemTable">
               <thead>
-                <tr><th class="mono">兑换码</th><th>面值</th><th>批次</th><th>生成时间</th><th>有效期至</th><th>状态</th><th>使用人 / 时间</th></tr>
+                <tr><th class="mono">兑换码</th><th>面值</th><th>批次</th><th>生成时间</th><th>有效期至</th><th>状态</th><th>使用人 / 时间</th><th>操作</th></tr>
               </thead>
-              <tbody id="redeemRows"><tr><td colspan="7" class="hint">加载中…</td></tr></tbody>
+              <tbody id="redeemRows"><tr><td colspan="8" class="hint">加载中…</td></tr></tbody>
             </table>
           </div>
           <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
@@ -869,6 +893,8 @@
           $('genResult').value = codes.join('\n');
           $('genResult').hidden = false;
           $('btnCopyCodes').hidden = false;
+          $('btnCopyLinks').hidden = false;
+          $('btnCopyLinks').textContent = '复制全部链接（' + codes.length + ' 条）';
           $('genMsg').textContent = '已生成 ' + codes.length + ' 张面值 ' + credits + ' 积分的兑换码（批次 ' + (data.batch || '-') +
             (days > 0 ? '，' + days + ' 天内有效' : '，永久有效') + '）';
           loadRedeemList();
@@ -877,14 +903,90 @@
         .then(function () { $('btnGenCodes').disabled = false; });
     });
     $('btnCopyCodes').addEventListener('click', function () {
-      $('genResult').select();
-      try { document.execCommand('copy'); $('genMsg').textContent = '已复制到剪贴板'; } catch (_) {}
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText($('genResult').value).then(function () {
-          $('genMsg').textContent = '已复制到剪贴板';
-        }).catch(function () {});
-      }
+      copyText($('genResult').value).then(function () {
+        $('genMsg').textContent = '已复制 ' + $('genResult').value.split('\n').filter(Boolean).length + ' 个兑换码到剪贴板';
+      }).catch(function () { $('genMsg').textContent = '复制失败：请手动选中文本框复制'; });
     });
+    $('btnCopyLinks').addEventListener('click', function () {
+      var codes = $('genResult').value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+      if (!codes.length) { return; }
+      copyText(codes.map(buildRedeemLink).join('\n')).then(function () {
+        $('genMsg').textContent = '已复制 ' + codes.length + ' 条兑换链接（一行一条，发给用户即可）';
+      }).catch(function () { $('genMsg').textContent = '复制失败：请手动选中文本框复制'; });
+    });
+
+    /* ---------- 兑换链接（默认 https://dotbeads.online/pixelart?code=XXXX） ----------
+       管理员把链接直接发给用户，用户点开 → 登录 → 自动兑换并提示到账。
+       前缀和落地页只存在这台浏览器（localStorage），属于「出链接偏好」，
+       不影响服务端，也不影响别人生成的链接。 */
+    var LINK_STORE_KEY = 'admin.redeemLink';
+    var LINK_DEFAULT = { origin: 'https://dotbeads.online', path: '/pixelart' };
+
+    function linkCfg() {
+      var origin = String(($('linkOrigin') && $('linkOrigin').value) || '').trim().replace(/\/+$/, '');
+      var path = ($('linkPath') && $('linkPath').value) || LINK_DEFAULT.path;
+      if (['/pixelart', '/', '/apps/avatar/'].indexOf(path) === -1) { path = LINK_DEFAULT.path; }
+      return { origin: origin || LINK_DEFAULT.origin, path: path };
+    }
+    function buildRedeemLink(code) {
+      var c = linkCfg();
+      var sep = c.path.indexOf('?') === -1 ? '?' : '&';
+      return c.origin + c.path + sep + 'code=' + encodeURIComponent(String(code || ''));
+    }
+    function renderLinkPreview() {
+      if ($('linkPreview')) { $('linkPreview').textContent = buildRedeemLink('XXXXXXXXXX'); }
+    }
+    function saveLinkCfg() {
+      try { localStorage.setItem(LINK_STORE_KEY, JSON.stringify(linkCfg())); } catch (_) {}
+      renderLinkPreview();
+    }
+    (function initLinkCfg() {
+      var saved = null;
+      try { saved = JSON.parse(localStorage.getItem(LINK_STORE_KEY) || 'null'); } catch (_) {}
+      if ($('linkOrigin')) { $('linkOrigin').value = (saved && saved.origin) || LINK_DEFAULT.origin; }
+      if ($('linkPath')) { $('linkPath').value = (saved && saved.path) || LINK_DEFAULT.path; }
+      if ($('linkPath') && !$('linkPath').value) { $('linkPath').value = LINK_DEFAULT.path; }
+      renderLinkPreview();
+    })();
+    ['linkOrigin', 'linkPath'].forEach(function (id) {
+      var el = $(id);
+      if (!el) { return; }
+      el.addEventListener('change', saveLinkCfg);
+      el.addEventListener('input', saveLinkCfg);
+    });
+
+    /* 复制文本：https 下走 clipboard API；广州 IP:8080 是 http 拿不到，
+       退到 execCommand('copy')，两条路都失败才报错。 */
+    function copyText(text) {
+      return new Promise(function (resolve, reject) {
+        function fallback() {
+          var ta = null;
+          try {
+            ta = document.createElement('textarea');
+            ta.value = text;
+            ta.setAttribute('readonly', '');
+            ta.style.position = 'fixed';
+            ta.style.top = '-1000px';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            ta.setSelectionRange(0, ta.value.length);
+            var ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            ta = null;
+            if (ok) { resolve(); } else { reject(new Error('COPY_FAILED')); }
+          } catch (e) {
+            if (ta && ta.parentNode) { ta.parentNode.removeChild(ta); }
+            reject(e);
+          }
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(resolve).catch(fallback);
+        } else {
+          fallback();
+        }
+      });
+    }
 
     /* ---------- 兑换码列表（/api/admin/redeem/list） ---------- */
     var redeemPage = 1;
@@ -898,7 +1000,7 @@
     function loadRedeemList() {
       var status = $('redeemStatus').value;
       var batch = $('redeemBatch').value.trim();
-      $('redeemRows').innerHTML = '<tr><td colspan="7" class="hint">加载中…</td></tr>';
+      $('redeemRows').innerHTML = '<tr><td colspan="8" class="hint">加载中…</td></tr>';
       adminApi('GET', '/api/admin/redeem/list?status=' + encodeURIComponent(status) +
         '&batch=' + encodeURIComponent(batch) + '&page=' + redeemPage + '&pageSize=50')
         .then(function (data) {
@@ -907,7 +1009,7 @@
           $('redeemStats').textContent = '共 ' + (stats.total || 0) + ' 张：未使用 ' + (stats.unused || 0) +
             '（挂账 ' + (stats.creditsUnused || 0) + ' 积分）、已使用 ' + (stats.used || 0) + '、已过期 ' + (stats.expired || 0);
           if (!rows.length) {
-            $('redeemRows').innerHTML = '<tr><td colspan="7" class="hint">没有符合条件的兑换码</td></tr>';
+            $('redeemRows').innerHTML = '<tr><td colspan="8" class="hint">没有符合条件的兑换码</td></tr>';
           } else {
             $('redeemRows').innerHTML = rows.map(function (r) {
               var usedInfo = r.status === 'used' ? (r.usedBy || '—') + '<br>' + fmtTs(r.usedAt) : '—';
@@ -918,7 +1020,9 @@
                 '<td>' + fmtTs(r.createdAt) + '</td>' +
                 '<td>' + (r.expiresAt ? fmtTs(r.expiresAt) : '永久') + '</td>' +
                 '<td><span class="redeem-badge ' + r.status + '">' + (STATUS_TEXT[r.status] || r.status) + '</span></td>' +
-                '<td>' + usedInfo + '</td></tr>';
+                '<td>' + usedInfo + '</td>' +
+                '<td><button class="btn ghost small" type="button" data-copy-code="' + r.code + '">复制链接</button></td>' +
+                '</tr>';
             }).join('');
           }
           var totalPages = Math.max(1, Math.ceil((data.total || 0) / (data.pageSize || 50)));
@@ -927,13 +1031,28 @@
           $('btnRedeemNext').disabled = redeemPage >= totalPages;
         })
         .catch(function (err) {
-          $('redeemRows').innerHTML = '<tr><td colspan="7" class="hint">加载失败：' + (err.message || '未知错误') + '</td></tr>';
+          $('redeemRows').innerHTML = '<tr><td colspan="8" class="hint">加载失败：' + (err.message || '未知错误') + '</td></tr>';
         });
     }
-    $('btnRedeemQuery').addEventListener('click', function () { redeemPage = 1; loadRedeemList(); });
-    $('redeemBatch').addEventListener('keydown', function (e) { if (e.key === 'Enter') { redeemPage = 1; loadRedeemList(); } });
+    $('btnRedeemQuery').addEventListener('click', function () { redeemPage = 1; loadRedeemList(); });    $('redeemBatch').addEventListener('keydown', function (e) { if (e.key === 'Enter') { redeemPage = 1; loadRedeemList(); } });
     $('btnRedeemPrev').addEventListener('click', function () { if (redeemPage > 1) { redeemPage--; loadRedeemList(); } });
     $('btnRedeemNext').addEventListener('click', function () { redeemPage++; loadRedeemList(); });
+    /* 列表里的「复制链接」用事件委托：行是动态渲染的，逐行绑会随翻页泄漏监听 */
+    $('redeemRows').addEventListener('click', function (e) {
+      var t = e.target;
+      var btn = t && t.closest ? t.closest('[data-copy-code]') : null;
+      if (!btn) { return; }
+      var code = btn.getAttribute('data-copy-code');
+      var label = btn.textContent;
+      btn.disabled = true;
+      copyText(buildRedeemLink(code)).then(function () {
+        btn.textContent = '已复制';
+        setTimeout(function () { btn.textContent = label; btn.disabled = false; }, 1200);
+      }).catch(function () {
+        btn.textContent = '复制失败';
+        setTimeout(function () { btn.textContent = label; btn.disabled = false; }, 1600);
+      });
+    });
 
     function showSaveMsg(msg, cls) {
       var el = $('saveMsg');

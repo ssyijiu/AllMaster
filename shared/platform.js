@@ -296,6 +296,52 @@
     document.addEventListener('DOMContentLoaded', function () { Platform.mountWalletModal(); });
   }
 
+  /* =========================================================
+   * 轻量 toast：全平台共用的「一次性结果」提示
+   * ---------------------------------------------------------
+   * 产品页的 showHint 写到工作台里的 studioMsg，位置在表单下方——
+   * 兑换链接自动到账这类「你没点任何按钮就发生的结果」写在那种地方
+   * 用户根本不会往下看。这里做成浮层，浮在页面顶部中间，
+   * 自动消失、可点掉、不抢焦点（role=status，不用 alert）。
+   * ========================================================= */
+  Platform.toast = function (msg, kind, opts) {
+    if (!msg || !document.body) { return null; }
+    var wrap = document.getElementById('pfToastWrap');
+    if (!wrap) {
+      wrap = document.createElement('div');
+      wrap.id = 'pfToastWrap';
+      wrap.className = 'pf-toast-wrap';
+      document.body.appendChild(wrap);
+    }
+    var k = kind === 'error' ? 'error' : (kind === 'ok' ? 'ok' : 'info');
+    var node = document.createElement('div');
+    node.className = 'pf-toast pf-toast-' + k;
+    node.setAttribute('role', k === 'error' ? 'alert' : 'status');
+    var icon = document.createElement('span');
+    icon.className = 'pf-toast-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = k === 'error' ? '!' : (k === 'ok' ? '✓' : 'i');
+    var text = document.createElement('span');
+    text.className = 'pf-toast-text';
+    text.textContent = msg;              /* textContent：提示里可能带码值，不拼 HTML */
+    node.appendChild(icon);
+    node.appendChild(text);
+    wrap.appendChild(node);
+    /* 先进场动画再计时，避免刚插入就 out */
+    requestAnimationFrame(function () { node.classList.add('in'); });
+    var ttl = (opts && opts.duration) || (k === 'error' ? 6500 : 4500);
+    var closed = false;
+    function close() {
+      if (closed) { return; }
+      closed = true;
+      node.classList.add('out');
+      setTimeout(function () { if (node.parentNode) { node.parentNode.removeChild(node); } }, 300);
+    }
+    setTimeout(close, ttl);
+    node.addEventListener('click', close);
+    return node;
+  };
+
   Platform.setup = function (ctx) {
     var els = ctx.els;
     /* 登录方式从「手机号」换成「邮箱」：旧页面/旧测试仍传 loginPhone/errPhone，
@@ -379,11 +425,30 @@
       return Promise.resolve(cloud.database.rpc(name, params || {})).then(function (res) {
         if (res && res.error) {
           var e = new Error((res.error && res.error.message) || '钱包服务异常');
+          e.code = (res.error && res.error.code) || '';
           e.rawMessage = e.message;
           throw e;
         }
         return res ? res.data : null;
       });
+    }
+
+    /* 兑换错误：服务端回 "CODE_EXPIRED: 兑换码已过期" 形状——
+       冒号前是机器码（判类型用），冒号后是给人看的中文。
+       只有码没有中文时，按码给一句默认说法。 */
+    var REDEEM_ERR_TEXT = {
+      CODE_INVALID: '兑换码无效或已被使用',
+      CODE_EXPIRED: '兑换码已过期',
+      TOO_MANY: '兑换尝试太频繁，请稍后再试',
+      AUTH_REQUIRED: '请先登录后再兑换',
+      INSUFFICIENT_BALANCE: '积分不足'
+    };
+    function redeemErrText(raw) {
+      var s = String(raw || '').trim();
+      var m = /^([A-Z_]{3,})\s*[:：]\s*([\s\S]+)$/.exec(s);
+      if (m) { return { code: m[1], text: m[2].trim() }; }
+      if (/^[A-Z_]{3,}$/.test(s)) { return { code: s, text: REDEEM_ERR_TEXT[s] || '兑换失败，请稍后重试' }; }
+      return { code: '', text: s || '兑换失败，请稍后重试' };
     }
 
     var walletService = {
@@ -462,14 +527,26 @@
           return balance;
         }).catch(function () { return null; });
       },
+      /* 兑换：返回 { balance, credits, code, alreadyOwned }
+       * 服务端回对象（带本次到账面值），旧版本回裸余额数字——两种都吃，
+       * 免得前后端发布时序不同步时兑换直接坏掉。 */
       redeem: function (code) {
-        return walletRpc('wallet_redeem', { p_code: code }).then(function (balance) {
-          walletService.balance = typeof balance === 'number' ? balance : walletService.balance;
+        return walletRpc('wallet_redeem', { p_code: code }).then(function (res) {
+          var out = (res && typeof res === 'object')
+            ? {
+                balance: typeof res.balance === 'number' ? res.balance : walletService.balance,
+                credits: typeof res.credits === 'number' ? res.credits : null,
+                code: res.code || code,
+                alreadyOwned: !!res.alreadyOwned
+              }
+            : { balance: typeof res === 'number' ? res : walletService.balance, credits: null, code: code, alreadyOwned: false };
+          walletService.balance = out.balance;
           walletService.renderChip();
-          return balance;
+          return out;
         }).catch(function (err) {
-          var msg = String(err.message || '');
-          if (msg.indexOf('CODE_INVALID') !== -1) { err.message = '兑换码无效或已被使用'; }
+          var parsed = redeemErrText(err && err.message);
+          err.redeemCode = (err && err.code) || parsed.code;   /* 服务端给的机器码优先 */
+          err.message = parsed.text;
           throw err;
         });
       },
@@ -619,14 +696,118 @@
       var code = els.redeemCode.value.trim();
       if (!code) { showWalletMsg('请输入兑换码', true); return; }
       els.btnRedeem.disabled = true;
-      walletService.redeem(code).then(function (balance) {
+      walletService.redeem(code).then(function (r) {
         els.redeemCode.value = '';
-        showWalletMsg('兑换成功，当前余额 ' + balance + ' 积分');
+        var bal = r ? r.balance : walletService.balance;
+        if (r && r.alreadyOwned) {
+          showWalletMsg('这个兑换码你已经兑换过了，当前余额 ' + bal + ' 积分');
+        } else if (r && typeof r.credits === 'number' && r.credits > 0) {
+          showWalletMsg('已到账 ' + r.credits + ' 积分，当前余额 ' + bal + ' 积分');
+        } else {
+          showWalletMsg('兑换成功，当前余额 ' + bal + ' 积分');
+        }
         notifyBalanceChanged();
       }).catch(function (err) {
         showWalletMsg(err.message || '兑换失败', true);
       }).then(function () {
         els.btnRedeem.disabled = false;
+      });
+    }
+
+    /* =========================================================
+     * 兑换链接自动入账（?code=XXXX）
+     * ---------------------------------------------------------
+     * 场景：管理员发出去的是带码的链接，用户点开就期望「积分已到账」，
+     * 而不是自己去找钱包弹窗把码抄一遍。三条铁律：
+     *   1. 码抓到就立刻从地址栏抹掉（history.replaceState）——避免刷新重兑、
+     *      截图/转发时把别人的一次性码带出去；
+     *   2. 未登录先弹登录框，码存 sessionStorage，登录成功后再兑换；
+     *   3. 只有「重试有意义」的错误才保留待兑换（限流/网络），
+     *      码无效/已用/过期一律清掉，否则每次进站都弹一次失败。
+     * ========================================================= */
+    var PENDING_CODE_KEY = 'platform.pendingRedeemCode';
+    var linkRedeem = { code: '', handled: false, prompted: false };
+
+    function readPendingCode() {
+      if (linkRedeem.code) { return linkRedeem.code; }
+      try { return sessionStorage.getItem(PENDING_CODE_KEY) || ''; } catch (_) { return ''; }
+    }
+    function savePendingCode(code) {
+      linkRedeem.code = code;
+      try { sessionStorage.setItem(PENDING_CODE_KEY, code); } catch (_) {}
+    }
+    function clearPendingCode() {
+      linkRedeem.code = '';
+      try { sessionStorage.removeItem(PENDING_CODE_KEY); } catch (_) {}
+    }
+
+    /* 从 URL 抓码并抹掉参数（保留 paid= / hash 等其它参数） */
+    function captureRedeemLink() {
+      var fromSearch = /[?&]code=([A-Za-z0-9\-_\s%]{4,40})/.exec(location.search);
+      var fromHash = /[#&]code=([A-Za-z0-9\-_\s%]{4,40})/.exec(location.hash || '');
+      var m = fromSearch || fromHash;
+      if (!m) { return ''; }
+      var code = '';
+      try { code = decodeURIComponent(m[1]).trim(); } catch (_) { code = m[1].trim(); }
+      code = code.replace(/[\s\-]+/g, '');       /* 链接里带连字符/空格也认 */
+      if (code.length < 4) { return ''; }
+      savePendingCode(code);
+      try {
+        var qs = location.search.replace(/^\?/, '').split('&').filter(function (kv) {
+          return kv && !/^code=/i.test(kv);
+        });
+        var hash = (location.hash || '').replace(/^#/, '').split('&').filter(function (kv) {
+          return kv && !/^code=/i.test(kv);
+        }).join('&');
+        var url = location.pathname + (qs.length ? '?' + qs.join('&') : '') + (hash ? '#' + hash : '');
+        history.replaceState(null, '', url);
+      } catch (_) {}
+      return code;
+    }
+
+    function redeemToast(msg, kind) {
+      if (Platform.toast) { Platform.toast(msg, kind); }
+      showHint(msg, kind === 'error');
+    }
+
+    function redeemFromLink() {
+      if (linkRedeem.handled) { return; }
+      var code = readPendingCode();
+      if (!code) { return; }
+      if (!Store.state.user) {
+        /* 只自动弹一次登录框；用户主动关掉后不再骚扰，码仍留在 sessionStorage，
+           等他下次点「登录」成功时再自动兑换。 */
+        if (!linkRedeem.prompted && els.loginModal) {
+          linkRedeem.prompted = true;
+          openLogin();
+          showLoginMsg('登录后将自动为你兑换链接里的兑换码', false);
+        }
+        return;
+      }
+      linkRedeem.handled = true;
+      var before = walletService.balance;
+      walletService.redeem(code).then(function (r) {
+        clearPendingCode();
+        notifyBalanceChanged();
+        var msg;
+        if (r.alreadyOwned) {
+          msg = '这个兑换码你已经兑换过了，积分已在账上';
+        } else if (typeof r.credits === 'number' && r.credits > 0) {
+          msg = '已到账 ' + r.credits + ' 积分，可以去转图啦';
+        } else if (typeof before === 'number' && typeof r.balance === 'number' && r.balance > before) {
+          msg = '已到账 ' + (r.balance - before) + ' 积分，可以去转图啦';
+        } else {
+          msg = '积分已到账，可以去转图啦';
+        }
+        redeemToast(msg, 'ok');
+        if (typeof ctx.onRedeemDone === 'function') { ctx.onRedeemDone(r); }
+      }).catch(function (err) {
+        var errCode = String((err && err.redeemCode) || '');
+        var retryable = errCode === 'TOO_MANY' || !errCode;   /* 没码 = 网络/服务异常 */
+        if (!retryable) { clearPendingCode(); }
+        redeemToast(err.message || '兑换失败，请稍后重试', 'error');
+        /* 允许用户修好网络后再触发一次（换页/重新登录都会重新走这里） */
+        if (retryable) { linkRedeem.handled = false; }
       });
     }
     /* 支付回跳：?paid=ORDERNO → 向服务器领取签名凭证 → 云端 RPC 幂等入账 */
@@ -685,12 +866,18 @@
       renderAuthUI();
       /* 登录：初始化积分钱包并处理支付回跳；退出：隐藏钱包并清零余额 */
       if (Store.state.user) {
-        walletService.refresh().then(function () { handlePaidReturn(); });
+        walletService.refresh().then(function () {
+          handlePaidReturn();
+          /* 兑换链接：等余额拉回来再兑，提示里的「已到账 N 积分」才有据可依 */
+          redeemFromLink();
+        });
         /* 顺手把上次没结算完的生成单退掉（关页/崩溃/断网的残留） */
         settleStaleOrders();
       } else {
         walletService.balance = null;
         els.btnWallet.hidden = true;
+        /* 带码进站但没登录：先弹登录框，登录成功后这里会再走一遍完成兑换 */
+        redeemFromLink();
       }
     }
 
@@ -910,6 +1097,10 @@
         if (!document.hidden) { ensureAuth(); }
       });
     }
+
+    /* 页面一加载就把链接里的兑换码收进 sessionStorage 并从地址栏抹掉：
+       必须先于产品页的 restoreAuth()（那里会看 URL 上有没有 code 判 OAuth 回跳）。 */
+    captureRedeemLink();
 
     return {
       applySession: applySession,

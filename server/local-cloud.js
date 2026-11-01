@@ -10,7 +10,7 @@
  *   wallet_balance    → 数字
  *   wallet_consume    → [{ txn_id, balance }]
  *   wallet_refund     → 数字（余额）；重复退 → 非 200 + 'ALREADY_REFUNDED'
- *   wallet_redeem     → 数字（余额）
+ *   wallet_redeem     → { balance, credits, code, alreadyOwned }（旧版是裸余额数字，前端兼容两种）
  *   wallet_pay_claim  → 数字（余额）
  *   order_create      → [{ order_id, status:'pending', credits }]
  *   order_succeed     → [{ order_id, status }]
@@ -115,11 +115,15 @@ function createLocalCloud(deps) {
       if (!user) { return err(401, 'AUTH_REQUIRED'); }
       /* 兑换尝试限流（成功失败都算）：防止拿接口枚举试码。码空间 32^10 ≈ 2^50，
          本来就爆破不动，这里再加一道闸让试探彻底不划算。 */
-      if (!redeemTries.take(user.id)) { return err(429, 'TOO_MANY', '兑换尝试过于频繁，请稍后再试'); }
+      if (!redeemTries.take(user.id)) { return err(429, 'TOO_MANY'); }
       try {
         return ok(wallet.redeem(user.id, p.p_code));
       } catch (e) {
-        return err(400, (e && e.code) || 'CODE_INVALID');
+        /* message 保留 "CODE: 中文原因" 形状：上层用 /CODE_/ 判类型，
+           同时能拿到「兑换码已被使用 / 已过期 / 不含 0 和 O」这类具体说法。 */
+        const code = (e && e.code) || 'CODE_INVALID';
+        const detail = e && e.message && e.message !== code ? code + ': ' + e.message : code;
+        return err(400, detail);
       }
     },
 
