@@ -59,6 +59,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     imgDataUrl: null,     /* 处理后的 dataURL（≤1024px PNG） */
     subject: 'character', /* 仅作请求兜底：主体类型由服务端 LLM 读图判定（2026-11-02 移除人物/道具选项卡） */
     styles: [],           /* [{id,label,tip,scope,thumb}] */
+    styleHint: '',        /* /styles 下发的全局兜底文案：选中画风无 tip 时显示 */
     styleId: 'original',   /* 默认「还原」，与画风列表首位一致；人物道具不再分栏，全 7 种画风常显 */
     generating: false,
     pollTimer: null,
@@ -86,12 +87,26 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
       var list = (data && data.styles) || [];
       if (!list.length) { $('styleStrip').innerHTML = '<p class="hint">画风加载失败，刷新重试</p>'; return; }
       Store.styles = list;
-      var hintEl = $('styleHint');
-      if (hintEl && data.hint) { hintEl.textContent = data.hint; }
+      Store.styleHint = (data && data.hint) || '';
       renderStyleStrip();
     }).catch(function () {
       $('styleStrip').innerHTML = '<p class="hint">画风加载失败，刷新重试</p>';
     });
+  }
+
+  /* 画风说明行：选中谁就显示谁的 tip（点选可见，移动端不依赖悬停）；无 tip 回落全局文案 */
+  function updateStyleHint() {
+    var hintEl = $('styleHint');
+    if (!hintEl) { return; }
+    var cur = null;
+    for (var i = 0; i < Store.styles.length; i++) {
+      if (Store.styles[i].id === Store.styleId) { cur = Store.styles[i]; break; }
+    }
+    if (cur && cur.tip) {
+      hintEl.textContent = '「' + cur.label + '」' + cur.tip;
+    } else {
+      hintEl.textContent = Store.styleHint || '';
+    }
   }
 
   function renderStyleStrip() {
@@ -100,6 +115,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     if (!avail.some(function (s) { return s.id === Store.styleId; })) {
       Store.styleId = avail.length ? avail[0].id : 'original';
     }
+    updateStyleHint();
     strip.innerHTML = avail.map(function (s) {
       var art = s.thumb
         ? '<img src="' + s.thumb + '" alt="' + s.label + '画风预览" />'
