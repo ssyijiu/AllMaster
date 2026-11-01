@@ -59,8 +59,10 @@
       display: flex; align-items: center; justify-content: space-between;
     }
     .brand { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 400; letter-spacing: 0;
+      /* 空间不够时由品牌区先让位（英文标可省略），不让顶栏把整页撑宽 */
+      min-width: 0; overflow: hidden; white-space: nowrap;
       font-family: "ZCOOL QingKe HuangYou", "Yuanti SC", "Hiragino Maru Gothic ProN", "YouYuan", "PingFang SC", sans-serif; }
-    .brand-logo {
+    .brand-logo { flex: none;
       width: 32px; height: 32px; border-radius: 10px;
       background: #FFD02F;
       display: inline-flex; align-items: center; justify-content: center;
@@ -68,7 +70,8 @@
     }
     .brand-logo svg { width: 20px; height: 20px; display: block; }
     .brand-en { font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-      font-size: 11px; letter-spacing: 0.18em; color: #7A7A7A; font-weight: 600; padding-bottom: 2px; }
+      font-size: 11px; letter-spacing: 0.18em; color: #7A7A7A; font-weight: 600; padding-bottom: 2px;
+      overflow: hidden; text-overflow: ellipsis; }
 
     /* 顶栏 pill（积分 / 我的）配色统一在 base.css 的 `.btn.pill`，此处不再覆写 */
     /* 兑换按钮不再单独覆写：统一用 .btn.primary，与「购买」同一套视觉 */

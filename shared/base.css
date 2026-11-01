@@ -229,6 +229,8 @@
       display: inline-flex; align-items: center; justify-content: center;
       gap: var(--space-2); cursor: pointer;
       background: none; color: var(--fg-2);
+      /* 按钮文字永不折行：窄屏下「我的」「登录」被挤成两行竖排过（2026-11-01 手机实测） */
+      white-space: nowrap;
       transition:
         background-color var(--motion-fast) var(--ease-standard),
         border-color var(--motion-fast) var(--ease-standard),
@@ -337,7 +339,7 @@
     /* ============================================================
        Section S7: 登录与云同步（全部走既有 Token）
        ============================================================ */
-    .topbar-actions { display: flex; align-items: center; gap: var(--space-2); }
+    .topbar-actions { display: flex; align-items: center; gap: var(--space-2); flex: none; }
     /* 「我的」入口用 <a> 承担按钮外观（与积分按钮同款），链接不该有下划线 */
     .topbar-actions a.btn { text-decoration: none; }
     /* 顶栏 pill：「我的」入口与「积分」钱包同一套视觉——浅黄底、无边框、粗字重。
