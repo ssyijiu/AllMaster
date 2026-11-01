@@ -11,6 +11,7 @@
  *   wallet_consume    → [{ txn_id, balance }]
  *   wallet_refund     → 数字（余额）；重复退 → 非 200 + 'ALREADY_REFUNDED'
  *   wallet_redeem     → { balance, credits, code, alreadyOwned }（旧版是裸余额数字，前端兼容两种）
+ *   wallet_redeem_batch → { balance, credits, code, batch, alreadyOwned }（邀请链接，服务端分配码）
  *   wallet_pay_claim  → 数字（余额）
  *   order_create      → [{ order_id, status:'pending', credits }]
  *   order_succeed     → [{ order_id, status }]
@@ -122,6 +123,20 @@ function createLocalCloud(deps) {
         /* message 保留 "CODE: 中文原因" 形状：上层用 /CODE_/ 判类型，
            同时能拿到「兑换码已被使用 / 已过期 / 不含 0 和 O」这类具体说法。 */
         const code = (e && e.code) || 'CODE_INVALID';
+        const detail = e && e.message && e.message !== code ? code + ': ' + e.message : code;
+        return err(400, detail);
+      }
+    },
+
+    /* 邀请链接领码：batch 是链接里的批次号，码由服务端分配（见 wallet.redeemBatch） */
+    wallet_redeem_batch: (user, p) => {
+      if (!user) { return err(401, 'AUTH_REQUIRED'); }
+      if (!redeemTries.take(user.id)) { return err(429, 'TOO_MANY'); }
+      try {
+        return ok(wallet.redeemBatch(user.id, p.p_batch));
+      } catch (e) {
+        /* 与 wallet_redeem 同形状："BATCH_EXHAUSTED: 中文原因"，前端按冒号前判类型 */
+        const code = (e && e.code) || 'BATCH_INVALID';
         const detail = e && e.message && e.message !== code ? code + ': ' + e.message : code;
         return err(400, detail);
       }

@@ -64,7 +64,9 @@ const localAdmin = require('./server/admin');
 const ADMIN_PATHS = [
   '/api/admin/login/send', '/api/admin/login/verify',
   '/api/admin/bootstrap', '/api/admin/config', '/api/admin/grant',
-  '/api/admin/redeem', '/api/admin/redeem/list', '/api/admin/users'
+  '/api/admin/redeem', '/api/admin/redeem/list',
+  '/api/admin/invite', '/api/admin/invite/list', '/api/admin/invite/update',
+  '/api/admin/users'
 ];
 
 /* 生成单（P3）：一次生成 = 一单，先建单扣费，成功/失败必须结算。

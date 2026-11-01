@@ -185,6 +185,77 @@ function redeem(userId, code) {
   });
 }
 
+/* 邀请链接领码：一次调用 = 「从这批名额里取一张码 + 记到自己名下 + 入账」。
+ * 与 redeem 的区别：码不是用户填的，是服务端从池子里分配的。
+ *
+ * 为什么不做「先发码，前端再调 wallet_redeem」两步：中间态（已判给某人但没入账）
+ * 一断网就永久占住一张码，还得写回收；单事务分配没有这个洞——两个人同时点开，
+ * BEGIN IMMEDIATE 串行化，第二个人拿到的是下一张。
+ *
+ * 规则与 redeem 完全同口径（同一张表、同一套判定），避免两条入口说法不一。 */
+function redeemBatch(userId, batch) {
+  if (!userId) { throw fail('AUTH_REQUIRED', '请先登录后再领取'); }
+  const b = String(batch || '').trim().toUpperCase();
+  if (!b) { throw fail('BATCH_INVALID', '邀请链接无效'); }
+  return dbmod.tx((d) => {
+    const bt = d.prepare(
+      'SELECT batch, label, landing, credits, new_user_only, per_user_limit, expires_at, active FROM redeem_batches WHERE batch = ?'
+    ).get(b);
+    if (!bt) { throw fail('BATCH_INVALID', '邀请链接无效'); }
+    if (!Number(bt.active)) { throw fail('BATCH_CLOSED', '这个邀请链接已经停止发放了'); }
+    const now = dbmod.nowMs();
+    if (bt.expires_at && Number(bt.expires_at) < now) { throw fail('BATCH_EXPIRED', '邀请链接已过期'); }
+
+    const perUserLimit = Number(bt.per_user_limit) || 0;
+    const mine = d.prepare(
+      'SELECT code FROM redeem_codes WHERE batch = ? AND used_by = ? ORDER BY used_at ASC, code ASC'
+    ).all(b, userId);
+    if (perUserLimit > 0 && mine.length >= perUserLimit) {
+      /* 重复点开同一条链接：不报错。用户看到「已领过」比看到「失败」安心，
+         也不会以为没到账去翻客服记录。 */
+      return {
+        balance: balance(userId), credits: 0, batch: b,
+        code: mine.length ? String(mine[0].code) : '', alreadyOwned: true
+      };
+    }
+
+    /* 新用户口径与 redeem 一致：此前没有任何积分流水，但排除本批次自己领过的记录。
+       放在选码之前——被拒的人不该占掉一张码。 */
+    if (Number(bt.new_user_only) === 1) {
+      const seen = d.prepare(
+        'SELECT 1 AS x FROM wallet_txns WHERE user_id = ? ' +
+        'AND NOT (kind = ? AND ref IN (SELECT code FROM redeem_codes WHERE batch = ?)) LIMIT 1'
+      ).get(userId, 'redeem', b);
+      if (seen) {
+        throw fail('CODE_NEW_USER_ONLY', '这批兑换码是给新用户的见面礼，你的账号已有积分记录～可以直接用现有积分去转图');
+      }
+    }
+
+    /* 挑一张「没被领、也没过期」的码。码是随机的，ORDER BY code 等价于随机取，
+       但比 random() 确定，出问题时能复现。 */
+    const pick = d.prepare(
+      'SELECT code, credits FROM redeem_codes WHERE batch = ? AND used_by IS NULL ' +
+      'AND (expires_at IS NULL OR expires_at >= ?) ORDER BY code LIMIT 1'
+    ).get(b, now);
+    if (!pick) {
+      const left = d.prepare('SELECT COUNT(*) AS n FROM redeem_codes WHERE batch = ? AND used_by IS NULL').get(b);
+      if (!left || !Number(left.n)) { throw fail('BATCH_EXHAUSTED', '这个邀请链接的名额已经领完了'); }
+      /* 还有没领的码但都过期了：按链接过期回，提示才准确 */
+      throw fail('BATCH_EXPIRED', '邀请链接已过期');
+    }
+
+    const claimed = d.prepare('UPDATE redeem_codes SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL')
+      .run(userId, now, pick.code);
+    if (!claimed || Number(claimed.changes) !== 1) {
+      throw fail('BATCH_EXHAUSTED', '这个邀请链接的名额刚被领完，请稍后再试');
+    }
+
+    const credits = Number(pick.credits) || 0;
+    insert(d, { userId: userId, credits: credits, kind: 'redeem', ref: String(pick.code), memo: '邀请链接领取' });
+    return { balance: balance(userId), credits: credits, code: String(pick.code), batch: b, alreadyOwned: false };
+  });
+}
+
 /* 支付入账：ref = 支付单号，重放幂等（返回 duplicated 供回调判断） */
 function payCredit(userId, credits, ref, memo) {
   const amount = Number(credits) || 0;
@@ -237,6 +308,7 @@ module.exports = {
   refund,
   refundCore,
   redeem,
+  redeemBatch,
   payCredit,
   grant,
   listTxns,

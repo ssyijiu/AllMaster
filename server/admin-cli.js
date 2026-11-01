@@ -11,6 +11,8 @@
  *   node server/admin-cli.js code 10 5 b --days 0  # 生成永久码；--days N 指定有效期天数
  *   node server/admin-cli.js code 10 20 launch --new-only --per-user 1  # 拉新批次：仅新用户、每人 1 张
  *   node server/admin-cli.js codes [状态]           # 列出兑换码（unused/used/expired/all，默认 unused）
+ *   node server/admin-cli.js invite 10 50 小红书    # 生成拉新邀请链接（?batch=，服务端自动发码）
+ *   node server/admin-cli.js invites               # 列出邀请批次与已领/剩余
  *   node server/admin-cli.js grant a@b.com 5 备注   # 给某邮箱充值 5 积分
  *   node server/admin-cli.js orders 24             # 最近 24 小时的生成单
  *   node server/admin-cli.js health                # 生成单巡检摘要
@@ -46,6 +48,8 @@ function help() {
     '',
     '  node server/admin-cli.js code <积分> [数量] [批次]',
     '  node server/admin-cli.js codes',
+    '  node server/admin-cli.js invite <积分> <名额> [渠道名] [--days N] [--per-user N] [--any-user] [--origin URL]',
+    '  node server/admin-cli.js invites',
     '  node server/admin-cli.js grant <邮箱> <积分> [备注]',
     '  node server/admin-cli.js orders [小时]',
     '  node server/admin-cli.js health',
@@ -106,6 +110,92 @@ function cmdCode() {
   console.log('批次 ' + batch + '，每码 ' + credits + ' 积分，共 ' + codes.length + ' 个，有效期 ' + (days > 0 ? days + ' 天（至 ' + fmtTime(expiresAt) + '）' : '永久') + '；规则：' + ruleText + '\n');
   codes.forEach((c) => console.log('  ' + c));
   console.log('\n（兑换入口：站点首页钱包弹窗 → 兑换码）');
+}
+
+/* 邀请链接（批次自动发码）：一条链接发给所有人，服务端给每个点开的人分一张码。
+   用法：invite <积分> <名额> [渠道名] [--days N] [--per-user N] [--any-user] [--origin URL] [--landing PATH]
+   默认：仅新用户、每人 1 张、30 天有效、落地 /pixelart——拉新的默认口径。 */
+function cmdInvite() {
+  const flags = {};
+  const rest = [];
+  const args = argv.slice(1);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--any-user') { flags.anyUser = true; continue; }
+    const eq = a.indexOf('=');
+    const name = eq > 0 ? a.slice(0, eq) : a;
+    if (name === '--days' || name === '--per-user' || name === '--origin' || name === '--landing') {
+      const raw = eq > 0 ? a.slice(eq + 1) : args[++i];
+      flags[name.slice(2)] = name === '--origin' || name === '--landing' ? raw : Number(raw);
+      continue;
+    }
+    rest.push(a);
+  }
+  const credits = Number(rest[0]);
+  const quota = Math.max(1, Math.min(Number(rest[1]) || 1, 2000));
+  const label = rest[2] || '';
+  const days = flags.days === undefined ? 30 : Math.floor(flags.days);
+  const perUser = flags['per-user'] === undefined ? 1 : Math.floor(flags['per-user']);
+  const newOnly = !flags.anyUser;
+  const origin = String(flags.origin || process.env.PUBLIC_ORIGIN || 'https://dotbeads.online').replace(/\/+$/, '');
+  const landing = flags.landing || '/pixelart';
+  if (!credits || credits <= 0) { throw new Error('积分必须是正整数'); }
+  if (Number.isNaN(days) || days < 0 || days > 3650) { throw new Error('有效期应为 0（永久）或 1~3650 天'); }
+  if (Number.isNaN(perUser) || perUser < 0 || perUser > 100) { throw new Error('每人限领应为 0（不限）或 1~100'); }
+
+  const now = dbmod.nowMs();
+  const expiresAt = days > 0 ? now + days * 24 * 3600 * 1000 : null;
+  const out = dbmod.tx((d) => {
+    let batch = '';
+    for (let t = 0; t < 6; t++) {
+      const candidate = 'IV' + randomCode(8);
+      if (!d.prepare('SELECT 1 FROM redeem_batches WHERE batch = ?').get(candidate)) { batch = candidate; break; }
+    }
+    if (!batch) { throw new Error('批次号生成失败，请重试'); }
+    d.prepare(
+      'INSERT INTO redeem_batches (batch, label, landing, credits, quota, new_user_only, per_user_limit, expires_at, active, created_at) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)'
+    ).run(batch, label, landing, credits, quota, newOnly ? 1 : 0, perUser, expiresAt, now);
+    const stmt = d.prepare('INSERT INTO redeem_codes (code, credits, batch, created_at, expires_at, new_user_only, per_user_limit) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    for (let i = 0; i < quota; i++) {
+      let code = '';
+      for (let t = 0; t < 8; t++) {
+        const candidate = randomCode(10);
+        if (!d.prepare('SELECT 1 FROM redeem_codes WHERE code = ?').get(candidate)) { code = candidate; break; }
+      }
+      if (!code) { throw new Error('生成唯一码失败，请重试'); }
+      stmt.run(code, credits, batch, now, expiresAt, newOnly ? 1 : 0, perUser);
+    }
+    return batch;
+  });
+  const sep = landing.indexOf('?') === -1 ? '?' : '&';
+  console.log('邀请链接已生成：');
+  console.log('\n  ' + origin + landing + sep + 'batch=' + out + '\n');
+  console.log('渠道 ' + (label || '(未命名)') + '，每份 ' + credits + ' 积分，名额 ' + quota + ' 个，' +
+    (days > 0 ? days + ' 天有效（至 ' + fmtTime(expiresAt) + '）' : '永久有效') + '；规则：' +
+    (newOnly ? '仅限新用户' : '不限新老') + '，每人' + (perUser > 0 ? '最多 ' + perUser + ' 张' : '不限'));
+  console.log('（这条链接可以群发/印物料；每个点开的人各自领一张，领完即止）');
+}
+
+function cmdInvites() {
+  const rows = dbmod.db.prepare(
+    'SELECT b.batch, b.label, b.credits, b.quota, b.new_user_only, b.per_user_limit, b.expires_at, b.active, b.created_at, ' +
+    '  (SELECT COUNT(*) FROM redeem_codes c WHERE c.batch = b.batch AND c.used_by IS NOT NULL) AS used, ' +
+    '  (SELECT COUNT(*) FROM redeem_codes c WHERE c.batch = b.batch) AS issued ' +
+    'FROM redeem_batches b ORDER BY b.created_at DESC LIMIT 100'
+  ).all();
+  if (!rows.length) { return console.log('还没有邀请链接'); }
+  const now = dbmod.nowMs();
+  console.log('邀请批次（最多 100 条）：');
+  rows.forEach((r) => {
+    const st = !Number(r.active) ? '已停用'
+      : (r.expires_at && r.expires_at < now ? '已过期'
+        : (r.issued - r.used <= 0 ? '已领完' : '发放中'));
+    const rule = (Number(r.new_user_only) === 1 ? '仅新用户' : '不限新老') +
+      (Number(r.per_user_limit) > 0 ? '·每人' + r.per_user_limit + '张' : '·不限量');
+    console.log('  ' + r.batch + '  ' + (r.label || '-') + '  ' + r.credits + ' 积分  ' +
+      r.used + '/' + r.issued + ' 已领  [' + rule + ']  ' + st);
+  });
 }
 
 function cmdCodes() {
@@ -298,6 +388,8 @@ function cmdConfigCheck(data) {
 try {
   if (cmd === 'code') { cmdCode(); }
   else if (cmd === 'codes') { cmdCodes(); }
+  else if (cmd === 'invite') { cmdInvite(); }
+  else if (cmd === 'invites') { cmdInvites(); }
   else if (cmd === 'grant') { cmdGrant(); }
   else if (cmd === 'orders') { cmdOrders(); }
   else if (cmd === 'health') { cmdHealth(); }

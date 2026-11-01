@@ -46,6 +46,31 @@
 - **存量**：v3 迁移默认「不限新老 + 每人 1 张」，与升级前「一张码一条链接」的用法一致，不会突然拒掉老用户。
 - **命令行**：`node server/admin-cli.js code 10 20 launch --new-only --per-user 1`；`codes [状态]` 会显示每张码的规则。
 
+**批次邀请链接（2026-11-01，`?batch=XXXX`）**：一条链接 = 一批名额，服务端给每个点开的人
+**当场分一张码并直接入账**，不用「一码一条链接」群发几百条，也自带渠道口径。
+
+```
+用户点开 /pixelart?batch=IV7KQ3M2XZ
+   → platform.js 抓参、存 sessionStorage、把参数从地址栏抹掉（未登录先弹登录框）
+   → /api/rpc/wallet_redeem_batch { p_batch }
+   → wallet.redeemBatch：单事务内「校验链接 → 校验规则 → 选一张没被领的码 → 抢占 → 入账」
+   → 前端 toast「已到账 N 积分，可以去转图啦」
+```
+
+- **为什么不做「先发码、前端再拿码兑」两步**：中间态（已判给某人但没入账）一断网就永久占住一张码，
+  还得写回收；单事务分配没有这个洞。两个人同时点开，`BEGIN IMMEDIATE` 串行化，第二个人拿下一张。
+- **表**：`redeem_batches`（batch 主键 / label 渠道名 / landing 落地页 / credits / quota / 两份规则 / expires_at / active）。
+  码仍放在 `redeem_codes`（`batch` 关联），所以后台「兑换码列表」照旧能看到每一张码与使用人；
+  规则在码上也存一份，**发码入口与链接入口同一套判定**（`wallet.redeemBatch` 与 `wallet.redeem` 等价）。
+- **链接级信息单独一张表的理由**：停用链接不该去改几百行码；名额领光了链接还要能回 `BATCH_EXHAUSTED`。
+- **批次号**：`IV` + 8 位无歧义字符（32^8）。随机而非自增，既不暴露发行量，也猜不到别批。
+- **错误码**：`BATCH_INVALID` / `BATCH_CLOSED` / `BATCH_EXPIRED` / `BATCH_EXHAUSTED`；
+  规则类沿用 `CODE_NEW_USER_ONLY` / `CODE_BATCH_LIMIT`（提示文案同一份，用户不需要知道后台怎么发的）。
+- **接口**：`POST /api/admin/invite`（建批 + 发码）、`GET /api/admin/invite/list`（配额/已领/剩余/领取人数）、
+  `POST /api/admin/invite/update`（停用/启用/改名）。
+- **命令行**：`node server/admin-cli.js invite 10 50 小红书-11月 --days 30`（默认仅新用户、每人 1 张、落地 `/pixelart`）；
+  `invites` 看各批已领/剩余。
+
 ### 0.1 过渡架构：雅加达反代 —— 临时设施，备案通过后拆除
 
 **决策（2026-10-31，用户拍板）**：数据库继续放广州，不搬到境外；

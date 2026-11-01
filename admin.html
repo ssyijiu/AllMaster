@@ -242,18 +242,76 @@
           <p class="hint">示例：<code class="mono" id="linkPreview">https://dotbeads.online/pixelart?code=XXXXXXXXXX</code></p>
         </div>
 
+        <!-- 邀请链接：一条链接 = 一批名额。服务端给每个点开的人分一张码，不用一码一条链接 -->
+        <div class="entry-card" style="margin-top:16px;">
+          <h4>邀请链接（自动发码）</h4>
+          <p class="hint">一条链接发给所有人：点开 → 登录 → 服务端从这批名额里取一张码直接入账，提示「已到账 N 积分，可以去转图啦」。链接自带渠道名，能看每批领了多少、还剩多少。</p>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;">
+            <div style="flex:1 1 200px;min-width:160px;">
+              <label class="field-label">渠道 / 活动名（只给自己看）</label>
+              <input class="text-input" id="invLabel" placeholder="如 小红书-11月"/>
+            </div>
+            <div style="flex:0 0 110px;">
+              <label class="field-label">每张面值</label>
+              <input class="text-input mono" id="invCredits" type="number" min="1" value="10"/>
+            </div>
+            <div style="flex:0 0 110px;">
+              <label class="field-label">名额（张）</label>
+              <input class="text-input mono" id="invCount" type="number" min="1" max="2000" value="50"/>
+            </div>
+            <div style="flex:0 0 110px;">
+              <label class="field-label">有效期（天）</label>
+              <input class="text-input mono" id="invDays" type="number" min="0" max="3650" value="30"/>
+            </div>
+            <div style="flex:0 0 110px;">
+              <label class="field-label">每人限领</label>
+              <input class="text-input mono" id="invPerUser" type="number" min="0" max="100" value="1"/>
+            </div>
+            <div style="flex:0 0 auto;">
+              <label class="field-label">落地页</label>
+              <select class="text-input" id="invPath" style="width:auto;">
+                <option value="/pixelart">/pixelart（拼豆·经典版）</option>
+                <option value="/">/（拼豆首页）</option>
+                <option value="/apps/avatar/">/apps/avatar/（头像）</option>
+              </select>
+            </div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;margin:8px 0 4px;font-size:13px;cursor:pointer;">
+            <input type="checkbox" id="invNewOnly" checked style="width:16px;height:16px;cursor:pointer;"/>
+            <span>仅限新用户（此前没有任何积分流水的账号）</span>
+          </label>
+          <p class="hint" id="invRuleHint"></p>
+          <button class="btn primary small" id="btnCreateInvite" type="button" style="margin-top:4px;">生成邀请链接</button>
+          <p class="hint" id="invMsg"></p>
+          <div id="invResultBox" style="display:none;gap:8px;align-items:center;margin-top:6px;">
+            <input class="text-input mono" id="invResult" readonly style="flex:1 1 auto;"/>
+            <button class="btn ghost small" id="btnCopyInvite" type="button" style="white-space:nowrap;flex:0 0 auto;">复制链接</button>
+          </div>
+          <div style="overflow-x:auto;margin-top:12px;">
+            <table id="invTable">
+              <thead>
+                <tr><th>渠道 / 活动</th><th class="mono">批次</th><th>面值</th><th>名额</th><th>已领</th><th>剩余</th><th>领取人数</th><th>有效期至</th><th>状态</th><th>操作</th></tr>
+              </thead>
+              <tbody id="invRows"><tr><td colspan="10" class="hint">加载中…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
         <!-- 兑换码总表：所有生成过的码与状态（未用 / 已用 / 已过期），可按状态与批次筛选 -->
         <div class="entry-card" style="margin-top:16px;">
           <h4>兑换码列表</h4>
           <style>
-            #redeemTable { width: 100%; border-collapse: collapse; font-size: 13px; }
-            #redeemTable th, #redeemTable td { text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(0,0,0,.08); white-space: nowrap; }
-            #redeemTable th { color: #6B7280; font-weight: 500; }
-            #redeemTable td.mono, #redeemTable th.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+            #redeemTable, #invTable { width: 100%; border-collapse: collapse; font-size: 13px; }
+            #redeemTable th, #redeemTable td, #invTable th, #invTable td { text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(0,0,0,.08); white-space: nowrap; }
+            #redeemTable th, #invTable th { color: #6B7280; font-weight: 500; }
+            #redeemTable td.mono, #redeemTable th.mono, #invTable td.mono, #invTable th.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
             .redeem-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
             .redeem-badge.unused { background: #FEF3C7; color: #92400E; }
             .redeem-badge.used { background: #E5E7EB; color: #374151; }
             .redeem-badge.expired { background: #FEE2E2; color: #991B1B; }
+            .redeem-badge.open { background: #DCFCE7; color: #166534; }
+            .redeem-badge.closed { background: #E5E7EB; color: #374151; }
+            .redeem-badge.exhausted { background: #FEF3C7; color: #92400E; }
           </style>
           <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0 4px;">
             <select class="text-input" id="redeemStatus" style="width:auto;">
@@ -536,6 +594,7 @@
       renderSettings();
       loadUsers();
       loadRedeemList();
+      loadInviteList();
     }
 
     /* ---------- 渲染：生成选项（头像页参考图入口） ---------- */
@@ -1085,6 +1144,130 @@
         btn.textContent = '复制失败';
         setTimeout(function () { btn.textContent = label; btn.disabled = false; }, 1600);
       });
+    });
+
+    /* ---------- 邀请链接（/api/admin/invite） ----------
+       一条链接 = 一批名额。用户点开 ?batch=XXXX，服务端当场分一张码并入账，
+       所以链接可以群发、可以印在物料上，不用担心「一码一条链接」发不过来。 */
+    function buildInviteLink(batch, landing) {
+      var c = linkCfg();
+      var path = landing || '/pixelart';
+      var sep = path.indexOf('?') === -1 ? '?' : '&';
+      return c.origin + path + sep + 'batch=' + encodeURIComponent(batch);
+    }
+
+    /* 规则摘要：与发码面板同一套说法，发之前先看清「谁能领、能领几张」 */
+    function renderInvRuleHint() {
+      var newOnly = $('invNewOnly').checked;
+      var limit = parseInt($('invPerUser').value, 10);
+      var text;
+      if (isNaN(limit) || limit < 0) { text = '每人限领请填 0（不限）或 1~100'; }
+      else if (!newOnly && limit === 0) { text = '⚠️ 不限新老、每人也不限量：谁拿到链接谁就能一直领，慎重'; }
+      else if (!newOnly) { text = '不限新老，每人最多领 ' + limit + ' 张'; }
+      else if (limit === 0) { text = '⚠️ 仅限新用户，但每人不限量：新用户刷新一次就多领一张，建议设成 1'; }
+      else { text = '仅限新用户，每人最多领 ' + limit + ' 张'; }
+      $('invRuleHint').textContent = text;
+    }
+    $('invNewOnly').addEventListener('change', renderInvRuleHint);
+    $('invPerUser').addEventListener('input', renderInvRuleHint);
+    renderInvRuleHint();
+
+    var INV_STATUS_TEXT = { open: '发放中', closed: '已停用', exhausted: '已领完', expired: '已过期' };
+
+    function loadInviteList() {
+      $('invRows').innerHTML = '<tr><td colspan="10" class="hint">加载中…</td></tr>';
+      adminApi('GET', '/api/admin/invite/list').then(function (data) {
+        var rows = (data && data.data) || [];
+        if (!rows.length) {
+          $('invRows').innerHTML = '<tr><td colspan="10" class="hint">还没有邀请链接。上面填好渠道与名额，点「生成邀请链接」。</td></tr>';
+          return;
+        }
+        $('invRows').innerHTML = rows.map(function (r) {
+          var rule = (r.newUserOnly ? '仅新用户' : '不限新老') +
+            (r.perUserLimit > 0 ? ' · 每人 ' + r.perUserLimit + ' 张' : ' · 不限量');
+          var nameCell = (r.label ? esc(r.label) : '<span class="hint">未命名</span>') +
+            '<br><span style="font-size:12px;color:#6B7280;">' + rule + '</span>';
+          var toggleText = r.active ? '停用' : '启用';
+          return '<tr>' +
+            '<td>' + nameCell + '</td>' +
+            '<td class="mono">' + esc(r.batch) + '</td>' +
+            '<td>' + r.credits + '</td>' +
+            '<td>' + r.quota + '</td>' +
+            '<td>' + r.used + '</td>' +
+            '<td>' + r.remaining + '</td>' +
+            '<td>' + r.users + '</td>' +
+            '<td>' + (r.expiresAt ? fmtTs(r.expiresAt) : '永久') + '</td>' +
+            '<td><span class="redeem-badge ' + r.status + '">' + (INV_STATUS_TEXT[r.status] || r.status) + '</span></td>' +
+            '<td>' +
+              '<button class="btn ghost small" type="button" data-inv-copy="' + esc(r.batch) + '" data-inv-landing="' + esc(r.landing) + '">复制链接</button> ' +
+              '<button class="btn ghost small" type="button" data-inv-toggle="' + esc(r.batch) + '" data-inv-active="' + (r.active ? '1' : '0') + '">' + toggleText + '</button>' +
+            '</td>' +
+            '</tr>';
+        }).join('');
+      }).catch(function (err) {
+        $('invRows').innerHTML = '<tr><td colspan="10" class="hint">加载失败：' + esc(err.message || '未知错误') + '</td></tr>';
+      });
+    }
+
+    $('btnCreateInvite').addEventListener('click', function () {
+      var credits = parseInt($('invCredits').value, 10);
+      var count = parseInt($('invCount').value, 10);
+      var days = parseInt($('invDays').value, 10);
+      var perUser = parseInt($('invPerUser').value, 10);
+      var label = $('invLabel').value.trim();
+      if (!credits || credits <= 0 || !count || count <= 0) { $('invMsg').textContent = '请填写面值与名额'; return; }
+      if (isNaN(days) || days < 0 || days > 3650) { $('invMsg').textContent = '有效期应为 0（永久）或 1~3650 天'; return; }
+      if (isNaN(perUser) || perUser < 0 || perUser > 100) { $('invMsg').textContent = '每人限领应为 0（不限）或 1~100'; return; }
+      $('btnCreateInvite').disabled = true;
+      adminApi('POST', '/api/admin/invite', {
+        credits: credits, count: count, expiresInDays: days,
+        newUserOnly: $('invNewOnly').checked, perUserLimit: perUser,
+        label: label, landing: $('invPath').value
+      }).then(function (data) {
+        var url = buildInviteLink(data.batch, data.landing);
+        $('invResult').value = url;
+        $('invResultBox').style.display = 'flex';
+        $('invMsg').textContent = '已生成：' + (data.quota || count) + ' 个名额，每个 ' + data.credits + ' 积分' +
+          (data.expiresInDays > 0 ? '，' + data.expiresInDays + ' 天内有效' : '，永久有效') +
+          '。把下面的链接直接发出去即可。';
+        loadInviteList();
+        loadRedeemList();
+      }).catch(function (err) { $('invMsg').textContent = walletErrText(err); })
+        .then(function () { $('btnCreateInvite').disabled = false; });
+    });
+
+    $('btnCopyInvite').addEventListener('click', function () {
+      var url = $('invResult').value;
+      if (!url) { return; }
+      copyText(url).then(function () { $('invMsg').textContent = '邀请链接已复制，可以直接发出去'; })
+        .catch(function () { $('invMsg').textContent = '复制失败：请手动选中输入框复制'; });
+    });
+
+    /* 列表操作：复制链接 / 停用启用（事件委托，行是动态渲染的） */
+    $('invRows').addEventListener('click', function (e) {
+      var t = e.target;
+      var copyBtn = t && t.closest ? t.closest('[data-inv-copy]') : null;
+      if (copyBtn) {
+        var url = buildInviteLink(copyBtn.getAttribute('data-inv-copy'), copyBtn.getAttribute('data-inv-landing'));
+        copyBtn.disabled = true;
+        copyText(url).then(function () {
+          copyBtn.textContent = '已复制';
+          setTimeout(function () { copyBtn.textContent = '复制链接'; copyBtn.disabled = false; }, 1200);
+        }).catch(function () {
+          copyBtn.textContent = '复制失败';
+          setTimeout(function () { copyBtn.textContent = '复制链接'; copyBtn.disabled = false; }, 1600);
+        });
+        return;
+      }
+      var toggleBtn = t && t.closest ? t.closest('[data-inv-toggle]') : null;
+      if (toggleBtn) {
+        var batch = toggleBtn.getAttribute('data-inv-toggle');
+        var next = toggleBtn.getAttribute('data-inv-active') === '1' ? false : true;
+        toggleBtn.disabled = true;
+        adminApi('POST', '/api/admin/invite/update', { batch: batch, active: next })
+          .then(function () { loadInviteList(); })
+          .catch(function (err) { $('invMsg').textContent = walletErrText(err); toggleBtn.disabled = false; });
+      }
     });
 
     function showSaveMsg(msg, cls) {

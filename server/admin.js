@@ -344,51 +344,176 @@ async function handleGrant(req, res) {
   return sendJson(res, 200, { ok: true, email: target.email, balance: r.balance });
 }
 
+/* ---------- 一批码落库（发码 / 邀请链接共用） ----------
+ * 整批在一个事务里写：要么全成，要么一张都不发（不留半批残码）。
+ * 冲突重试 8 次：32^10 的码空间里几乎不会撞，重试只是给极端情况兜底。 */
+function insertBatchCodes(d, opts) {
+  const stmt = d.prepare(
+    'INSERT INTO redeem_codes (code, credits, batch, created_at, expires_at, new_user_only, per_user_limit) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  );
+  const codes = [];
+  for (let i = 0; i < opts.count; i++) {
+    let code = '';
+    for (let t = 0; t < 8; t++) {
+      const candidate = randomCode(10);
+      if (!d.prepare('SELECT 1 FROM redeem_codes WHERE code = ?').get(candidate)) { code = candidate; break; }
+    }
+    if (!code) { throw new Error('CODE_GEN_FAILED'); }
+    stmt.run(code, opts.credits, opts.batch, opts.now, opts.expiresAt, opts.newUserOnly ? 1 : 0, opts.perUserLimit);
+    codes.push(code);
+  }
+  return codes;
+}
+
+/* 面值 / 张数 / 有效期 / 每人限领：两个生成入口同一套校验，避免口径漂移 */
+function parseCodeParams(body, out) {
+  const e = out || {};
+  e.credits = Math.floor(Number(body.credits) || 0);
+  e.count = Math.max(1, Math.min(Math.floor(Number(body.count) || 1), 2000));
+  e.days = Math.floor(Number(body.expiresInDays === undefined ? 30 : body.expiresInDays));
+  e.newUserOnly = body.newUserOnly === true || body.newUserOnly === 1 || body.newUserOnly === '1';
+  const raw = body.perUserLimit === undefined || body.perUserLimit === '' ? 1 : Math.floor(Number(body.perUserLimit));
+  e.perUserLimit = raw;
+  if (e.credits <= 0) { return { code: 'INVALID_CREDITS', message: '面值必须是正整数' }; }
+  if (Number.isNaN(e.days) || e.days < 0 || e.days > 3650) {
+    return { code: 'INVALID_EXPIRY', message: '有效期应为 0（永久）或 1~3650 天' };
+  }
+  if (Number.isNaN(raw) || raw < 0 || raw > 100) {
+    return { code: 'INVALID_PER_USER_LIMIT', message: '每人限领应为 0（不限）或 1~100' };
+  }
+  return null;
+}
+
 async function handleRedeem(req, res) {
   const user = requireAdmin(req, res);
   if (!user) { return; }
   const body = await readJson(req);
-  const credits = Math.floor(Number(body.credits) || 0);
-  const count = Math.max(1, Math.min(Math.floor(Number(body.count) || 1), 500));
-  /* 有效期：默认 30 天；0 = 永久（显式选择才允许，避免变成永久负债）；上限 10 年 */
-  const days = Math.floor(Number(body.expiresInDays === undefined ? 30 : body.expiresInDays));
-  if (Number.isNaN(days) || days < 0 || days > 3650) {
-    return sendJson(res, 400, { error: { code: 'INVALID_EXPIRY', message: '有效期应为 0（永久）或 1~3650 天' } });
-  }
-  if (credits <= 0) { return sendJson(res, 400, { error: { code: 'INVALID_CREDITS', message: '面值必须是正整数' } }); }
-  /* 批次规则：newUserOnly = 仅限此前无积分流水的新账号；perUserLimit = 同批每人最多领几张
-     （0 = 不限）。默认「不限新老 + 每人 1 张」，与升级前一致；拉新活动把 newUserOnly 打开。 */
-  const newUserOnly = body.newUserOnly === true || body.newUserOnly === 1 || body.newUserOnly === '1';
-  const perUserLimitRaw = body.perUserLimit === undefined || body.perUserLimit === '' ? 1 : Math.floor(Number(body.perUserLimit));
-  if (Number.isNaN(perUserLimitRaw) || perUserLimitRaw < 0 || perUserLimitRaw > 100) {
-    return sendJson(res, 400, { error: { code: 'INVALID_PER_USER_LIMIT', message: '每人限领应为 0（不限）或 1~100' } });
-  }
+  const p = {};
+  const bad = parseCodeParams(body, p);
+  if (bad) { return sendJson(res, 400, { error: bad }); }
   const batch = cleanStr(body.batch, 40) || ('ADM' + Date.now().toString(36).toUpperCase());
   const now = dbmod.nowMs();
-  const expiresAt = days > 0 ? now + days * 24 * 3600 * 1000 : null;
-  const codes = [];
+  const expiresAt = p.days > 0 ? now + p.days * 24 * 3600 * 1000 : null;
+  let codes = [];
   try {
     /* 一批码在一个事务里落库：要么全成，要么一张都不发 */
-    dbmod.tx((d) => {
-      const stmt = d.prepare('INSERT INTO redeem_codes (code, credits, batch, created_at, expires_at, new_user_only, per_user_limit) VALUES (?, ?, ?, ?, ?, ?, ?)');
-      for (let i = 0; i < count; i++) {
-        let code = '';
-        for (let t = 0; t < 8; t++) {
-          const candidate = randomCode(10);
-          if (!d.prepare('SELECT 1 FROM redeem_codes WHERE code = ?').get(candidate)) { code = candidate; break; }
-        }
-        if (!code) { throw new Error('CODE_GEN_FAILED'); }
-        stmt.run(code, credits, batch, now, expiresAt, newUserOnly ? 1 : 0, perUserLimitRaw);
-        codes.push(code);
-      }
-    });
+    codes = dbmod.tx((d) => insertBatchCodes(d, {
+      batch: batch, credits: p.credits, count: p.count, now: now, expiresAt: expiresAt,
+      newUserOnly: p.newUserOnly, perUserLimit: p.perUserLimit
+    }));
   } catch (e) {
     return sendJson(res, 400, { error: { code: 'CODE_GEN_FAILED', message: '兑换码生成失败（冲突过多），请重试' } });
   }
   return sendJson(res, 200, {
-    ok: true, batch: batch, credits: credits, expiresInDays: days, expiresAt: expiresAt,
-    newUserOnly: newUserOnly, perUserLimit: perUserLimitRaw, codes: codes
+    ok: true, batch: batch, credits: p.credits, expiresInDays: p.days, expiresAt: expiresAt,
+    newUserOnly: p.newUserOnly, perUserLimit: p.perUserLimit, codes: codes
   });
+}
+
+/* ---------- 邀请链接（?batch=XXXX，拉新用） ----------
+ * 一条链接对应一个批次：用户点开 → 登录 → 服务端从这批名额里取一张码直接入账。
+ * 与「一码一条链接」的区别是**不用发几百条链接**，而且链接自带渠道名，
+ * 能看每批领了多少、还剩多少——这正是拉新最需要的口径。
+ * 批次号随机（IV + 8 位，无 0/O/1/I），不暴露发行量，也猜不到别批。 */
+const INVITE_LANDINGS = ['/pixelart', '/', '/apps/avatar/'];
+
+async function handleInviteCreate(req, res) {
+  const user = requireAdmin(req, res);
+  if (!user) { return; }
+  const body = await readJson(req);
+  const p = {};
+  const bad = parseCodeParams(body, p);
+  if (bad) { return sendJson(res, 400, { error: bad }); }
+  const label = cleanStr(body.label, 40);
+  const landing = INVITE_LANDINGS.indexOf(String(body.landing || '')) !== -1 ? String(body.landing) : '/pixelart';
+  const now = dbmod.nowMs();
+  const expiresAt = p.days > 0 ? now + p.days * 24 * 3600 * 1000 : null;
+
+  let batch = '';
+  let codes = [];
+  try {
+    batch = dbmod.tx((d) => {
+      /* 批次号撞车概率极低（32^8），撞了就重摇，别让后台看到 500 */
+      let id = '';
+      for (let t = 0; t < 6; t++) {
+        const candidate = 'IV' + randomCode(8);
+        if (!d.prepare('SELECT 1 FROM redeem_batches WHERE batch = ?').get(candidate)) { id = candidate; break; }
+      }
+      if (!id) { throw new Error('BATCH_GEN_FAILED'); }
+      d.prepare(
+        'INSERT INTO redeem_batches (batch, label, landing, credits, quota, new_user_only, per_user_limit, expires_at, active, created_at) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)'
+      ).run(id, label, landing, p.credits, p.count, p.newUserOnly ? 1 : 0, p.perUserLimit, expiresAt, now);
+      codes = insertBatchCodes(d, {
+        batch: id, credits: p.credits, count: p.count, now: now, expiresAt: expiresAt,
+        newUserOnly: p.newUserOnly, perUserLimit: p.perUserLimit
+      });
+      return id;
+    });
+  } catch (e) {
+    return sendJson(res, 400, { error: { code: 'BATCH_GEN_FAILED', message: '邀请链接生成失败，请重试' } });
+  }
+  return sendJson(res, 200, {
+    ok: true, batch: batch, label: label, landing: landing, credits: p.credits, quota: p.count,
+    expiresInDays: p.days, expiresAt: expiresAt, newUserOnly: p.newUserOnly, perUserLimit: p.perUserLimit,
+    codes: codes
+  });
+}
+
+function handleInviteList(req, res) {
+  const user = requireAdmin(req, res);
+  if (!user) { return; }
+  const rows = dbmod.db.prepare(
+    'SELECT b.batch, b.label, b.landing, b.credits, b.quota, b.new_user_only, b.per_user_limit, ' +
+    '       b.expires_at, b.active, b.created_at, ' +
+    '       (SELECT COUNT(*) FROM redeem_codes c WHERE c.batch = b.batch) AS issued, ' +
+    '       (SELECT COUNT(*) FROM redeem_codes c WHERE c.batch = b.batch AND c.used_by IS NOT NULL) AS used, ' +
+    '       (SELECT COUNT(DISTINCT c.used_by) FROM redeem_codes c WHERE c.batch = b.batch AND c.used_by IS NOT NULL) AS users ' +
+    'FROM redeem_batches b ORDER BY b.created_at DESC LIMIT 200'
+  ).all();
+  const now = dbmod.nowMs();
+  return sendJson(res, 200, {
+    data: rows.map((r) => ({
+      batch: r.batch,
+      label: r.label || '',
+      landing: r.landing || '/pixelart',
+      credits: r.credits,
+      quota: r.quota || 0,
+      newUserOnly: Number(r.new_user_only) === 1,
+      perUserLimit: Number(r.per_user_limit) || 0,
+      expiresAt: r.expires_at,
+      active: Number(r.active) === 1,
+      createdAt: r.created_at,
+      issued: Number(r.issued) || 0,
+      used: Number(r.used) || 0,
+      users: Number(r.users) || 0,
+      /* 剩余名额按「还没被领的码」算；过期但没被领的码也算剩余（只是领不了） */
+      remaining: Math.max(0, (Number(r.issued) || 0) - (Number(r.used) || 0)),
+      expired: !!(r.expires_at && Number(r.expires_at) < now),
+      status: !Number(r.active) ? 'closed'
+        : ((r.expires_at && Number(r.expires_at) < now) ? 'expired'
+          : (((Number(r.issued) || 0) - (Number(r.used) || 0)) <= 0 ? 'exhausted' : 'open'))
+    })),
+    error: null
+  });
+}
+
+/* 停用 / 改名：停用只改链接状态，不动已发出去的码（已领的积分不受影响） */
+async function handleInviteUpdate(req, res) {
+  const user = requireAdmin(req, res);
+  if (!user) { return; }
+  const body = await readJson(req);
+  const batch = cleanStr(body.batch, 40);
+  if (!batch) { return sendJson(res, 400, { error: { code: 'BAD_BATCH', message: '缺少批次号' } }); }
+  const row = dbmod.db.prepare('SELECT batch FROM redeem_batches WHERE batch = ?').get(batch);
+  if (!row) { return sendJson(res, 404, { error: { code: 'NO_BATCH', message: '没有这个邀请批次' } }); }
+  if (body.active !== undefined) {
+    dbmod.db.prepare('UPDATE redeem_batches SET active = ? WHERE batch = ?').run(body.active ? 1 : 0, batch);
+  }
+  if (body.label !== undefined) {
+    dbmod.db.prepare('UPDATE redeem_batches SET label = ? WHERE batch = ?').run(cleanStr(body.label, 40), batch);
+  }
+  return sendJson(res, 200, { ok: true, batch: batch });
 }
 
 /* 兑换码列表：状态筛选 + 批次筛选 + 分页 + 汇总。
@@ -422,6 +547,17 @@ function handleRedeemList(req, res, url) {
     whereSql + ' ORDER BY created_at DESC, code LIMIT ? OFFSET ?'
   ).all(...args, pageSize, (page - 1) * pageSize);
 
+  /* 本页涉及到的邀请批次名（渠道）：单独查一次比 JOIN 省事——
+     redeem_codes / redeem_batches 都有 batch 列，JOIN 后每个条件都得加前缀。 */
+  const labels = {};
+  const batchIds = Array.from(new Set(rows.map((r) => r.batch).filter(Boolean)));
+  if (batchIds.length) {
+    const ph = batchIds.map(() => '?').join(',');
+    for (const r of d.prepare('SELECT batch, label FROM redeem_batches WHERE batch IN (' + ph + ')').all(...batchIds)) {
+      labels[r.batch] = r.label || '';
+    }
+  }
+
   /* 汇总永远看全量（不受筛选影响），方便一眼看到还挂着多少未兑换负债 */
   const stats = d.prepare(
     "SELECT COUNT(*) AS total," +
@@ -437,6 +573,7 @@ function handleRedeemList(req, res, url) {
       code: r.code,
       credits: r.credits,
       batch: r.batch || '',
+      batchLabel: labels[r.batch] || '',
       newUserOnly: Number(r.new_user_only) === 1,
       perUserLimit: Number(r.per_user_limit) || 0,
       createdAt: r.created_at,
@@ -495,6 +632,9 @@ const ROUTES = {
   '/api/admin/grant': { POST: handleGrant },
   '/api/admin/redeem': { POST: handleRedeem },
   '/api/admin/redeem/list': { GET: handleRedeemList },
+  '/api/admin/invite': { POST: handleInviteCreate },
+  '/api/admin/invite/list': { GET: handleInviteList },
+  '/api/admin/invite/update': { POST: handleInviteUpdate },
   '/api/admin/users': { GET: handleUsers }
 };
 

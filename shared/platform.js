@@ -441,6 +441,10 @@
       CODE_EXPIRED: '兑换码已过期',
       CODE_BATCH_LIMIT: '这批兑换码每人限领 1 张，你已经领过了',
       CODE_NEW_USER_ONLY: '这批兑换码是给新用户的见面礼，你的账号已有积分记录～可以直接用现有积分去转图',
+      BATCH_INVALID: '邀请链接无效或已被删除',
+      BATCH_CLOSED: '这个邀请链接已经停止发放了',
+      BATCH_EXPIRED: '邀请链接已过期',
+      BATCH_EXHAUSTED: '这个邀请链接的名额已经领完了',
       TOO_MANY: '兑换尝试太频繁，请稍后再试',
       AUTH_REQUIRED: '请先登录后再兑换',
       INSUFFICIENT_BALANCE: '积分不足'
@@ -548,6 +552,29 @@
         }).catch(function (err) {
           var parsed = redeemErrText(err && err.message);
           err.redeemCode = (err && err.code) || parsed.code;   /* 服务端给的机器码优先 */
+          err.message = parsed.text;
+          throw err;
+        });
+      },
+      /* 邀请链接领取：batch 是链接里的批次号，服务端从这批名额里分一张码并直接入账。
+       * 返回结构与 redeem 一致（credits = 本次到账面值，alreadyOwned = 之前已领过）。 */
+      redeemBatch: function (batch) {
+        return walletRpc('wallet_redeem_batch', { p_batch: batch }).then(function (res) {
+          var out = (res && typeof res === 'object')
+            ? {
+                balance: typeof res.balance === 'number' ? res.balance : walletService.balance,
+                credits: typeof res.credits === 'number' ? res.credits : null,
+                code: res.code || '',
+                batch: res.batch || batch,
+                alreadyOwned: !!res.alreadyOwned
+              }
+            : { balance: typeof res === 'number' ? res : walletService.balance, credits: null, code: '', batch: batch, alreadyOwned: false };
+          walletService.balance = out.balance;
+          walletService.renderChip();
+          return out;
+        }).catch(function (err) {
+          var parsed = redeemErrText(err && err.message);
+          err.redeemCode = (err && err.code) || parsed.code;
           err.message = parsed.text;
           throw err;
         });
@@ -717,54 +744,72 @@
     }
 
     /* =========================================================
-     * 兑换链接自动入账（?code=XXXX）
+     * 兑换 / 邀请链接自动入账（?code=XXXX / ?batch=XXXX）
      * ---------------------------------------------------------
-     * 场景：管理员发出去的是带码的链接，用户点开就期望「积分已到账」，
-     * 而不是自己去找钱包弹窗把码抄一遍。三条铁律：
-     *   1. 码抓到就立刻从地址栏抹掉（history.replaceState）——避免刷新重兑、
+     * 场景：管理员发出去的是带码（或带批次）的链接，用户点开就期望「积分已到账」，
+     * 而不是自己去找钱包弹窗把码抄一遍。四条铁律：
+     *   1. 参数抓到就立刻从地址栏抹掉（history.replaceState）——避免刷新重兑、
      *      截图/转发时把别人的一次性码带出去；
-     *   2. 未登录先弹登录框，码存 sessionStorage，登录成功后再兑换；
-     *   3. 只有「重试有意义」的错误才保留待兑换（限流/网络），
-     *      码无效/已用/过期一律清掉，否则每次进站都弹一次失败。
+     *   2. 未登录先弹登录框，参数存 sessionStorage，登录成功后再领；
+     *   3. 只有「重试有意义」的错误才保留待领取（限流/网络），
+     *      码无效/已用/过期/名额领完一律清掉，否则每次进站都弹一次失败；
+     *   4. 邀请链接（batch）只存批次号，码由服务端当场分配，前端拿不到别人的码。
      * ========================================================= */
     var PENDING_CODE_KEY = 'platform.pendingRedeemCode';
-    var linkRedeem = { code: '', handled: false, prompted: false };
+    /* 邀请链接（?batch=）：服务端从批次名额里分一张码给我，不用手抄码 */
+    var PENDING_BATCH_KEY = 'platform.pendingInviteBatch';
+    var linkRedeem = { handled: false, prompted: false };
 
-    function readPendingCode() {
-      if (linkRedeem.code) { return linkRedeem.code; }
-      try { return sessionStorage.getItem(PENDING_CODE_KEY) || ''; } catch (_) { return ''; }
+    function readPending(key) {
+      try { return sessionStorage.getItem(key) || ''; } catch (_) { return ''; }
     }
-    function savePendingCode(code) {
-      linkRedeem.code = code;
-      try { sessionStorage.setItem(PENDING_CODE_KEY, code); } catch (_) {}
+    function writePending(key, v) {
+      try { sessionStorage.setItem(key, v); } catch (_) {}
     }
-    function clearPendingCode() {
-      linkRedeem.code = '';
-      try { sessionStorage.removeItem(PENDING_CODE_KEY); } catch (_) {}
+    function dropPending(key) {
+      try { sessionStorage.removeItem(key); } catch (_) {}
+    }
+    function pendingKey(type) { return type === 'batch' ? PENDING_BATCH_KEY : PENDING_CODE_KEY; }
+
+    /* 待领取清单：一条链接通常只带其中一个参数，按顺序处理 */
+    function pendingClaims() {
+      var out = [];
+      var code = readPending(PENDING_CODE_KEY);
+      var batch = readPending(PENDING_BATCH_KEY);
+      if (code) { out.push({ type: 'code', value: code }); }
+      if (batch) { out.push({ type: 'batch', value: batch }); }
+      return out;
     }
 
-    /* 从 URL 抓码并抹掉参数（保留 paid= / hash 等其它参数） */
+    /* 从 URL 抓码 / 批次并抹掉参数（保留 paid= / hash 等其它参数） */
     function captureRedeemLink() {
-      var fromSearch = /[?&]code=([A-Za-z0-9\-_\s%]{4,40})/.exec(location.search);
-      var fromHash = /[#&]code=([A-Za-z0-9\-_\s%]{4,40})/.exec(location.hash || '');
-      var m = fromSearch || fromHash;
-      if (!m) { return ''; }
-      var code = '';
-      try { code = decodeURIComponent(m[1]).trim(); } catch (_) { code = m[1].trim(); }
-      code = code.replace(/[\s\-]+/g, '');       /* 链接里带连字符/空格也认 */
-      if (code.length < 4) { return ''; }
-      savePendingCode(code);
+      var search = location.search || '';
+      var hash = location.hash || '';
+      var mCode = /[?&]code=([A-Za-z0-9\-_\s%]{4,40})/.exec(search) ||
+        /[#&]code=([A-Za-z0-9\-_\s%]{4,40})/.exec(hash);
+      var mBatch = /[?&]batch=([A-Za-z0-9\-_]{4,40})/.exec(search) ||
+        /[#&]batch=([A-Za-z0-9\-_]{4,40})/.exec(hash);
+      if (!mCode && !mBatch) { return ''; }
+      var got = '';
+      if (mCode) {
+        var code = '';
+        try { code = decodeURIComponent(mCode[1]).trim(); } catch (_) { code = mCode[1].trim(); }
+        code = code.replace(/[\s\-]+/g, '');       /* 链接里带连字符/空格也认 */
+        if (code.length >= 4) { writePending(PENDING_CODE_KEY, code); got = code; }
+      }
+      if (mBatch) {
+        var batch = '';
+        try { batch = decodeURIComponent(mBatch[1]).trim(); } catch (_) { batch = mBatch[1].trim(); }
+        if (batch.length >= 4) { writePending(PENDING_BATCH_KEY, batch.toUpperCase()); got = got || batch; }
+      }
       try {
-        var qs = location.search.replace(/^\?/, '').split('&').filter(function (kv) {
-          return kv && !/^code=/i.test(kv);
-        });
-        var hash = (location.hash || '').replace(/^#/, '').split('&').filter(function (kv) {
-          return kv && !/^code=/i.test(kv);
-        }).join('&');
-        var url = location.pathname + (qs.length ? '?' + qs.join('&') : '') + (hash ? '#' + hash : '');
+        var strip = function (kv) { return kv && !/^(code|batch)=/i.test(kv); };
+        var qs = search.replace(/^\?/, '').split('&').filter(strip);
+        var h = hash.replace(/^#/, '').split('&').filter(strip).join('&');
+        var url = location.pathname + (qs.length ? '?' + qs.join('&') : '') + (h ? '#' + h : '');
         history.replaceState(null, '', url);
       } catch (_) {}
-      return code;
+      return got;
     }
 
     function redeemToast(msg, kind) {
@@ -772,45 +817,64 @@
       showHint(msg, kind === 'error');
     }
 
-    function redeemFromLink() {
-      if (linkRedeem.handled) { return; }
-      var code = readPendingCode();
-      if (!code) { return; }
-      if (!Store.state.user) {
-        /* 只自动弹一次登录框；用户主动关掉后不再骚扰，码仍留在 sessionStorage，
-           等他下次点「登录」成功时再自动兑换。 */
-        if (!linkRedeem.prompted && els.loginModal) {
-          linkRedeem.prompted = true;
-          openLogin();
-          showLoginMsg('登录后将自动为你兑换链接里的兑换码', false);
-        }
-        return;
+    /* 到账文案：码链接与邀请链接共用「已到账 N 积分」，只有「领过了」按来源分开说，
+       免得用户对着邀请链接看到「兑换码已兑过」一头雾水 */
+    function claimMessage(r, before, type) {
+      if (r && r.alreadyOwned) {
+        return type === 'batch'
+          ? '这个邀请链接的积分你已经领过了，就在账上'
+          : '这个兑换码你已经兑换过了，积分已在账上';
       }
-      linkRedeem.handled = true;
+      if (r && typeof r.credits === 'number' && r.credits > 0) { return '已到账 ' + r.credits + ' 积分，可以去转图啦'; }
+      if (typeof before === 'number' && r && typeof r.balance === 'number' && r.balance > before) {
+        return '已到账 ' + (r.balance - before) + ' 积分，可以去转图啦';
+      }
+      return '积分已到账，可以去转图啦';
+    }
+
+    function doClaim(claim) {
       var before = walletService.balance;
-      walletService.redeem(code).then(function (r) {
-        clearPendingCode();
+      var job = claim.type === 'batch'
+        ? walletService.redeemBatch(claim.value)
+        : walletService.redeem(claim.value);
+      return job.then(function (r) {
+        dropPending(pendingKey(claim.type));
         notifyBalanceChanged();
-        var msg;
-        if (r.alreadyOwned) {
-          msg = '这个兑换码你已经兑换过了，积分已在账上';
-        } else if (typeof r.credits === 'number' && r.credits > 0) {
-          msg = '已到账 ' + r.credits + ' 积分，可以去转图啦';
-        } else if (typeof before === 'number' && typeof r.balance === 'number' && r.balance > before) {
-          msg = '已到账 ' + (r.balance - before) + ' 积分，可以去转图啦';
-        } else {
-          msg = '积分已到账，可以去转图啦';
-        }
-        redeemToast(msg, 'ok');
+        redeemToast(claimMessage(r, before, claim.type), 'ok');
         if (typeof ctx.onRedeemDone === 'function') { ctx.onRedeemDone(r); }
       }).catch(function (err) {
         var errCode = String((err && err.redeemCode) || '');
         var retryable = errCode === 'TOO_MANY' || !errCode;   /* 没码 = 网络/服务异常 */
-        if (!retryable) { clearPendingCode(); }
-        redeemToast(err.message || '兑换失败，请稍后重试', 'error');
-        /* 允许用户修好网络后再触发一次（换页/重新登录都会重新走这里） */
-        if (retryable) { linkRedeem.handled = false; }
+        if (!retryable) { dropPending(pendingKey(claim.type)); }
+        redeemToast(err.message || '领取失败，请稍后重试', 'error');
+        throw { retryable: retryable };
       });
+    }
+
+    function redeemFromLink() {
+      if (linkRedeem.handled) { return; }
+      var claims = pendingClaims();
+      if (!claims.length) { return; }
+      if (!Store.state.user) {
+        /* 只自动弹一次登录框；用户主动关掉后不再骚扰，码仍留在 sessionStorage，
+           等他下次点「登录」成功时再自动领取。 */
+        if (!linkRedeem.prompted && els.loginModal) {
+          linkRedeem.prompted = true;
+          openLogin();
+          showLoginMsg('登录后将自动为你领取链接里的积分', false);
+        }
+        return;
+      }
+      linkRedeem.handled = true;
+      /* 逐条处理：一条失败不影响另一条，能重试的留在 sessionStorage 等下次触发 */
+      var chain = Promise.resolve();
+      var retryLater = false;
+      claims.forEach(function (claim) {
+        chain = chain.then(function () {
+          return doClaim(claim).catch(function (e) { if (e && e.retryable) { retryLater = true; } });
+        });
+      });
+      chain.then(function () { if (retryLater) { linkRedeem.handled = false; } });
     }
     /* 支付回跳：?paid=ORDERNO → 向服务器领取签名凭证 → 云端 RPC 幂等入账 */
     var paidClaimHandled = {};

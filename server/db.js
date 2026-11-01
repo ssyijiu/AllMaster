@@ -106,6 +106,26 @@ CREATE TABLE IF NOT EXISTS redeem_codes (
   per_user_limit INTEGER NOT NULL DEFAULT 1  -- 同一批次每人最多领几张；0 = 不限
 );
 
+/* 邀请批次：?batch=XXX 打开即自动领一张码并入账（拉新链接）。
+ * 与 redeem_codes 是 1:N（码表 batch 字段关联），码仍复用同一张表，
+ * 所以后台「兑换码列表」照旧能看到每一张码、使用人与时间。
+ * 为什么要单独一张表而不是把配置塞进码里：链接本身需要渠道名、落地页、
+ * 启停开关这类「链接级」信息——码被领光了链接还要能显示「名额已领完」，
+ * 停用链接也不该去改几百行码。规则字段（new_user_only/per_user_limit）
+ * 在码上也存一份，兑换时按码判断，两条入口（发码/链接）口径一致。 */
+CREATE TABLE IF NOT EXISTS redeem_batches (
+  batch          TEXT PRIMARY KEY,
+  label          TEXT,                    -- 渠道/活动名，后台列表用
+  landing        TEXT,                    -- 落地页路径，如 /pixelart
+  credits        INTEGER NOT NULL,
+  quota          INTEGER NOT NULL DEFAULT 0,  -- 发行名额（= 这批码的行数，冗余留存便于展示）
+  new_user_only  INTEGER NOT NULL DEFAULT 0,
+  per_user_limit INTEGER NOT NULL DEFAULT 1,
+  expires_at     INTEGER,
+  active         INTEGER NOT NULL DEFAULT 1,
+  created_at     INTEGER NOT NULL
+);
+
 /* 风格/服务商配置（原云表 app_config，公开只读 JSON） */
 CREATE TABLE IF NOT EXISTS app_config (
   id         TEXT PRIMARY KEY,
