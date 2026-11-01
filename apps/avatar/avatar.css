@@ -149,8 +149,14 @@
       gap: var(--space-5);
       align-items: start;
     }
+    /* ★ 关键：grid 子项默认 min-width:auto，会被内部「不换行」的内容（历史缩略图条、
+       长文案）撑到比屏幕还宽 —— 整页随之横向溢出，手机浏览器为了塞进屏幕会把整页
+       缩到 ~52%，看起来就像「顶栏只占左半屏、面板被右侧切掉」。2026-11-01 实测：
+       12 个历史缩略图 → 文档宽 826px（视口 430）→ 手机端整体缩放到 52%。 */
+    .layout > * { min-width: 0; }
 
     .panel {
+      min-width: 0;
       background: var(--surface);
       border: 1px solid var(--border-soft);
       border-radius: var(--radius-lg);
@@ -400,6 +406,10 @@
     .history-strip {
       display: flex; gap: var(--space-2);
       overflow-x: auto; padding-bottom: var(--space-1);
+      /* 横滑条本身必须能缩到父宽：否则 12 张缩略图会把 grid 列撑到 800+ */
+      min-width: 0;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: thin;
     }
     .history-item {
       position: relative; flex: none;
@@ -454,7 +464,8 @@
 
     /* ===== 响应式（对齐点豆） ===== */
     @media (max-width: 899px) {
-      .layout { grid-template-columns: 1fr; gap: var(--space-5); }
+      /* 必须是 minmax(0,1fr)：裸 1fr = minmax(auto,1fr)，会被内部不换行内容撑破 */
+      .layout { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
       .page { padding-top: var(--space-5); }
       .hero h1 { font-size: var(--text-2xl); }
       .steps { margin-bottom: var(--space-5); }
@@ -463,4 +474,19 @@
       :root { --container-gutter: 16px; }
       .btn.big, .result-actions .btn { height: 44px; }
       .history-item { width: 56px; height: 56px; }
+      /* 三步引导：手机上收成「序号 + 文字」，去掉箭头与行内图标，
+         375/360 都能一行放完，不会出现第二行只剩「3 生成头像」 */
+      .step-arrow { display: none; }
+      .steps { gap: var(--space-3); }
+      .step { font-size: var(--text-sm); }
+      .step > .icon { display: none; }
+      .panel { padding: var(--space-5) var(--space-4); }
+      .result-stage { padding: var(--space-3); }
+      /* 参考图：手机上按钮单独一行，说明文字整行在下方（挤在按钮右侧会变成 4 行窄条） */
+      .ref-tip { flex: 1 1 100%; }
+    }
+    @media (max-width: 420px) {
+      /* 登录态顶栏 = 品牌 + 我的 + 积分 195，实测需要 385px；
+         420 以下先收起英文标，避免把顶栏挤出屏幕（会触发整页缩放） */
+      .brand-en { display: none; }
     }
