@@ -70,6 +70,19 @@
     .key-chip.ok { color: #166534; background: #F0FDF4; }
     .key-chip.none { color: #9A3412; background: #FFF7ED; }
     .hint { margin-top: 12px; font-size: 13px; color: var(--muted); min-height: 20px; }
+    /* 分页条：与 /my 积分明细的 .txn-pager 同一视觉语言（整条居中、按钮等宽、页码等宽数字）。
+       页码原来用 .hint，在 flex 里它变成 flex item，margin-top:12px 会把文字往下顶，
+       和两侧按钮对不齐；固定 min-width 也避免 1/1 → 10/12 时整条左右跳。 */
+    .admin-pager {
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+      gap: 12px; margin-top: 12px;
+    }
+    .admin-pager .btn { min-width: 76px; padding: 0 12px; }
+    .admin-pager .pager-info {
+      min-width: 210px; text-align: center;
+      font-size: 13px; color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
     .hint.warn { color: var(--warning); }
     .hint.ok { color: var(--success); }
     .hint.err { color: var(--danger); }
@@ -308,9 +321,9 @@
               <tbody id="invRows"><tr><td colspan="10" class="hint">加载中…</td></tr></tbody>
             </table>
           </div>
-          <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+          <div class="admin-pager">
             <button class="btn ghost small" id="btnInvPrev" type="button">上一页</button>
-            <span class="hint" id="invPageInfo"></span>
+            <span class="pager-info" id="invPageInfo"></span>
             <button class="btn ghost small" id="btnInvNext" type="button">下一页</button>
           </div>
         </div>
@@ -350,9 +363,9 @@
               <tbody id="redeemRows"><tr><td colspan="8" class="hint">加载中…</td></tr></tbody>
             </table>
           </div>
-          <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+          <div class="admin-pager">
             <button class="btn ghost small" id="btnRedeemPrev" type="button">上一页</button>
-            <span class="hint" id="redeemPageInfo"></span>
+            <span class="pager-info" id="redeemPageInfo"></span>
             <button class="btn ghost small" id="btnRedeemNext" type="button">下一页</button>
           </div>
         </div>
