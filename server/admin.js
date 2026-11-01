@@ -460,18 +460,90 @@ async function handleInviteCreate(req, res) {
   });
 }
 
-function handleInviteList(req, res) {
+/* 批次列表的「状态」是派生的，不是库里的列：
+ *   closed    = 手动停用（优先，停用了就不论过期/名额）
+ *   expired   = 没停用但过了有效期
+ *   exhausted = 没停用没过期，但名额被领完了
+ *   open      = 其余
+ * 派生逻辑必须在 SQL 里算完再筛再分页，不能在 JS 里筛：否则「已领完」这一页
+ * 是从前 N 条里挑出来的，翻页会漏行、总数也对不上。CTE 里的 base 只算一次
+ * 三个 COUNT 子查询，tagged 再挂上 CASE，行数与 select * 都由它派生。
+ */
+const INVITE_STATUS = ['open', 'exhausted', 'closed', 'expired'];
+const INVITE_PAGE_MAX = 200;
+const INVITE_CTE =
+  'WITH base AS (' +
+  '  SELECT b.batch, b.label, b.landing, b.credits, b.quota, b.new_user_only, b.per_user_limit, ' +
+  '         b.expires_at, b.active, b.created_at, ' +
+  '         (SELECT COUNT(*) FROM redeem_codes c WHERE c.batch = b.batch) AS issued, ' +
+  '         (SELECT COUNT(*) FROM redeem_codes c WHERE c.batch = b.batch AND c.used_by IS NOT NULL) AS used, ' +
+  '         (SELECT COUNT(DISTINCT c.used_by) FROM redeem_codes c WHERE c.batch = b.batch AND c.used_by IS NOT NULL) AS users ' +
+  '  FROM redeem_batches b' +
+  '), tagged AS (' +
+  '  SELECT base.*, CASE ' +
+  '      WHEN active = 0 THEN \'closed\' ' +
+  '      WHEN expires_at IS NOT NULL AND expires_at < ? THEN \'expired\' ' +
+  '      WHEN issued - used <= 0 THEN \'exhausted\' ' +
+  '      ELSE \'open\' END AS status ' +
+  '  FROM base' +
+  ') ';
+
+/* LIKE 里的 % _ 是通配符，用户搜「小红书_11」不该匹配到别的；一律转义 + ESCAPE */
+function likeEscape(v) {
+  return String(v || '').replace(/[\\%_]/g, (m) => '\\' + m);
+}
+
+/*
+ * 邀请批次列表：状态筛选 + 关键词 + 分页 + 汇总。
+ * 参数：status（all/open/exhausted/closed/expired）、q（渠道名或批次号，模糊）、
+ *      batch（精确，单行刷新用）、page、pageSize。
+ */
+function handleInviteList(req, res, url) {
   const user = requireAdmin(req, res);
   if (!user) { return; }
-  const rows = dbmod.db.prepare(
-    'SELECT b.batch, b.label, b.landing, b.credits, b.quota, b.new_user_only, b.per_user_limit, ' +
-    '       b.expires_at, b.active, b.created_at, ' +
-    '       (SELECT COUNT(*) FROM redeem_codes c WHERE c.batch = b.batch) AS issued, ' +
-    '       (SELECT COUNT(*) FROM redeem_codes c WHERE c.batch = b.batch AND c.used_by IS NOT NULL) AS used, ' +
-    '       (SELECT COUNT(DISTINCT c.used_by) FROM redeem_codes c WHERE c.batch = b.batch AND c.used_by IS NOT NULL) AS users ' +
-    'FROM redeem_batches b ORDER BY b.created_at DESC LIMIT 200'
-  ).all();
+  const q = url.searchParams;
+  const status = (q.get('status') || 'all').trim();
+  if (status !== 'all' && INVITE_STATUS.indexOf(status) === -1) {
+    return sendJson(res, 400, { error: { code: 'BAD_STATUS', message: 'status 只支持 all / open / exhausted / closed / expired' } });
+  }
+  const exactBatch = (q.get('batch') || '').trim();
+  const keyword = cleanStr(q.get('q'), 60);
+  const page = Math.max(1, Math.floor(Number(q.get('page')) || 1));
+  const pageSize = Math.max(1, Math.min(Math.floor(Number(q.get('pageSize')) || 20), INVITE_PAGE_MAX));
   const now = dbmod.nowMs();
+
+  const where = [];
+  const filterArgs = [];
+  if (status !== 'all') { where.push('status = ?'); filterArgs.push(status); }
+  if (exactBatch) { where.push('batch = ?'); filterArgs.push(exactBatch); }
+  if (keyword) {
+    where.push("(label LIKE ? ESCAPE '\\' OR batch LIKE ? ESCAPE '\\')");
+    const like = '%' + likeEscape(keyword) + '%';
+    filterArgs.push(like, like);
+  }
+  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
+  const d = dbmod.db;
+  const total = d.prepare(INVITE_CTE + 'SELECT COUNT(*) AS c FROM tagged ' + whereSql).get(now, ...filterArgs).c || 0;
+  const rows = d.prepare(
+    INVITE_CTE + 'SELECT * FROM tagged ' + whereSql + ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+  ).all(now, ...filterArgs, pageSize, (page - 1) * pageSize);
+
+  /* 汇总看全量（不受筛选影响）：一眼看到还有多少名额没发出去 */
+  const agg = d.prepare(INVITE_CTE + 'SELECT status, COUNT(*) AS n FROM tagged GROUP BY status').all(now);
+  const stats = { total: 0, open: 0, exhausted: 0, closed: 0, expired: 0 };
+  for (const r of agg) {
+    const n = Number(r.n) || 0;
+    stats[r.status] = n;
+    stats.total += n;
+  }
+  /* 名额/已领按批次整体汇总（不含 filters，符合「家底」语义） */
+  const sumRow = d.prepare(
+    INVITE_CTE + 'SELECT COALESCE(SUM(quota), 0) AS quota, COALESCE(SUM(used), 0) AS used FROM tagged'
+  ).get(now);
+  stats.quota = Number(sumRow.quota) || 0;
+  stats.used = Number(sumRow.used) || 0;
+
   return sendJson(res, 200, {
     data: rows.map((r) => ({
       batch: r.batch,
@@ -489,11 +561,13 @@ function handleInviteList(req, res) {
       users: Number(r.users) || 0,
       /* 剩余名额按「还没被领的码」算；过期但没被领的码也算剩余（只是领不了） */
       remaining: Math.max(0, (Number(r.issued) || 0) - (Number(r.used) || 0)),
-      expired: !!(r.expires_at && Number(r.expires_at) < now),
-      status: !Number(r.active) ? 'closed'
-        : ((r.expires_at && Number(r.expires_at) < now) ? 'expired'
-          : (((Number(r.issued) || 0) - (Number(r.used) || 0)) <= 0 ? 'exhausted' : 'open'))
+      expired: r.status === 'expired',
+      status: r.status
     })),
+    page: page,
+    pageSize: pageSize,
+    total: total,
+    stats: stats,
     error: null
   });
 }

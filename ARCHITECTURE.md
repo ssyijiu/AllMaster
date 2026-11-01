@@ -68,6 +68,13 @@
   规则类沿用 `CODE_NEW_USER_ONLY` / `CODE_BATCH_LIMIT`（提示文案同一份，用户不需要知道后台怎么发的）。
 - **接口**：`POST /api/admin/invite`（建批 + 发码）、`GET /api/admin/invite/list`（配额/已领/剩余/领取人数）、
   `POST /api/admin/invite/update`（停用/启用/改名）。
+  列表参数：`status`（all/open/exhausted/closed/expired）、`q`（渠道名或批次号，LIKE 已转义）、
+  `batch`（精确，供「单行刷新」用）、`page` / `pageSize`（默认 20，上限 200）；返回带 `total` 与 `stats`（全量家底）。
+  **状态是派生的，不是库里的列**，所以筛选与分页都在 SQL 里做（`WITH base AS … , tagged AS (CASE …)`）：
+  在 JS 里先取再筛会让「已领完」这一页从别的页里挑行，翻页漏行、总数也对不上。
+  判定优先级：停用 > 过期 > 名额耗尽 > 发放中。
+- **后台**：批次列表支持状态筛选 + 关键词 + 分页；**每行一个「刷新」**，只查这一批（`?batch=`）并原地改
+  面值/名额/已领/剩余/领取人数/状态，不整表重排（否则用户正在看的那页会被翻走）；若刷新后状态已不属于当前筛选，则回落到整表重载。
 - **命令行**：`node server/admin-cli.js invite 10 50 小红书-11月 --days 30`（默认仅新用户、每人 1 张、落地 `/pixelart`）；
   `invites` 看各批已领/剩余。
 

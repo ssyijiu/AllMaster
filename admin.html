@@ -287,13 +287,31 @@
             <input class="text-input mono" id="invResult" readonly style="flex:1 1 auto;"/>
             <button class="btn ghost small" id="btnCopyInvite" type="button" style="white-space:nowrap;flex:0 0 auto;">复制链接</button>
           </div>
-          <div style="overflow-x:auto;margin-top:12px;">
+          <!-- 状态筛选 + 关键词 + 分页：与下面「兑换码列表」同一套交互，批次多了才找得到 -->
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0 4px;">
+            <select class="text-input" id="invStatus" style="width:auto;">
+              <option value="all" selected>全部状态</option>
+              <option value="open">发放中</option>
+              <option value="exhausted">已领完</option>
+              <option value="closed">已停用</option>
+              <option value="expired">已过期</option>
+            </select>
+            <input class="text-input" id="invQuery" placeholder="按渠道名 / 批次筛选（可留空）" style="width:auto;min-width:220px;"/>
+            <button class="btn secondary small" id="btnInvQuery" type="button">查询</button>
+            <span class="hint" id="invStats"></span>
+          </div>
+          <div style="overflow-x:auto;">
             <table id="invTable">
               <thead>
                 <tr><th>渠道 / 活动</th><th class="mono">批次</th><th>面值</th><th>名额</th><th>已领</th><th>剩余</th><th>领取人数</th><th>有效期至</th><th>状态</th><th>操作</th></tr>
               </thead>
               <tbody id="invRows"><tr><td colspan="10" class="hint">加载中…</td></tr></tbody>
             </table>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+            <button class="btn ghost small" id="btnInvPrev" type="button">上一页</button>
+            <span class="hint" id="invPageInfo"></span>
+            <button class="btn ghost small" id="btnInvNext" type="button">下一页</button>
           </div>
         </div>
 
@@ -1173,41 +1191,119 @@
     renderInvRuleHint();
 
     var INV_STATUS_TEXT = { open: '发放中', closed: '已停用', exhausted: '已领完', expired: '已过期' };
+    var invPage = 1;
+    var INV_PAGE_SIZE = 20;
+
+    function invRuleText(r) {
+      return (r.newUserOnly ? '仅新用户' : '不限新老') +
+        (r.perUserLimit > 0 ? ' · 每人 ' + r.perUserLimit + ' 张' : ' · 不限量');
+    }
+
+    function invStatusBadge(r) {
+      return '<span class="redeem-badge ' + r.status + '">' + (INV_STATUS_TEXT[r.status] || r.status) + '</span>';
+    }
+
+    /* 每个数字格子都带 data-inv-cell，单行刷新时按名字原地改 ——
+       不整表重排，否则用户正在看的那一页会被翻走 */
+    function invRowHtml(r) {
+      var nameCell = (r.label ? esc(r.label) : '<span class="hint">未命名</span>') +
+        '<br><span style="font-size:12px;color:#6B7280;">' + invRuleText(r) + '</span>';
+      return '<tr data-inv-row="' + esc(r.batch) + '">' +
+        '<td>' + nameCell + '</td>' +
+        '<td class="mono">' + esc(r.batch) + '</td>' +
+        '<td data-inv-cell="credits">' + r.credits + '</td>' +
+        '<td data-inv-cell="quota">' + r.quota + '</td>' +
+        '<td data-inv-cell="used">' + r.used + '</td>' +
+        '<td data-inv-cell="remaining">' + r.remaining + '</td>' +
+        '<td data-inv-cell="users">' + r.users + '</td>' +
+        '<td data-inv-cell="expires">' + (r.expiresAt ? fmtTs(r.expiresAt) : '永久') + '</td>' +
+        '<td data-inv-cell="status">' + invStatusBadge(r) + '</td>' +
+        '<td>' +
+          '<button class="btn ghost small" type="button" data-inv-copy="' + esc(r.batch) + '" data-inv-landing="' + esc(r.landing) + '">复制链接</button> ' +
+          '<button class="btn ghost small" type="button" data-inv-refresh="' + esc(r.batch) + '" title="只刷新这一行的名额与领取数据">刷新</button> ' +
+          '<button class="btn ghost small" type="button" data-inv-toggle="' + esc(r.batch) + '" data-inv-active="' + (r.active ? '1' : '0') + '">' + (r.active ? '停用' : '启用') + '</button>' +
+        '</td>' +
+        '</tr>';
+    }
+
+    function renderInvStats(stats) {
+      if (!stats) { return; }
+      $('invStats').textContent = '共 ' + (stats.total || 0) + ' 条链接：发放中 ' + (stats.open || 0) +
+        '、已领完 ' + (stats.exhausted || 0) + '、已停用 ' + (stats.closed || 0) + '、已过期 ' + (stats.expired || 0) +
+        '（累计 ' + (stats.quota || 0) + ' 个名额，已领 ' + (stats.used || 0) + ' 个）';
+    }
 
     function loadInviteList() {
+      var status = $('invStatus').value;
+      var keyword = $('invQuery').value.trim();
       $('invRows').innerHTML = '<tr><td colspan="10" class="hint">加载中…</td></tr>';
-      adminApi('GET', '/api/admin/invite/list').then(function (data) {
-        var rows = (data && data.data) || [];
-        if (!rows.length) {
-          $('invRows').innerHTML = '<tr><td colspan="10" class="hint">还没有邀请链接。上面填好渠道与名额，点「生成邀请链接」。</td></tr>';
-          return;
-        }
-        $('invRows').innerHTML = rows.map(function (r) {
-          var rule = (r.newUserOnly ? '仅新用户' : '不限新老') +
-            (r.perUserLimit > 0 ? ' · 每人 ' + r.perUserLimit + ' 张' : ' · 不限量');
-          var nameCell = (r.label ? esc(r.label) : '<span class="hint">未命名</span>') +
-            '<br><span style="font-size:12px;color:#6B7280;">' + rule + '</span>';
-          var toggleText = r.active ? '停用' : '启用';
-          return '<tr>' +
-            '<td>' + nameCell + '</td>' +
-            '<td class="mono">' + esc(r.batch) + '</td>' +
-            '<td>' + r.credits + '</td>' +
-            '<td>' + r.quota + '</td>' +
-            '<td>' + r.used + '</td>' +
-            '<td>' + r.remaining + '</td>' +
-            '<td>' + r.users + '</td>' +
-            '<td>' + (r.expiresAt ? fmtTs(r.expiresAt) : '永久') + '</td>' +
-            '<td><span class="redeem-badge ' + r.status + '">' + (INV_STATUS_TEXT[r.status] || r.status) + '</span></td>' +
-            '<td>' +
-              '<button class="btn ghost small" type="button" data-inv-copy="' + esc(r.batch) + '" data-inv-landing="' + esc(r.landing) + '">复制链接</button> ' +
-              '<button class="btn ghost small" type="button" data-inv-toggle="' + esc(r.batch) + '" data-inv-active="' + (r.active ? '1' : '0') + '">' + toggleText + '</button>' +
-            '</td>' +
-            '</tr>';
-        }).join('');
-      }).catch(function (err) {
-        $('invRows').innerHTML = '<tr><td colspan="10" class="hint">加载失败：' + esc(err.message || '未知错误') + '</td></tr>';
-      });
+      adminApi('GET', '/api/admin/invite/list?status=' + encodeURIComponent(status) +
+        '&q=' + encodeURIComponent(keyword) + '&page=' + invPage + '&pageSize=' + INV_PAGE_SIZE)
+        .then(function (data) {
+          var rows = (data && data.data) || [];
+          renderInvStats(data && data.stats);
+          if (!rows.length) {
+            var emptyMsg = (status === 'all' && !keyword)
+              ? '还没有邀请链接。上面填好渠道与名额，点「生成邀请链接」。'
+              : '没有符合筛选条件的邀请链接';
+            $('invRows').innerHTML = '<tr><td colspan="10" class="hint">' + emptyMsg + '</td></tr>';
+          } else {
+            $('invRows').innerHTML = rows.map(invRowHtml).join('');
+          }
+          var totalPages = Math.max(1, Math.ceil((data.total || 0) / (data.pageSize || INV_PAGE_SIZE)));
+          $('invPageInfo').textContent = '第 ' + invPage + ' / ' + totalPages + ' 页（本页 ' + rows.length + ' 条）';
+          $('btnInvPrev').disabled = invPage <= 1;
+          $('btnInvNext').disabled = invPage >= totalPages;
+        })
+        .catch(function (err) {
+          $('invRows').innerHTML = '<tr><td colspan="10" class="hint">加载失败：' + esc(err.message || '未知错误') + '</td></tr>';
+        });
     }
+
+    /* 单行刷新：只取这一批的最新数字，原地改格子。
+       若刷新后状态变了（如刚被领完）而当前正按状态筛选，这行已不属于本页 —— 交给整表重载处理。 */
+    function refreshInviteRow(batch, btn) {
+      var label = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '刷新中…';
+      adminApi('GET', '/api/admin/invite/list?status=all&batch=' + encodeURIComponent(batch) + '&page=1&pageSize=1')
+        .then(function (data) {
+          var r = (data && data.data && data.data[0]) || null;
+          if (!r) { throw new Error('这个邀请批次已不存在'); }
+          renderInvStats(data.stats);
+          if ($('invStatus').value !== 'all' && $('invStatus').value !== r.status) { loadInviteList(); return; }
+          var tr = document.querySelector('tr[data-inv-row="' + batch + '"]');
+          if (tr) {
+            ['credits', 'quota', 'used', 'remaining', 'users'].forEach(function (k) {
+              var cell = tr.querySelector('[data-inv-cell="' + k + '"]');
+              if (cell) { cell.textContent = String(r[k]); }
+            });
+            var expCell = tr.querySelector('[data-inv-cell="expires"]');
+            if (expCell) { expCell.textContent = r.expiresAt ? fmtTs(r.expiresAt) : '永久'; }
+            var stCell = tr.querySelector('[data-inv-cell="status"]');
+            if (stCell) { stCell.innerHTML = invStatusBadge(r); }
+            var tgl = tr.querySelector('[data-inv-toggle]');
+            if (tgl) {
+              tgl.setAttribute('data-inv-active', r.active ? '1' : '0');
+              tgl.textContent = r.active ? '停用' : '启用';
+            }
+          }
+          btn.textContent = '已刷新';
+          setTimeout(function () { btn.textContent = label; btn.disabled = false; }, 900);
+        })
+        .catch(function (err) {
+          btn.textContent = '刷新失败';
+          $('invMsg').textContent = walletErrText(err);
+          setTimeout(function () { btn.textContent = label; btn.disabled = false; }, 1600);
+        });
+    }
+
+    $('btnInvQuery').addEventListener('click', function () { invPage = 1; loadInviteList(); });
+    $('invStatus').addEventListener('change', function () { invPage = 1; loadInviteList(); });
+    $('invQuery').addEventListener('keydown', function (e) { if (e.key === 'Enter') { invPage = 1; loadInviteList(); } });
+    $('btnInvPrev').addEventListener('click', function () { if (invPage > 1) { invPage--; loadInviteList(); } });
+    $('btnInvNext').addEventListener('click', function () { invPage++; loadInviteList(); });
+
 
     $('btnCreateInvite').addEventListener('click', function () {
       var credits = parseInt($('invCredits').value, 10);
@@ -1230,6 +1326,8 @@
         $('invMsg').textContent = '已生成：' + (data.quota || count) + ' 个名额，每个 ' + data.credits + ' 积分' +
           (data.expiresInDays > 0 ? '，' + data.expiresInDays + ' 天内有效' : '，永久有效') +
           '。把下面的链接直接发出去即可。';
+        /* 新批次排在最前面，回到第 1 页才能看见它 */
+        invPage = 1;
         loadInviteList();
         loadRedeemList();
       }).catch(function (err) { $('invMsg').textContent = walletErrText(err); })
@@ -1243,7 +1341,7 @@
         .catch(function () { $('invMsg').textContent = '复制失败：请手动选中输入框复制'; });
     });
 
-    /* 列表操作：复制链接 / 停用启用（事件委托，行是动态渲染的） */
+    /* 列表操作：复制链接 / 刷新这一行 / 停用启用（事件委托，行是动态渲染的） */
     $('invRows').addEventListener('click', function (e) {
       var t = e.target;
       var copyBtn = t && t.closest ? t.closest('[data-inv-copy]') : null;
@@ -1257,6 +1355,11 @@
           copyBtn.textContent = '复制失败';
           setTimeout(function () { copyBtn.textContent = '复制链接'; copyBtn.disabled = false; }, 1600);
         });
+        return;
+      }
+      var refreshBtn = t && t.closest ? t.closest('[data-inv-refresh]') : null;
+      if (refreshBtn) {
+        refreshInviteRow(refreshBtn.getAttribute('data-inv-refresh'), refreshBtn);
         return;
       }
       var toggleBtn = t && t.closest ? t.closest('[data-inv-toggle]') : null;
