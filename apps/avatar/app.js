@@ -14,6 +14,10 @@
     var THUMB_QUALITY = 0.7;
     var HISTORY_MAX = 6;
     var CLOUD_HISTORY_MAX = 12;
+    /* 同一次生成的两份记录（本地 / 云端）时间戳差最多一次缩略图生成（≤8s，见
+       persistResultInBackground 的 8000ms 超时）；两次真实生成之间至少隔一次
+       AI 出图（20~90s）。12s 落在两者中间，不会漏合并也不会误合并。 */
+    var HISTORY_MERGE_WINDOW = 12000;
 
     /* 线上地址：预览环境（127.0.0.1 / iframe）里用于引导用户跳转 */
     var PLATFORM_URL = 'https://ai-avatar-studio-50356.app.workbuddy.host/?sharecode=25HFTCUZ7J';
@@ -703,12 +707,66 @@
       Store.state.resultErrorVisible = true;
     }
 
-    /* ---------- 渲染：历史条（本地 + 云端合并，按时间倒序） ---------- */
+    /* ---------- 历史去重 ----------
+     * 同一次生成会留两份记录：本地（localStorage 里的缩略图 data URL，用于离线/
+     * 上传失败兜底）与云端（storage 的 <ts>-<mode>-<styleId>，跨设备可恢复）。
+     * 2026-11-02 线上问题：两者直接 concat 渲染 →「最近生成」每张图出现两次
+     * （截图里是 A,A,B,B,C）。这里按「同 mode + 时间相近 = 同一次生成」合并，
+     * 云端条目优先：它是持久的、签约可跨设备，本地副本只是兜底。 */
+    function sameGeneration(a, b) {
+      var ma = a.mode === 'ai' ? 'ai' : 'local';
+      var mb = b.mode === 'ai' ? 'ai' : 'local';
+      if (ma !== mb) { return false; }
+      return Math.abs((Number(a.time) || 0) - (Number(b.time) || 0)) <= HISTORY_MERGE_WINDOW;
+    }
+
+    function mergeHistory(local, cloud) {
+      var out = [];
+      var seen = {};
+      (cloud || []).forEach(function (h) {
+        if (!h || !h.src || seen[h.src]) { return; }
+        seen[h.src] = 1;
+        out.push(h);
+      });
+      (local || []).forEach(function (h) {
+        if (!h || !h.src || seen[h.src]) { return; }
+        for (var i = 0; i < out.length; i++) {
+          if (sameGeneration(out[i], h)) { return; }
+        }
+        seen[h.src] = 1;
+        out.push(h);
+      });
+      out.sort(function (a, b) { return (b.time || 0) - (a.time || 0); });
+      return out;
+    }
+
+    /* 云端已经有一份的本地副本不再保留：既占 localStorage 配额（每条几十 KB 的
+     * data URL），又会让「最近生成」在云端拉取失败时看起来重复。清掉后本地只留
+     * 未同步的（上传失败 / 刚生成还在传）。 */
+    function pruneSyncedHistory(cloud) {
+      var list = Store.state.history || [];
+      var keep = [];
+      var seen = {};
+      for (var i = 0; i < list.length; i++) {
+        var h = list[i];
+        if (!h || !h.src || seen[h.src]) { continue; }
+        seen[h.src] = 1;
+        var dup = false;
+        for (var j = 0; j < cloud.length; j++) {
+          if (sameGeneration(cloud[j], h)) { dup = true; break; }
+        }
+        if (dup) { continue; }
+        keep.push(h);
+      }
+      if (keep.length === list.length) { return; }
+      Store.state.history = keep;
+      Store.persistHistory();
+    }
+
+    /* ---------- 渲染：历史条（本地 + 云端合并去重，按时间倒序） ---------- */
     function renderHistory() {
       var st = Store.state;
-      var all = st.history.concat(st.cloudHistory || []).sort(function (a, b) {
-        return (b.time || 0) - (a.time || 0);
-      });
+      var all = mergeHistory(st.history, st.cloudHistory);
       els.historyWrap.hidden = all.length === 0;
       els.historyStrip.innerHTML = '';
       all.forEach(function (h) {
@@ -1253,7 +1311,7 @@
           if (!res || res.error) { return; }
           /* 条目可能是完整 key，也可能只有文件名：交给平台层归一化后再签名 */
           var keys = Platform.storageListKeys(prefix, res);
-          if (!keys.length) { Store.state.cloudHistory = []; renderHistory(); return; }
+          if (!keys.length) { Store.state.cloudHistory = []; pruneSyncedHistory([]); renderHistory(); return; }
           /* 有缩略图的卡片用缩略图，原图留给点开大图 */
           var paired = Platform.pairThumbs(keys);
           var signKeys = paired.photos.slice();
@@ -1292,6 +1350,7 @@
               });
             }
             Store.state.cloudHistory = arr;
+            pruneSyncedHistory(arr);
             renderHistory();
           });
         }).catch(function () { /* 拉取失败静默：本地历史不受影响 */ });
