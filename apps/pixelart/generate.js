@@ -319,9 +319,7 @@ function busyMessage(reason) {
   const wait = sec === 0 ? '十几秒'
     : sec >= 60 ? ('约 ' + Math.round(sec / 60) + ' 分钟')
     : ('约 ' + sec + ' 秒');
-  /* 保留技术标签供巡检定性（原文 JSON 已在失败日志里，不必进用户文案） */
-  const tag = 'HTTP 429 · ' + (/user_busy/i.test(reason) ? 'user_busy' : 'rate_limited');
-  return '上一张图还在生成中，请' + wait + '后再试（同一时间只出一张图 · ' + tag + '）';
+  return '上一张图还在生成中，请' + wait + '后再试（同一时间只出一张图）';
 }
 
 /* 上游偶尔把整个 JSON 塞进错误行：优先取里面的 msg/message，否则砍掉 JSON 段
