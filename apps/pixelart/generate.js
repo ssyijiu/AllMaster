@@ -331,7 +331,8 @@ function explainFailure(code, signal, timedOut, stderrTail, stdoutTail) {
   /* ③ 脚本用 SystemExit("中文原因") 退出时只打 stdout */
   if (!reason) { reason = scrubPaths(pickLine(stdoutTail, (l) => /失败|错误|ERROR|Traceback|找不到|无法|Error/.test(l))); }
   if (!reason) { return '生成失败（退出码 ' + code + '），请重试'; }
-  return wrapReason(reason.length > 150 ? reason.slice(0, 150) + '…' : reason);
+  /* 排查期保留完整真因（含上游 JSON 原样），不在文案层截断；2000 字只防极端刷屏 */
+  return wrapReason(reason.length > 2000 ? reason.slice(0, 2000) + '…' : reason);
 }
 
 /* ---------- 任务生命周期 ---------- */
@@ -419,7 +420,8 @@ function createEngine(options) {
     if (!t) { return; }
     if (t.status === 'done' || t.status === 'failed' || t.status === 'settling') { return; }
     t.status = 'settling';
-    t.error = String(message || '生成失败').slice(0, 200).trim();
+    /* 排查期不截断真因（前端要看到完整错误）；2000 字仅防异常超长 */
+    t.error = String(message || '生成失败').slice(0, 2000).trim();
     saveFailureLog(t, t.error, detail);
     const settle = await notifyFinish(id, 'failed', t.orderId);
     t.refunded = !!(settle && settle.refunded);

@@ -286,7 +286,12 @@
       border-radius: var(--radius-full);
       padding: 1px 8px;
     }
-    #studioMsg { min-height: 20px; }
+    /* 失败原文可能带整段上游 JSON（无空格长串）：断行 + 限高滚动，既不撑破面板也不丢内容 */
+    #studioMsg {
+      min-height: 20px;
+      overflow-wrap: anywhere; word-break: break-word;
+      max-height: 30vh; overflow-y: auto;
+    }
     /* 墨色主按钮（设计稿二版） */
     .btn.primary { border-radius: var(--radius-md); }
     .btn.primary:hover { box-shadow: 0 4px 14px rgba(31, 29, 26, 0.28); }

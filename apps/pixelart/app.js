@@ -580,10 +580,10 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
   }
 
   /* 失败原因由服务端组装好：结论在前、真因在括号里（服务器路径已隐去）。
-     这里只做超长保护，不再加「生成失败：」之类的前缀，免得和结论重复。 */
+     排查期原文全量显示（含上游 JSON），不再按 200 字截断；只压空白免撑破提示条。 */
   function failReason(st) {
     var s = String((st && st.error) || '未知错误').replace(/\s+/g, ' ').trim();
-    return s.length > 200 ? s.slice(0, 200) + '…' : s;
+    return s.length > 2000 ? s.slice(0, 2000) + '…' : s;
   }
 
   function onTaskFailed(st) {
