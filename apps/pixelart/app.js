@@ -58,9 +58,9 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     /* 工作台状态 */
     imgDataUrl: null,     /* 处理后的 dataURL（≤1024px PNG） */
     subject: 'character', /* 仅作请求兜底：主体类型由服务端 LLM 读图判定（2026-11-02 移除人物/道具选项卡） */
-    styles: [],           /* [{id,label,tip,scope,thumb}] */
+    styles: [],           /* [{id,label,tip,scope,thumb,demo}] demo=示例图纸任务 ID */
     styleHint: '',        /* /styles 下发的全局兜底文案：选中画风无 tip 时显示 */
-    styleId: 'original',   /* 默认「还原」，与画风列表首位一致；人物道具不再分栏，全 7 种画风常显 */
+    styleId: 'original',   /* 默认「还原」，与画风列表首位一致；人物道具不再分栏，全部画风常显 */
     generating: false,
     pollTimer: null,
     watchToken: 0,        /* SSE 观察轮次：每轮生成 +1，回调对不上号即视为已取消 */
@@ -94,7 +94,8 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     });
   }
 
-  /* 画风说明行：选中谁就显示谁的 tip（点选可见，移动端不依赖悬停）；无 tip 回落全局文案 */
+  /* 画风说明行：选中谁就显示谁的 tip（点选可见，移动端不依赖悬停）；无 tip 回落全局文案。
+     有示例图纸（demo 任务 ID）时在说明后跟「打开拼豆图纸」链接，指向该画风的样例图纸页。 */
   function updateStyleHint() {
     var hintEl = $('styleHint');
     if (!hintEl) { return; }
@@ -103,7 +104,12 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
       if (Store.styles[i].id === Store.styleId) { cur = Store.styles[i]; break; }
     }
     if (cur && cur.tip) {
-      hintEl.textContent = '「' + cur.label + '」' + cur.tip;
+      var html = '「' + cur.label + '」' + cur.tip;
+      if (cur.demo) {
+        html += ' <a class="style-demo-link" href="/api/pixelart-vp/task/html?id=' + encodeURIComponent(cur.demo)
+          + '" target="_blank" rel="noopener">打开拼豆图纸</a>';
+      }
+      hintEl.innerHTML = html;
     } else {
       hintEl.textContent = Store.styleHint || '';
     }
@@ -111,7 +117,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
 
   function renderStyleStrip() {
     var strip = $('styleStrip');
-    var avail = Store.styles;   /* 主体选项卡已移除：7 种画风全量常显，顺序由 /styles 下发 */
+    var avail = Store.styles;   /* 主体选项卡已移除：画风全量常显，顺序由 /styles 下发 */
     if (!avail.some(function (s) { return s.id === Store.styleId; })) {
       Store.styleId = avail.length ? avail[0].id : 'original';
     }

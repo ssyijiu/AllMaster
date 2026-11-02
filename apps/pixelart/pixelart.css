@@ -270,8 +270,12 @@
        大小/字重/颜色与「想调整的地方（可选）」的 .field-label（base.css）保持一致 */
     .style-desc {
       margin: 0 0 var(--space-3);
-      font-size: var(--text-sm); font-weight: var(--weight-emphasis);
-      color: var(--fg-2); line-height: 1.6;
+      font-size: var(--text-base); font-weight: var(--weight-body);
+      color: var(--fg); line-height: 1.7;
+    }
+    .style-desc .style-demo-link {
+      color: var(--teal-700); text-decoration: underline; text-underline-offset: 2px;
+      white-space: nowrap;
     }
 
     /* ===== 备注（单行输入） ===== */
