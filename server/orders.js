@@ -57,7 +57,7 @@ function mapChargeError(r) {
     return { status: 401, code: 'AUTH_REQUIRED', message: '登录状态已失效，请重新登录后再生成' };
   }
   if (/INSUFFICIENT_BALANCE/.test(msg)) {
-    return { status: 402, code: 'INSUFFICIENT_BALANCE', message: '积分不足：免费体验已用完，请充值或输入兑换码。' };
+    return { status: 402, code: 'INSUFFICIENT_BALANCE', message: '积分不足，请充值或输入兑换码。' };
   }
   return { status: 502, code: 'WALLET_UNAVAILABLE', message: '计费服务暂不可用，请稍后重试' };
 }

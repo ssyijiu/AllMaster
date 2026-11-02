@@ -160,6 +160,9 @@ async function handleAuth(req, res, pathOnly) {
     const body = await readJson(req);
     try {
       const out = auth.verifyCode(body.email, body.code, req.headers['user-agent']);
+      /* 首次登录 = 注册。顺手告诉前端能不能领见面礼（无任何积分流水），
+         前端据此决定要不要发那次领取请求；服务端仍是唯一裁判。 */
+      if (out && out.user) { out.welcome = wallet.welcomeAvailable(out.user.id); }
       return sendJson(res, 200, out);
     } catch (e) {
       return sendJson(res, 400, { error: { code: e.code || 'VERIFY_FAILED', message: e.message } });
@@ -168,7 +171,13 @@ async function handleAuth(req, res, pathOnly) {
   if (pathOnly === '/api/auth/session' && req.method === 'GET') {
     const user = auth.userFromRequest(req);
     if (!user) { return sendJson(res, 200, { user: null }); }
-    return sendJson(res, 200, { user: user, balance: wallet.balance(user.id) });
+    /* welcome：还能不能领新用户见面礼（无任何积分流水）。前端据此决定要不要
+       发那次领取请求——老用户每次登录都试一遍纯属浪费。 */
+    return sendJson(res, 200, {
+      user: user,
+      balance: wallet.balance(user.id),
+      welcome: wallet.welcomeAvailable(user.id)
+    });
   }
   if (pathOnly === '/api/auth/signout' && req.method === 'POST') {
     auth.revoke(auth.bearer(req));

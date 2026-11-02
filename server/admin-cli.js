@@ -182,7 +182,7 @@ function cmdInvites() {
     'SELECT b.batch, b.label, b.credits, b.quota, b.new_user_only, b.per_user_limit, b.expires_at, b.active, b.created_at, ' +
     '  (SELECT COUNT(*) FROM redeem_codes c WHERE c.batch = b.batch AND c.used_by IS NOT NULL) AS used, ' +
     '  (SELECT COUNT(*) FROM redeem_codes c WHERE c.batch = b.batch) AS issued ' +
-    'FROM redeem_batches b ORDER BY b.created_at DESC LIMIT 100'
+    'FROM redeem_batches b WHERE b.batch <> \'WELCOME\' ORDER BY b.created_at DESC LIMIT 100'
   ).all();
   if (!rows.length) { return console.log('还没有邀请链接'); }
   const now = dbmod.nowMs();
@@ -201,11 +201,11 @@ function cmdInvites() {
 function cmdCodes() {
   const status = argv[1] || 'unused'; /* unused | used | expired | all */
   const now = dbmod.nowMs();
-  let where = '';
+  let where = "WHERE (batch IS NULL OR batch <> 'WELCOME')";
   const args = [];
-  if (status === 'unused') { where = 'WHERE used_by IS NULL AND (expires_at IS NULL OR expires_at >= ?)'; args.push(now); }
-  else if (status === 'used') { where = 'WHERE used_by IS NOT NULL'; }
-  else if (status === 'expired') { where = 'WHERE used_by IS NULL AND expires_at IS NOT NULL AND expires_at < ?'; args.push(now); }
+  if (status === 'unused') { where += ' AND used_by IS NULL AND (expires_at IS NULL OR expires_at >= ?)'; args.push(now); }
+  else if (status === 'used') { where += ' AND used_by IS NOT NULL'; }
+  else if (status === 'expired') { where += ' AND used_by IS NULL AND expires_at IS NOT NULL AND expires_at < ?'; args.push(now); }
   else if (status !== 'all') { throw new Error('状态只支持 unused / used / expired / all'); }
   const rows = dbmod.db.prepare(
     'SELECT code, credits, batch, created_at, expires_at, used_by, used_at, new_user_only, per_user_limit FROM redeem_codes ' +

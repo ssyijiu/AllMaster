@@ -70,7 +70,7 @@
       if (!token) { return Promise.resolve({ data: null, error: null }); }
       return api('/api/auth/session').then(function (body) {
         if (!body || !body.user) { writeToken(''); return { data: null, error: null }; }
-        return { data: { user: body.user, balance: body.balance }, error: null };
+        return { data: { user: body.user, balance: body.balance, welcome: !!body.welcome }, error: null };
       }).catch(function (e) {
         /* 网络异常不当作未登录（服务端仍会把关），但 token 明显无效时清掉 */
         if (e && (e.status === 401 || e.status === 403)) { writeToken(''); return { data: null, error: null }; }
@@ -108,9 +108,9 @@
       return api('/api/auth/verify', { method: 'POST', json: { email: email, code: o.token || o.code || '' } })
         .then(function (body) {
           writeToken(body.token);
-          var session = { user: body.user };
+          var session = { user: body.user, welcome: !!body.welcome };
           emit('SIGNED_IN', session);
-          return { data: { user: body.user, session: session }, error: null };
+          return { data: { user: body.user, session: session, welcome: !!body.welcome }, error: null };
         })
         .catch(function (e) {
           return { data: null, error: { code: (e && e.code) || 'VERIFY_FAILED', message: (e && e.message) || '验证码错误或已过期' } };
@@ -134,7 +134,7 @@
           writeToken('');
           return { data: null, error: { code: 'INVALID_SESSION', message: '会话无效' } };
         }
-        var session = { user: body.user, balance: body.balance };
+        var session = { user: body.user, balance: body.balance, welcome: !!body.welcome };
         emit('SIGNED_IN', session);
         return { data: { user: body.user, session: session }, error: null };
       });

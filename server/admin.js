@@ -479,6 +479,9 @@ const INVITE_CTE =
   '         (SELECT COUNT(*) FROM redeem_codes c WHERE c.batch = b.batch AND c.used_by IS NOT NULL) AS used, ' +
   '         (SELECT COUNT(DISTINCT c.used_by) FROM redeem_codes c WHERE c.batch = b.batch AND c.used_by IS NOT NULL) AS users ' +
   '  FROM redeem_batches b' +
+  /* 内置的新用户见面礼不进运营列表：它没有名额概念（按需补码）、也不该被停用，
+     混进来只会让「剩余名额/状态」这些口径失真。判定见 wallet.js WELCOME_BATCH。 */
+  '  WHERE b.batch <> \'WELCOME\'' +
   '), tagged AS (' +
   '  SELECT base.*, CASE ' +
   '      WHEN active = 0 THEN \'closed\' ' +
@@ -579,6 +582,8 @@ async function handleInviteUpdate(req, res) {
   const body = await readJson(req);
   const batch = cleanStr(body.batch, 40);
   if (!batch) { return sendJson(res, 400, { error: { code: 'BAD_BATCH', message: '缺少批次号' } }); }
+  /* 内置见面礼批次不可停用/改名：它不在列表里，也不该被构造请求改到 */
+  if (batch === 'WELCOME') { return sendJson(res, 400, { error: { code: 'BAD_BATCH', message: '系统内置批次不可修改' } }); }
   const row = dbmod.db.prepare('SELECT batch FROM redeem_batches WHERE batch = ?').get(batch);
   if (!row) { return sendJson(res, 404, { error: { code: 'NO_BATCH', message: '没有这个邀请批次' } }); }
   if (body.active !== undefined) {
@@ -603,7 +608,9 @@ function handleRedeemList(req, res, url) {
   const pageSize = Math.max(1, Math.min(Math.floor(Number(q.get('pageSize')) || 50), REDEEM_PAGE_MAX));
   const now = dbmod.nowMs();
 
-  const where = [];
+  /* 见面礼的码是服务端内部凭证（每个新用户一条 WLxxxx），不该出现在运营总表里：
+     既不能发放，也不是「未兑换负债」，混进来会让统计口径失真。 */
+  const where = ["(batch IS NULL OR batch <> 'WELCOME')"];
   const args = [];
   if (status === 'unused') { where.push('used_by IS NULL AND (expires_at IS NULL OR expires_at >= ?)'); args.push(now); }
   else if (status === 'expired') { where.push('used_by IS NULL AND expires_at IS NOT NULL AND expires_at < ?'); args.push(now); }
@@ -638,7 +645,7 @@ function handleRedeemList(req, res, url) {
     " SUM(CASE WHEN used_by IS NOT NULL THEN 1 ELSE 0 END) AS used," +
     " SUM(CASE WHEN used_by IS NULL AND expires_at IS NOT NULL AND expires_at < ? THEN 1 ELSE 0 END) AS expired," +
     " SUM(CASE WHEN used_by IS NULL THEN credits ELSE 0 END) AS creditsUnused" +
-    ' FROM redeem_codes'
+    " FROM redeem_codes WHERE (batch IS NULL OR batch <> 'WELCOME')"
   ).get(now);
   const unused = stats.total - (stats.used || 0);
 

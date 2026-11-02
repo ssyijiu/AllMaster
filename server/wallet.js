@@ -9,13 +9,34 @@
  *   wallet_redeem    兑换码入账，码只能用一次
  *   wallet_pay_claim 支付到账，支付单号幂等（回调重放不会重复入账）
  *
- * 免费额度：允许透支到 -2（= 2 次免费体验），与云端 floor 一致；
- * 再往下扣必须抛 INSUFFICIENT_BALANCE。
+ * 新用户见面礼：注册即得 2 积分，走内置隐形批次 WELCOME（见下）。
+ * 余额不能透支到负数：转完这 2 张就得充值或兑换，否则 INSUFFICIENT_BALANCE。
  */
 
 const dbmod = require('./db');
 
-const FREE_FLOOR = -2;
+const FREE_FLOOR = 0;
+
+/* ---- 新用户见面礼（内置隐形批次）-----------------------------------------
+ * 「用兑换码/邀请链接注册」与「什么都没用就注册」在业务上是互斥的两条路：
+ * 前者拿链接面值，后者拿 2 积分，拿到任一份就不再算新用户。
+ *
+ * 实现上不另造「免费额度」概念，而是复用邀请链接那套：内置一个 batch，
+ * 每个新用户从池子里领一张 2 分的码。好处是三条规则天然成立、不用重复实现——
+ *   · 仅新用户：批次 new_user_only=1，与兑换码/邀请链接同一段判定；
+ *   · 每人一张：per_user_limit=1，重复进站返回 alreadyOwned 而不是报错；
+ *   · 领过即老用户：入账写一条 redeem 流水，回头点别人的邀请链接会被
+ *     「仅新用户」拦下——两条路自动互斥，不需要额外状态位。
+ * 码是内部凭证，用户永远看不到；池子空了按需补一张（不预生成名额）。
+ * 后台批次列表里隐藏这条批次（label 带「系统」），避免误停用/误删。
+ */
+const WELCOME_BATCH = 'WELCOME';
+const WELCOME_CREDITS = 2;
+/* 入账 memo 同时是 /my 明细的展示文案（系统赠送没有「码」可展示） */
+const WELCOME_MEMO = '新用户见面礼';
+/* 与兑换码同一套字符集（去掉易混的 I/O/0/1）。这里复制一份而不是 require admin.js：
+ * 后台依赖钱包，钱包再依赖后台就成了循环。 */
+const WELCOME_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 function fail(code, message) {
   const e = new Error(message || code);
@@ -58,7 +79,7 @@ function consume(userId, credits, ref, opts) {
       return { txnId: dup.txn_id, balance: balance(userId), duplicated: true };
     }
     const cur = balance(userId);
-    if (cur - amount < FREE_FLOOR) { throw fail('INSUFFICIENT_BALANCE', '积分不足'); }
+    if (cur - amount < FREE_FLOOR) { throw fail('INSUFFICIENT_BALANCE', '积分不足，请充值或使用兑换码'); }
     const txnId = insert(d, {
       userId: userId,
       credits: -amount,
@@ -192,68 +213,137 @@ function redeem(userId, code) {
  * 一断网就永久占住一张码，还得写回收；单事务分配没有这个洞——两个人同时点开，
  * BEGIN IMMEDIATE 串行化，第二个人拿到的是下一张。
  *
- * 规则与 redeem 完全同口径（同一张表、同一套判定），避免两条入口说法不一。 */
+ * 规则与 redeem 完全同口径（同一张表、同一套判定），避免两条入口说法不一。
+ * 事务内核单独抽出：新用户见面礼（claimWelcome）走完全相同的路径，
+ * 只是进来之前会先补一张码，不另写一套额度逻辑。 */
+function redeemBatchCore(d, userId, b) {
+  const bt = d.prepare(
+    'SELECT batch, label, landing, credits, new_user_only, per_user_limit, expires_at, active FROM redeem_batches WHERE batch = ?'
+  ).get(b);
+  if (!bt) { throw fail('BATCH_INVALID', '邀请链接无效'); }
+  if (!Number(bt.active)) { throw fail('BATCH_CLOSED', '这个邀请链接已经停止发放了'); }
+  const now = dbmod.nowMs();
+  if (bt.expires_at && Number(bt.expires_at) < now) { throw fail('BATCH_EXPIRED', '邀请链接已过期'); }
+
+  const perUserLimit = Number(bt.per_user_limit) || 0;
+  const mine = d.prepare(
+    'SELECT code FROM redeem_codes WHERE batch = ? AND used_by = ? ORDER BY used_at ASC, code ASC'
+  ).all(b, userId);
+  if (perUserLimit > 0 && mine.length >= perUserLimit) {
+    /* 重复点开同一条链接：不报错。用户看到「已领过」比看到「失败」安心，
+       也不会以为没到账去翻客服记录。 */
+    return {
+      balance: balance(userId), credits: 0, batch: b,
+      code: mine.length ? String(mine[0].code) : '', alreadyOwned: true
+    };
+  }
+
+  /* 新用户口径与 redeem 一致：此前没有任何积分流水，但排除本批次自己领过的记录。
+     放在选码之前——被拒的人不该占掉一张码。 */
+  if (Number(bt.new_user_only) === 1) {
+    const seen = d.prepare(
+      'SELECT 1 AS x FROM wallet_txns WHERE user_id = ? ' +
+      'AND NOT (kind = ? AND ref IN (SELECT code FROM redeem_codes WHERE batch = ?)) LIMIT 1'
+    ).get(userId, 'redeem', b);
+    if (seen) {
+      throw fail('CODE_NEW_USER_ONLY', '这批兑换码是给新用户的见面礼，你的账号已有积分记录～可以直接用现有积分去转图');
+    }
+  }
+
+  /* 挑一张「没被领、也没过期」的码。码是随机的，ORDER BY code 等价于随机取，
+     但比 random() 确定，出问题时能复现。 */
+  const pick = d.prepare(
+    'SELECT code, credits FROM redeem_codes WHERE batch = ? AND used_by IS NULL ' +
+    'AND (expires_at IS NULL OR expires_at >= ?) ORDER BY code LIMIT 1'
+  ).get(b, now);
+  if (!pick) {
+    const left = d.prepare('SELECT COUNT(*) AS n FROM redeem_codes WHERE batch = ? AND used_by IS NULL').get(b);
+    if (!left || !Number(left.n)) { throw fail('BATCH_EXHAUSTED', '这个邀请链接的名额已经领完了'); }
+    /* 还有没领的码但都过期了：按链接过期回，提示才准确 */
+    throw fail('BATCH_EXPIRED', '邀请链接已过期');
+  }
+
+  const claimed = d.prepare('UPDATE redeem_codes SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL')
+    .run(userId, now, pick.code);
+  if (!claimed || Number(claimed.changes) !== 1) {
+    throw fail('BATCH_EXHAUSTED', '这个邀请链接的名额刚被领完，请稍后再试');
+  }
+
+  const credits = Number(pick.credits) || 0;
+  insert(d, {
+    userId: userId,
+    credits: credits,
+    kind: 'redeem',
+    ref: String(pick.code),
+    /* 见面礼与邀请链接都是 redeem 入账，靠 memo 区分。/my 明细按 memo 展示，
+       不然新用户会看到一行「兑换码 WLxxxx」，像是自己输了个码。 */
+    memo: b === WELCOME_BATCH ? WELCOME_MEMO : '邀请链接领取'
+  });
+  return { balance: balance(userId), credits: credits, code: String(pick.code), batch: b, alreadyOwned: false };
+}
+
 function redeemBatch(userId, batch) {
   if (!userId) { throw fail('AUTH_REQUIRED', '请先登录后再领取'); }
   const b = String(batch || '').trim().toUpperCase();
   if (!b) { throw fail('BATCH_INVALID', '邀请链接无效'); }
+  /* 内置批次不对外开放：它只由 claimWelcome 触发。判定一样会拦人，
+     但语义上它不是一条「链接」，不该能被构造出来当邀请链接点。 */
+  if (b === WELCOME_BATCH) { throw fail('BATCH_INVALID', '邀请链接无效'); }
+  return dbmod.tx((d) => redeemBatchCore(d, userId, b));
+}
+
+/* ---- 新用户见面礼 -------------------------------------------------------- */
+
+/* 内部凭证码：'WL' + 10 位无歧义字符。用户永远看不到它，只需要唯一。 */
+function welcomeCode() {
+  const bytes = require('crypto').randomBytes(10);
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) { s += WELCOME_ALPHABET[bytes[i] % WELCOME_ALPHABET.length]; }
+  return 'WL' + s;
+}
+
+/* 批次行按需落库：不需要版本迁移，第一个新用户来领时自动补上。 */
+function ensureWelcomeBatch(d) {
+  d.prepare(
+    'INSERT OR IGNORE INTO redeem_batches ' +
+    '(batch, label, landing, credits, quota, new_user_only, per_user_limit, expires_at, active, created_at) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(WELCOME_BATCH, '新用户见面礼（系统内置）', '', WELCOME_CREDITS, 0, 1, 1, null, 1, dbmod.nowMs());
+}
+
+/* 池子空了就补一张。不预生成名额：新用户来多少补多少，
+   免得「名额/剩余」这种面向运营的口径被一条看不见的批次搅乱。 */
+function ensureWelcomeCode(d) {
+  const left = d.prepare(
+    'SELECT COUNT(*) AS n FROM redeem_codes WHERE batch = ? AND used_by IS NULL ' +
+    'AND (expires_at IS NULL OR expires_at >= ?)'
+  ).get(WELCOME_BATCH, dbmod.nowMs());
+  if (left && Number(left.n) > 0) { return; }
+  d.prepare(
+    'INSERT INTO redeem_codes (code, credits, batch, created_at, expires_at, new_user_only, per_user_limit) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(welcomeCode(), WELCOME_CREDITS, WELCOME_BATCH, dbmod.nowMs(), null, 1, 1);
+}
+
+/* 注册即领 2 积分。幂等：重复调用返回 alreadyOwned，不重复发。
+ * 已有任何积分流水 → 被 new_user_only 拦下（他走的是兑换码/邀请链接那条路，
+ * 或者已经开始消费了），这正是「两条路互斥」的落点。 */
+function claimWelcome(userId) {
+  if (!userId) { throw fail('AUTH_REQUIRED', '请先登录'); }
   return dbmod.tx((d) => {
-    const bt = d.prepare(
-      'SELECT batch, label, landing, credits, new_user_only, per_user_limit, expires_at, active FROM redeem_batches WHERE batch = ?'
-    ).get(b);
-    if (!bt) { throw fail('BATCH_INVALID', '邀请链接无效'); }
-    if (!Number(bt.active)) { throw fail('BATCH_CLOSED', '这个邀请链接已经停止发放了'); }
-    const now = dbmod.nowMs();
-    if (bt.expires_at && Number(bt.expires_at) < now) { throw fail('BATCH_EXPIRED', '邀请链接已过期'); }
-
-    const perUserLimit = Number(bt.per_user_limit) || 0;
-    const mine = d.prepare(
-      'SELECT code FROM redeem_codes WHERE batch = ? AND used_by = ? ORDER BY used_at ASC, code ASC'
-    ).all(b, userId);
-    if (perUserLimit > 0 && mine.length >= perUserLimit) {
-      /* 重复点开同一条链接：不报错。用户看到「已领过」比看到「失败」安心，
-         也不会以为没到账去翻客服记录。 */
-      return {
-        balance: balance(userId), credits: 0, batch: b,
-        code: mine.length ? String(mine[0].code) : '', alreadyOwned: true
-      };
-    }
-
-    /* 新用户口径与 redeem 一致：此前没有任何积分流水，但排除本批次自己领过的记录。
-       放在选码之前——被拒的人不该占掉一张码。 */
-    if (Number(bt.new_user_only) === 1) {
-      const seen = d.prepare(
-        'SELECT 1 AS x FROM wallet_txns WHERE user_id = ? ' +
-        'AND NOT (kind = ? AND ref IN (SELECT code FROM redeem_codes WHERE batch = ?)) LIMIT 1'
-      ).get(userId, 'redeem', b);
-      if (seen) {
-        throw fail('CODE_NEW_USER_ONLY', '这批兑换码是给新用户的见面礼，你的账号已有积分记录～可以直接用现有积分去转图');
-      }
-    }
-
-    /* 挑一张「没被领、也没过期」的码。码是随机的，ORDER BY code 等价于随机取，
-       但比 random() 确定，出问题时能复现。 */
-    const pick = d.prepare(
-      'SELECT code, credits FROM redeem_codes WHERE batch = ? AND used_by IS NULL ' +
-      'AND (expires_at IS NULL OR expires_at >= ?) ORDER BY code LIMIT 1'
-    ).get(b, now);
-    if (!pick) {
-      const left = d.prepare('SELECT COUNT(*) AS n FROM redeem_codes WHERE batch = ? AND used_by IS NULL').get(b);
-      if (!left || !Number(left.n)) { throw fail('BATCH_EXHAUSTED', '这个邀请链接的名额已经领完了'); }
-      /* 还有没领的码但都过期了：按链接过期回，提示才准确 */
-      throw fail('BATCH_EXPIRED', '邀请链接已过期');
-    }
-
-    const claimed = d.prepare('UPDATE redeem_codes SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL')
-      .run(userId, now, pick.code);
-    if (!claimed || Number(claimed.changes) !== 1) {
-      throw fail('BATCH_EXHAUSTED', '这个邀请链接的名额刚被领完，请稍后再试');
-    }
-
-    const credits = Number(pick.credits) || 0;
-    insert(d, { userId: userId, credits: credits, kind: 'redeem', ref: String(pick.code), memo: '邀请链接领取' });
-    return { balance: balance(userId), credits: credits, code: String(pick.code), batch: b, alreadyOwned: false };
+    ensureWelcomeBatch(d);
+    ensureWelcomeCode(d);
+    const r = redeemBatchCore(d, userId, WELCOME_BATCH);
+    return Object.assign({}, r, { welcome: true });
   });
+}
+
+/* 还能不能领见面礼：下发到 session，前端据此决定要不要发那次请求。
+ * 口径与 new_user_only 完全一致 —— 没有任何积分流水。 */
+function welcomeAvailable(userId) {
+  if (!userId) { return false; }
+  const seen = dbmod.db.prepare('SELECT 1 AS x FROM wallet_txns WHERE user_id = ? LIMIT 1').get(userId);
+  return !seen;
 }
 
 /* 支付入账：ref = 支付单号，重放幂等（返回 duplicated 供回调判断） */
@@ -296,6 +386,9 @@ function listTxns(userId, limit) {
     ref: r.ref,
     memo: r.memo,
     product: r.product,
+    /* 前端副标题优先用 note。只给「系统赠送」这类没有码可展示的入账填，
+       普通兑换码仍走前端打码分支（否则会露出完整码）。 */
+    note: r.memo === WELCOME_MEMO ? WELCOME_MEMO : '',
     /* 前端按 created_at 排序，给 ISO 字符串（与云端 timestamptz 同形） */
     created_at: new Date(Number(r.created_at)).toISOString()
   }));
@@ -303,12 +396,16 @@ function listTxns(userId, limit) {
 
 module.exports = {
   FREE_FLOOR,
+  WELCOME_BATCH,
+  WELCOME_CREDITS,
   balance,
   consume,
   refund,
   refundCore,
   redeem,
   redeemBatch,
+  claimWelcome,
+  welcomeAvailable,
   payCredit,
   grant,
   listTxns,

@@ -505,7 +505,7 @@
           els.walletBalanceBig.textContent = String(walletService.balance);
         }
       },
-      /* 生成前扣 1 积分；余额不足（含免费额度用尽）时抛 insufficient */
+      /* 生成前扣 1 积分；余额不足（新用户 2 积分用完）时抛 insufficient */
       consume: function () {
         var ref = 'gen-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
         return walletRpc('wallet_consume', { p_credits: -1, p_ref: ref }).then(function (rows) {
@@ -516,7 +516,7 @@
         }).catch(function (err) {
           if (String(err.message || '').indexOf('INSUFFICIENT_BALANCE') !== -1) {
             err.insufficient = true;
-            err.message = '积分不足：免费体验已用完，请充值或输入兑换码。';
+            err.message = '积分不足，请充值或输入兑换码。';
           }
           throw err;
         });
@@ -569,6 +569,27 @@
                 alreadyOwned: !!res.alreadyOwned
               }
             : { balance: typeof res === 'number' ? res : walletService.balance, credits: null, code: '', batch: batch, alreadyOwned: false };
+          walletService.balance = out.balance;
+          walletService.renderChip();
+          return out;
+        }).catch(function (err) {
+          var parsed = redeemErrText(err && err.message);
+          err.redeemCode = (err && err.code) || parsed.code;
+          err.message = parsed.text;
+          throw err;
+        });
+      },
+      /* 新用户见面礼：注册即送 2 积分，服务端按内置批次发放（仅新用户、每人一张）。
+       * 形状与 redeemBatch 一致；已有流水时服务端回 CODE_NEW_USER_ONLY。 */
+      claimWelcome: function () {
+        return walletRpc('wallet_claim_welcome', {}).then(function (res) {
+          var out = (res && typeof res === 'object')
+            ? {
+                balance: typeof res.balance === 'number' ? res.balance : walletService.balance,
+                credits: typeof res.credits === 'number' ? res.credits : null,
+                alreadyOwned: !!res.alreadyOwned
+              }
+            : { balance: typeof res === 'number' ? res : walletService.balance, credits: null, alreadyOwned: false };
           walletService.balance = out.balance;
           walletService.renderChip();
           return out;
@@ -680,9 +701,14 @@
           '<div class="t-main"><div class="t-kind"></div><div class="t-note"></div></div>' +
           '<div class="t-credits"></div><div class="t-time"></div>';
         var credits = Number(t.credits) || 0;
-        item.querySelector('.t-kind').textContent = TXN_KIND_TEXT[t.kind] || t.kind || '记录';
+        /* 见面礼是系统赠送，没有「码」：标题直接说清楚，
+           否则会显示成「兑换码兑换 / 兑换码 WLxxxx」，像是用户自己输过码。 */
+        var isWelcome = t.note === '新用户见面礼';
+        item.querySelector('.t-kind').textContent = isWelcome
+          ? '新用户见面礼'
+          : (TXN_KIND_TEXT[t.kind] || t.kind || '记录');
         /* 副标题优先级：云端备注 → 生成消费的产品 → 兑换码（打码） */
-        var note = t.note || '';
+        var note = isWelcome ? '' : (t.note || '');
         if (!note && t.kind === 'consume') { note = txnProduct(t.ref); }
         if (!note && t.kind === 'redeem') { note = '兑换码 ' + maskRedeemCode(t.ref); }
         item.querySelector('.t-note').textContent = note;
@@ -851,10 +877,12 @@
       });
     }
 
+    /* 返回 Promise：调用方要等链接领完再决定要不要发见面礼——
+       领到链接积分的人已经不是新用户，见面礼必须排在它后面。 */
     function redeemFromLink() {
-      if (linkRedeem.handled) { return; }
+      if (linkRedeem.handled) { return Promise.resolve(); }
       var claims = pendingClaims();
-      if (!claims.length) { return; }
+      if (!claims.length) { return Promise.resolve(); }
       if (!Store.state.user) {
         /* 只自动弹一次登录框；用户主动关掉后不再骚扰，码仍留在 sessionStorage，
            等他下次点「登录」成功时再自动领取。 */
@@ -863,7 +891,7 @@
           openLogin();
           showLoginMsg('登录后将自动为你领取链接里的积分', false);
         }
-        return;
+        return Promise.resolve();
       }
       linkRedeem.handled = true;
       /* 逐条处理：一条失败不影响另一条，能重试的留在 sessionStorage 等下次触发 */
@@ -874,8 +902,27 @@
           return doClaim(claim).catch(function (e) { if (e && e.retryable) { retryLater = true; } });
         });
       });
-      chain.then(function () { if (retryLater) { linkRedeem.handled = false; } });
+      return chain.then(function () { if (retryLater) { linkRedeem.handled = false; } });
     }
+    /* 新用户见面礼：首次登录自动到账，不弹窗、不打断流程。
+     * 只在 session 明确说「还是新用户」时才发请求——服务端仍是唯一裁判，
+     * 这个标记只是省掉老用户每次登录的一次往返（跨境 RPC 要 0.3~0.6s）。 */
+    var welcomeClaiming = false;
+    function claimWelcomeIfNeeded() {
+      if (welcomeClaiming || !Store.state.user) { return; }
+      welcomeClaiming = true;
+      walletService.claimWelcome().then(function (r) {
+        welcomeClaiming = false;
+        if (!r || r.alreadyOwned || !(r.credits > 0)) { return; }
+        notifyBalanceChanged();
+        redeemToast('欢迎！已赠送 ' + r.credits + ' 积分，可以去转图啦', 'ok');
+      }).catch(function () {
+        /* 静默：赠送是锦上添花，弹「领取失败」只会让人以为自己漏领了什么。
+           下次登录会再试，服务端幂等。 */
+        welcomeClaiming = false;
+      });
+    }
+
     /* 支付回跳：?paid=ORDERNO → 向服务器领取签名凭证 → 云端 RPC 幂等入账 */
     var paidClaimHandled = {};
     function handlePaidReturn() {
@@ -929,13 +976,20 @@
 
     function applySession(session) {
       Store.state.user = sessionUser(session);
+      /* 首次登录（= 注册）：session 明确说还能领见面礼。老用户和「会话刷新」
+         那条路径没有这个字段，不去发请求。 */
+      var wantWelcome = !!(session && session.welcome === true);
       renderAuthUI();
       /* 登录：初始化积分钱包并处理支付回跳；退出：隐藏钱包并清零余额 */
       if (Store.state.user) {
         walletService.refresh().then(function () {
           handlePaidReturn();
           /* 兑换链接：等余额拉回来再兑，提示里的「已到账 N 积分」才有据可依 */
-          redeemFromLink();
+          return redeemFromLink();
+        }).then(function () {
+          /* 顺序不可颠倒：链接积分先入账，见面礼后发。领过链接的人已有流水，
+             见面礼会被服务端「仅新用户」拒掉——两条路互斥就落在这里。 */
+          if (wantWelcome) { claimWelcomeIfNeeded(); }
         });
         /* 顺手把上次没结算完的生成单退掉（关页/崩溃/断网的残留） */
         settleStaleOrders();
@@ -1107,7 +1161,8 @@
           return;
         }
         pendingOtp = null;
-        applySession(res && res.data ? { user: res.data.user } : null);
+        /* 传整个 session（含 welcome 标记）：applySession 靠它决定要不要发见面礼 */
+        applySession(res && res.data ? (res.data.session || { user: res.data.user }) : null);
         closeLogin();
         onLoginSuccess(Store.state.user);
       }).catch(function () {

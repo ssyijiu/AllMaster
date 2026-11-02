@@ -142,6 +142,21 @@ function createLocalCloud(deps) {
       }
     },
 
+    /* 新用户见面礼：注册后自动领 2 积分。无参数——批次号是服务端内置的，
+       不让客户端指定，避免被当成「任意批次免检领取」的入口。
+       形状与 wallet_redeem_batch 一致。 */
+    wallet_claim_welcome: (user, p) => {
+      if (!user) { return err(401, 'AUTH_REQUIRED'); }
+      if (!redeemTries.take(user.id)) { return err(429, 'TOO_MANY'); }
+      try {
+        return ok(wallet.claimWelcome(user.id));
+      } catch (e) {
+        const code = (e && e.code) || 'WELCOME_FAILED';
+        const detail = e && e.message && e.message !== code ? code + ': ' + e.message : code;
+        return err(400, detail);
+      }
+    },
+
     /* 支付入账：验签由服务器 /api/pay/claim 生成的 md5 凭证承担 */
     wallet_pay_claim: (user, p) => {
       if (!user) { return err(401, 'AUTH_REQUIRED'); }
