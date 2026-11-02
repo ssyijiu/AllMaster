@@ -308,10 +308,37 @@ function scrubPaths(s) {
    所以降级成中性的「生成失败，请重试」。 */
 const UPSTREAM_RE = /连不上|连接|Connection|Timeout|timed out|超时|HTTP 5\d\d|50[234]|rate.?limit|限流|未完成|upstream|服务未返回|取图|额度/i;
 
+/* 上游并发限流（429 user_busy）：平台共用一把 Key，别人正在出图时提交会被挡回，
+   语义是「等一下就好」，不是故障。这类绝不能把上游 JSON 甩给玩家（原样截断后是乱码）。 */
+const BUSY_RE = /HTTP 429|user_busy|retry_later|quota_pool/i;
+
+/* 从上游响应里取 retry_after_s（秒），取不到给个保守估计 */
+function busyMessage(reason) {
+  const m = /"retry_after_s"\s*:\s*(\d+)/.exec(reason) || /retry_after_s\D{0,4}(\d+)/.exec(reason);
+  const sec = m ? Math.max(1, parseInt(m[1], 10)) : 0;
+  const wait = sec === 0 ? '十几秒'
+    : sec >= 60 ? ('约 ' + Math.round(sec / 60) + ' 分钟')
+    : ('约 ' + sec + ' 秒');
+  return '上一张图还在生成中，请' + wait + '后再试（同一时间只出一张图）';
+}
+
+/* 上游偶尔把整个 JSON 塞进错误行：优先取里面的 msg/message，否则砍掉 JSON 段
+   （被截断的 JSON 对玩家是纯乱码，不如只留「提交：HTTP 500」这类前缀） */
+function trimJsonBlob(text) {
+  const at = text.indexOf('{');
+  if (at < 0) { return text; }
+  const m = /"(?:msg|message)"\s*:\s*"([^"]{1,120})"/.exec(text);
+  const head = text.slice(0, at).replace(/[，,、:：\s]+$/, '');
+  if (m) { return (head ? head + '，' : '') + m[1]; }
+  return head || text.slice(0, 120);
+}
+
 /* 给玩家看的是一句结论，真因放在括号里（运维能一眼定性，玩家也不会只看到技术术语） */
 function wrapReason(reason) {
-  const head = UPSTREAM_RE.test(reason) ? '出图服务暂时不可用，请稍后重试' : '生成失败，请重试';
-  return head + '（' + reason + '）';
+  let clean = trimJsonBlob(reason);
+  if (clean.length > 150) { clean = clean.slice(0, 150) + '…'; }
+  const head = UPSTREAM_RE.test(clean) ? '出图服务暂时不可用，请稍后重试' : '生成失败，请重试';
+  return head + '（' + clean + '）';
 }
 
 function explainFailure(code, signal, timedOut, stderrTail, stdoutTail) {
@@ -331,7 +358,9 @@ function explainFailure(code, signal, timedOut, stderrTail, stdoutTail) {
   /* ③ 脚本用 SystemExit("中文原因") 退出时只打 stdout */
   if (!reason) { reason = scrubPaths(pickLine(stdoutTail, (l) => /失败|错误|ERROR|Traceback|找不到|无法|Error/.test(l))); }
   if (!reason) { return '生成失败（退出码 ' + code + '），请重试'; }
-  return wrapReason(reason.length > 150 ? reason.slice(0, 150) + '…' : reason);
+  /* 并发限流单独成句：等待即可，不套「服务不可用」的壳，也不回显上游 JSON */
+  if (BUSY_RE.test(reason)) { return busyMessage(reason); }
+  return wrapReason(reason);
 }
 
 /* ---------- 任务生命周期 ---------- */
