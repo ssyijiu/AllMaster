@@ -212,6 +212,31 @@ def suppress_halo_rgb(rgb: np.ndarray, opaque: np.ndarray,
     return out, info
 
 
+def binarize_alpha(a: np.ndarray) -> tuple[np.ndarray, bool]:
+    """半透明残留二值化（stage 0.3，2026-11-02 新增）：
+
+    生图模型偶尔会画「意图透明、但边缘留一圈半透明灰雾/残留」的底稿
+    （线上 03 全家福插画：背景没去掉、变成黑白杂点，正是这类）。这类图
+    已经有完全透明的像素（alpha==0），说明背景意图就是透明，那些 1~254
+    的半透明像素全是抗锯齿/残留，不是画面内容——直接二值化：
+    <128 → 完全透明，≥128 → 完全不透明。
+
+    只对「存在 alpha==0 像素」的图动手（模型明确想要透明底时才清残留）；
+    整图不透明（busy 背景）的图一律不动——那种只能靠提示词让模型自己抠底，
+    清洗层无法安全判断哪里是背景。返回（可能新建的数组, 是否改动）。
+    """
+    alpha = a[..., 3]
+    if (alpha == 0).sum() == 0:          # 没有真正的透明区：不是透明底意图，不动
+        return a, False
+    semi = (alpha > 0) & (alpha < 255)
+    if not semi.any():
+        return a, False                  # 已经是干净的 0/255，无需二值化
+    out = a.copy()
+    out[..., 3][semi & (alpha < 128)] = 0
+    out[..., 3][semi & (alpha >= 128)] = 255
+    return out, True
+
+
 def grid_snap(rgb: np.ndarray, opaque: np.ndarray, cell: int = GRID_CELL) -> np.ndarray:
     """把底稿吸附到 cell×cell 的方格：每个方格取其中位数色，整格铺平。
 
@@ -604,8 +629,13 @@ def _clean_image(src: Path, dst: Path, erode: int = ERODE_DEFAULT) -> dict:
     a, island_info = remove_islands(a)
     if island_info.get("islands_removed"):
         bg_cut = True   # 有改动就需要落盘
+    # 0.3) 半透明残留二值化（模型想透明、边缘留了半透明灰雾/残留）
+    a, alpha_changed = binarize_alpha(a)
+    if alpha_changed:
+        bg_cut = True   # 有改动就需要落盘（否则会被平坦度跳过得跳过）
     info.update(bg_info)
     info.update(island_info)
+    info.update(alpha_changed=bool(alpha_changed))
 
     h, w = a.shape[:2]
     opaque = a[..., 3] > 128

@@ -135,6 +135,34 @@ run("edge_legit_color", a, [
     ("黑色主体保留", lambda o: None if o[120, 100, 0] < 60 else (_ for _ in ()).throw(AssertionError(f"黑块被改 {o[120,100]}"))),
 ])
 
+# 8) 半透明残留（模型想透明、边缘留了半透明灰雾）→ 二值化清掉
+a = np.zeros((220, 220, 4), np.uint8)
+yy8, xx8 = np.mgrid[:220, :220]
+d8 = (yy8 - 110) ** 2 + (xx8 - 110) ** 2
+body8 = d8 < 80 ** 2
+ring8 = (d8 >= 80 ** 2) & (d8 < 92 ** 2)
+a[body8, :3] = (200, 160, 120); a[body8, 3] = 255
+a[ring8, :3] = (150, 150, 150); a[ring8, 3] = 120   # 半透明灰雾环
+a[~(body8 | ring8), 3] = 0                          # 外部透明
+a = noised(a, seed=13)
+run("alpha_residue_ring", a, [
+    ("灰雾环被清成透明", lambda o: None if o[110, 196, 3] == 0 else (_ for _ in ()).throw(AssertionError(f"环仍在 {o[110,196]}"))),
+    ("主体保留", lambda o: None if (o[110, 110, 3] == 255 and o[110, 110, 0] > 180) else (_ for _ in ()).throw(AssertionError(f"主体被改 {o[110,110]}"))),
+])
+
+# 9) 抗锯齿边（alpha 200）→ 硬化为不透明，主体不被误抠
+a = np.zeros((220, 220,4), np.uint8)
+a[body8, :3] = (200, 160, 120); a[body8, 3] = 255
+edge8 = (d8 >= 80 ** 2) & (d8 < 86 ** 2)
+a[edge8, :3] = (200, 160, 120); a[edge8, 3] = 200   # 抗锯齿边
+a[~(body8 | edge8), 3] = 0
+a = noised(a, seed=17)
+run("alpha_aa_edge", a, [
+    ("抗锯齿边变不透明", lambda o: None if o[110, 192, 3] == 255 else (_ for _ in ()).throw(AssertionError(f"边仍半透明 {o[110,192]}"))),
+    ("主体保留", lambda o: None if (o[110, 110, 3] == 255 and o[110, 110, 0] > 180) else (_ for _ in ()).throw(AssertionError(f"主体被改 {o[110,110]}"))),
+    ("外部仍透明", lambda o: None if o[5, 5, 3] == 0 else (_ for _ in ()).throw(AssertionError("外部被误填"))),
+])
+
 # 7) 幂等：洗两次结果一致
 a = arr(200, 200)
 a[..., :3] = (240, 240, 240)
