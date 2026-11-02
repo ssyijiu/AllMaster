@@ -163,6 +163,53 @@ run("alpha_aa_edge", a, [
     ("外部仍透明", lambda o: None if o[5, 5, 3] == 0 else (_ for _ in ()).throw(AssertionError("外部被误填"))),
 ])
 
+# 10) 占位背景：四边黑白棋盘格（后端透明失败）→ 整张按相位抠掉，主体保留
+def checkerboard(h, w, cell, A, B):
+    yy, xx = np.mgrid[:h, :w]
+    parity = (xx // cell + yy // cell) % 2
+    a = np.zeros((h, w, 4), np.uint8)
+    a[..., 3] = 255
+    a[..., :3] = np.where(parity[:, :, None] == 0, A, B)
+    return a
+a = checkerboard(240, 240, 12, (20, 20, 20), (230, 230, 230))
+yyc, xxc = np.mgrid[:240, :240]
+subj = (yyc - 120) ** 2 + (xxc - 120) ** 2 < 62 ** 2
+a[subj, :3] = (210, 50, 50)
+run("placeholder_checkerboard", a, [
+    ("四角被抠成透明", lambda o: None if o[10, 10, 3] == 0 and o[230, 230, 3] == 0 else (_ for _ in ()).throw(AssertionError(f"{o[10,10,3]}"))),
+    ("主体保留", lambda o: None if (o[120, 120, 3] == 255 and o[120, 120, 0] > 180) else (_ for _ in ()).throw(AssertionError(f"主体被改 {o[120,120]}"))),
+    ("主体边缘外的棋盘格已清", lambda o: None if not ((o[..., 3] > 128) & (np.abs(o[..., :3].astype(int) - [20,20,20]).sum(axis=2) < 40) & (np.abs(o[..., :3].astype(int) - [230,230,230]).sum(axis=2) < 40)).any() else (_ for _ in ()).throw(AssertionError("仍残留棋盘格"))),
+], expect_log="占位背景")
+
+# 11) 均匀灰块背景（#08 真实回归：背景大面灰块）：整片纯灰（128），主体居中。
+#     这类「整图不透明 + 四边均匀」的背景由 normalize_background（stage 0）在 stage 0.4 之前
+#     抠掉（欧氏判均匀），不属于 stage 0.4 的棋盘格兜底。这里验证灰块背景确实变透明、主体保留。
+a = arr(200, 200)
+a[..., :3] = (128, 128, 128)
+yy11, xx11 = np.mgrid[:200, :200]
+s11 = (yy11 - 100) ** 2 + (xx11 - 100) ** 2 < 60 ** 2
+a[s11, :3] = (220, 90, 40)
+run("placeholder_gray", a, [
+    ("四角被抠成透明", lambda o: None if o[3, 3, 3] == 0 else (_ for _ in ()).throw(AssertionError(f"{o[3,3,3]}"))),
+    ("主体保留", lambda o: None if (o[100, 100, 3] == 255 and o[100, 100, 0] > 180) else (_ for _ in ()).throw(AssertionError(f"主体被改 {o[100,100]}"))),
+], expect_log="背景")
+
+# 12) 占位背景：主体贴边（无法安全分离）→ 整段跳过，背景保留不透明
+a = arr(200, 200)
+a[..., :3] = (128, 128, 128)
+a[0:200, 0:90, :3] = (40, 40, 45)     # 主体从左边铺到画面外（贴边）
+run("placeholder_subject_edge", a, [
+    ("背景保留不透明（不误抠）", lambda o: None if o[160, 160, 3] == 255 else (_ for _ in ()).throw(AssertionError("贴边图被误抠"))),
+])
+
+# 13) 占位背景：渐变背景（四边多色）→ 不触发，背景保留
+a = arr(200, 200)
+a[..., :3] = np.linspace((30, 40, 50), (210, 200, 190), 200).reshape(200, 1, 3).astype(np.uint8)
+a[circle, :3] = (220, 60, 60)
+run("placeholder_gradient_skip", a, [
+    ("渐变背景保留不透明", lambda o: None if o[2, 2, 3] == 255 else (_ for _ in ()).throw(AssertionError("渐变被误抠"))),
+])
+
 # 7) 幂等：洗两次结果一致
 a = arr(200, 200)
 a[..., :3] = (240, 240, 240)

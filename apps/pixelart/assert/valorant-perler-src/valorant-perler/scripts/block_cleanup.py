@@ -13,6 +13,13 @@
   0.5 孤立噪点岛清除：生图偶尔在背景区残留小片不透明噪块（飞点）。与主体
      不相连且面积小于约两颗豆的岛直接置透明；迷你贴纸画风的小贴纸远大于
      阈值，不受影响。
+  0.4 占位背景清除（2026-11-03）：外部后端在复杂/写真背景上经常「透明底失败」，
+     返回整片不透明的图、背景被填成黑白棋盘格。normalize_background
+     （只删「四边均匀」背景）与 binarize_alpha（只清半透明残留）都救不了这种——
+     normalize 看到四边多色（黑白交替）会判 border_varied 跳过。本阶段兜底：图完全没有
+     透明像素、且四边是规则 2 色棋盘格、主体居中不贴边时，按棋盘格相位整张把占位背景
+     抠掉（同色主体不会被误删）；主体一旦贴边就跳过。纯色/均匀灰块不在本阶段——已由
+     normalize_background 在 stage 0 处理。
   1. 影调校准（v7）：不再无条件提亮，而是把动态范围与饱和度补齐到
      「参照后端 val-perler 的实测带」（8 组同源真实数据标定：我方原始输出
      饱和度 0.327 与参照 0.332 持平，动态范围 62.5 却窄于参照 73.3）。
@@ -102,6 +109,13 @@ SPECK_MAX_RATIO = 0.08  # 散点占主体超过这个比例就整体放过：那
 # 大小不一、边缘参差的碎块。吸附成 3px 方格后，底稿才有真正的像素块结构
 # （放大目检：3px 最接近参照端的块大小，2px 更保细节但仍有碎块感）。
 GRID_CELL = 3
+
+# —— 占位背景清除（stage 0.4，2026-11-03）——
+# 外部后端在复杂/写真背景上经常「透明底失败」：返回整片不透明的图，背景被填成
+# 黑白棋盘格或灰块/噪点。normalize_background（只删四边均匀背景）与 binarize_alpha
+# （只清半透明残留）都救不了这种。本阶段兜底：图完全没有透明像素、且主体居中不贴边时，
+# 从边缘把占位背景抠掉。
+PLACEHOLDER_TOL = 60   # 占位背景主色容差（模型出的占位背景常带轻微噪点）
 
 # —— 诊断埋点（默认全关，环境变量开启）——
 # PERLER_CLEANUP_JSON=<path>   写完整诊断 JSON（链路侧据此决定是否留 RAW）
@@ -234,6 +248,147 @@ def binarize_alpha(a: np.ndarray) -> tuple[np.ndarray, bool]:
     out = a.copy()
     out[..., 3][semi & (alpha < 128)] = 0
     out[..., 3][semi & (alpha >= 128)] = 255
+    return out, True
+
+
+def _border_component(mask: np.ndarray, opaque: np.ndarray) -> np.ndarray:
+    """返回 mask 中「与图像四边连通」的那一片（flood-fill from border）。"""
+    lab, n = nd_label(mask, structure=np.ones((3, 3), int))
+    if n == 0:
+        return np.zeros_like(mask)
+    touching = set(np.unique(np.concatenate([lab[0, :], lab[-1, :], lab[:, 0], lab[:, -1]])))
+    touching.discard(0)
+    if not touching:
+        return np.zeros_like(mask)
+    return np.isin(lab, list(touching)) & opaque
+
+
+def _checkerboard_phase(rgb: np.ndarray, colors: np.ndarray) -> tuple[int, np.ndarray, np.ndarray, int] | None:
+    """检测四边是否为规则 2 色棋盘格；是则返回 (cell, A, B, phase)，否则 None。
+
+    phase=0 表示像素 (0,0) 处应为 A 色。colors = 四边上出现的两色（每通道已 *16+8 的近似）。
+    """
+    A, B = colors
+    h, w = rgb.shape[:2]
+    if h < 12 or w < 12:
+        return None
+    qA, qB = A // 16, B // 16
+    top = rgb[0] // 16
+    ca = np.all(top == qA, axis=1)
+    cb = np.all(top == qB, axis=1)
+    if not (ca.any() and cb.any()):
+        return None
+    # 顶边按 A/B 分类（非 A 非 B 记 -1），要求非 A 非 B 极少
+    cls = np.where(ca, 0, np.where(cb, 1, -1))
+    if (cls < 0).mean() > 0.15:
+        return None
+    # 交替游程长度应基本一致 = cell
+    runs: list[int] = []
+    cur = cls[0]
+    runlen = 1
+    for v in cls[1:]:
+        if v == cur:
+            runlen += 1
+        else:
+            if cur >= 0:
+                runs.append(runlen)
+            cur = v
+            runlen = 1
+    if cur >= 0:
+        runs.append(runlen)
+    if len(runs) < 4:
+        return None
+    cell = int(np.median(runs))
+    if cell < 2 or cell > 40:
+        return None
+    if not all(abs(r - cell) <= max(2, cell // 2) for r in runs[:10]):
+        return None
+    # 用相位在四边整体验证（顶边首像素决定 phase）
+    phase = 0 if ca[0] else 1
+    yy, xx = np.mgrid[0:h, 0:w]
+    parity = (xx // cell + yy // cell) % 2
+    expected = np.where(parity[:, :, None] == phase, A, B)
+    border = np.zeros((h, w), bool)
+    border[0] = True
+    border[-1] = True
+    border[:, 0] = True
+    border[:, -1] = True
+    diff = np.abs(rgb - expected).sum(axis=2)
+    if (diff < 60).sum() / max(border.sum(), 1) < 0.8:
+        return None
+    return cell, A, B, phase
+
+
+def remove_placeholder_bg(a: np.ndarray) -> tuple[np.ndarray, bool]:
+    """占位背景清除（stage 0.4，2026-11-03 新增）：后端透明底失败时的兜底。
+
+    当图**完全没有透明像素**（alpha 全为 255，说明后端没抠底）时，主体与背景都是不透明的、
+    且二者相连成一个整体——无法靠连通域分开。此时靠**颜色**判断：背景一定贴着四边，主体
+    居中且颜色与背景不同。于是：
+
+    1. 四边是规则 2 色棋盘格（黑白噪点）→ 整张按棋盘格相位把匹配像素抠掉；主体不是
+       规则棋盘格，不会被误删。
+
+    注：纯色 / 均匀灰块背景不属于本阶段。normalize_background（stage 0，用欧氏距离判
+    「四边均匀」）已经在它之前把这种「整图不透明 + 四边均匀」的背景抠掉了；本阶段只兜底
+    normalize 判不了的「四边多色、规则交替」的棋盘格占位背景。（已验证：对均匀/灰块背景，
+    normalize 的欧氏阈值恒先于本阶段的 sum-abs 阈值命中，故 flood-fill 兜底路径是死代码，
+    已移除。）
+
+    安全闸（任一不满足就整段跳过，宁可留背景也不裁主体）：
+    · 已有 alpha==0 → 后端做对了，不动；
+    · 保留下来的主体（opaque 且未在抠除区内）若贴边 → 说明主体贴边，可能误裁，跳过；
+    · 几乎没留下主体（抠得太多）→ 多半把主体也抠了，跳过；
+    · 抠除区占整图比例 <1% → 噪声触发的误判，跳过。
+    """
+    alpha = a[..., 3]
+    if (alpha == 0).any():           # 已有透明像素：后端做对了，不动
+        return a, False
+    rgb = a[..., :3].astype(np.int32)
+    opaque = alpha > 128
+    h, w = a.shape[:2]
+    if h < 24 or w < 24:
+        return a, False
+
+    # 四边主色（量化到 1/16 抑制噪点）
+    frame = np.concatenate([rgb[0], rgb[-1], rgb[:, 0], rgb[:, -1]], axis=0)
+    qf = frame // 16
+    uniq, counts = np.unique(qf, axis=0, return_counts=True)
+    order = np.argsort(-counts)
+
+    removed: np.ndarray | None = None
+    # 1) 四边恰 2~3 色 → 先验相位（规则棋盘格：黑白噪点常是这种）。相位匹配比单纯
+    #    flood-fill 更安全：同色主体不会被误删。非棋盘格会在此返回 None，整段跳过。
+    if 2 <= uniq.shape[0] <= 3:
+        cb = _checkerboard_phase(rgb, uniq[order[:2]] * 16 + 8)
+        if cb is not None:
+            cell, A, B, phase = cb
+            yy, xx = np.mgrid[0:h, 0:w]
+            parity = (xx // cell + yy // cell) % 2
+            expected = np.where(parity[:, :, None] == phase, A, B)
+            diff = np.abs(rgb - expected).sum(axis=2)
+            mask = (diff < PLACEHOLDER_TOL) & opaque
+            removed = _border_component(mask, opaque)
+
+    if removed is None or not removed.any():
+        return a, False
+    # 安全闸：被保留的主体（opaque 且不在抠除区内）若贴边 → 可能误裁，跳过
+    kept = opaque & ~removed
+    klab, kn = nd_label(kept, structure=np.ones((3, 3), int))
+    if kn > 0:
+        ktouch = set(np.unique(np.concatenate([klab[0, :], klab[-1, :], klab[:, 0], klab[:, -1]])))
+        ktouch.discard(0)
+        ksizes = np.bincount(klab.ravel())
+        kmain = int(np.argmax(ksizes[1:]) + 1) if kn >= 1 else 0
+        if kmain in ktouch:           # 主体贴边：不安全
+            return a, False
+        if ksizes[kmain] < opaque.sum() * 0.02:   # 几乎没留下主体：多半把主体也抠了
+            return a, False
+    frac = float(removed.sum()) / float(opaque.sum())
+    if frac < 0.01:                  # 几乎没抠到东西：噪声误判，跳过
+        return a, False
+    out = a.copy()
+    out[..., 3][removed] = 0
     return out, True
 
 
@@ -633,9 +788,13 @@ def _clean_image(src: Path, dst: Path, erode: int = ERODE_DEFAULT) -> dict:
     a, alpha_changed = binarize_alpha(a)
     if alpha_changed:
         bg_cut = True   # 有改动就需要落盘（否则会被平坦度跳过得跳过）
+    # 0.4) 占位背景清除（后端透明底失败、返回整片不透明占位背景时兜底）
+    a, ph_changed = remove_placeholder_bg(a)
+    if ph_changed:
+        bg_cut = True
     info.update(bg_info)
     info.update(island_info)
-    info.update(alpha_changed=bool(alpha_changed))
+    info.update(alpha_changed=bool(alpha_changed), placeholder_bg_removed=bool(ph_changed))
 
     h, w = a.shape[:2]
     opaque = a[..., 3] > 128
@@ -708,10 +867,14 @@ def main(argv: list[str]) -> None:
     info = clean_image(src, dst)
     parts = [f"平坦度 {info.get('flatness_before', '?')} → {info.get('flatness', '?')}",
              f"颜色数 {info.get('colors', '?')}", f"颗粒 ~{info.get('run_px', '?')}px"]
+    # 背景相关说明：幂等跳过（已达标/全透明）也会走 stage 0/0.4，必须一并报出来
+    bg_note = ""
     if info.get("bg_mode") == "cut":
-        parts.append(f"背景已抠（{info['bg_ratio']:.0%}）")
+        bg_note += f"；背景已抠（{info['bg_ratio']:.0%}）"
     if info.get("islands_removed"):
-        parts.append(f"噪点岛 {info['islands_removed']} 片已清")
+        bg_note += f"；噪点岛 {info['islands_removed']} 片已清"
+    if info.get("placeholder_bg_removed"):
+        bg_note += f"；占位背景 {int(info['placeholder_bg_removed'])}px 已抠"
     if info.get("speck_pixels"):
         parts.append(f"散点 {info['speck_regions']} 块/{info['speck_pixels']}px 已并")
     elif info.get("speck_skipped"):
@@ -726,9 +889,9 @@ def main(argv: list[str]) -> None:
         parts.append(f"影调增强 ×{info.get('stretch', 1)}")
     if "skipped" in info:
         print(f"[色块规整] 跳过 1-5（{info['skipped']}）；背景：{info.get('bg_mode', '-')}"
-              f"；光晕 0 簇（近候选 {info.get('halo_near', 0)}）")
+              f"{bg_note}；光晕 0 簇（近候选 {info.get('halo_near', 0)}）")
         return
-    print("[色块规整] " + "，".join(parts))
+    print("[色块规整] " + "，".join(parts) + bg_note)
 
 
 if __name__ == "__main__":
