@@ -332,10 +332,10 @@
         <div class="entry-card" style="margin-top:16px;">
           <h4>兑换码列表</h4>
           <style>
-            #redeemTable, #invTable { width: 100%; border-collapse: collapse; font-size: 13px; }
-            #redeemTable th, #redeemTable td, #invTable th, #invTable td { text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(0,0,0,.08); white-space: nowrap; }
-            #redeemTable th, #invTable th { color: #6B7280; font-weight: 500; }
-            #redeemTable td.mono, #redeemTable th.mono, #invTable td.mono, #invTable th.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+            #redeemTable, #invTable, #pkTable { width: 100%; border-collapse: collapse; font-size: 13px; }
+            #redeemTable th, #redeemTable td, #invTable th, #invTable td, #pkTable th, #pkTable td { text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(0,0,0,.08); white-space: nowrap; }
+            #redeemTable th, #invTable th, #pkTable th { color: #6B7280; font-weight: 500; }
+            #redeemTable td.mono, #redeemTable th.mono, #invTable td.mono, #invTable th.mono, #pkTable td.mono, #pkTable th.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
             .redeem-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
             .redeem-badge.unused { background: #FEF3C7; color: #92400E; }
             .redeem-badge.used { background: #E5E7EB; color: #374151; }
@@ -371,6 +371,59 @@
         </div>
         <!-- 支付订单同步：支付通道（.pay-config.json channels）尚未开通，面板先不展示；
              开通后在此加回「同步已支付订单」，对应接口为 /api/pay/pending + wallet 入账 -->
+      </div>
+
+      <!-- 充值套餐：钱包弹窗的套餐卡片。总开关一键下掉全部（重新打开即恢复，配置不丢） -->
+      <div class="panel">
+        <h2 class="panel-title">充值套餐</h2>
+        <p class="panel-desc">钱包弹窗里展示的充值套餐。归属「通用」时两个产品都显示，归属某产品只在该产品的钱包里出现。价格为人民币元，可填小数（如 9.9）。</p>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="pkEnabled" style="width:16px;height:16px;cursor:pointer;"/>
+          <span>开放充值套餐（关闭 = 前台一键下掉全部套餐，重新打开即恢复，套餐配置保留）</span>
+        </label>
+        <div class="entry-card" style="margin-top:12px;">
+          <h4 id="pkFormTitle">新增套餐</h4>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;">
+            <div style="flex:1 1 200px;min-width:160px;">
+              <label class="field-label">套餐名称</label>
+              <input class="text-input" id="pkName" placeholder="如 小包装"/>
+            </div>
+            <div style="flex:0 0 110px;">
+              <label class="field-label">积分</label>
+              <input class="text-input mono" id="pkCredits" type="number" min="1" value="100"/>
+            </div>
+            <div style="flex:0 0 130px;">
+              <label class="field-label">价格（元）</label>
+              <input class="text-input mono" id="pkPrice" type="number" min="0.01" step="0.01" value="9.9"/>
+            </div>
+            <div style="flex:0 0 auto;">
+              <label class="field-label">归属</label>
+              <select class="text-input" id="pkProduct" style="width:auto;">
+                <option value="">通用（全产品）</option>
+                <option value="avatar">头像制作大师</option>
+                <option value="pixelart">拼豆大师</option>
+              </select>
+            </div>
+            <div style="flex:0 0 110px;">
+              <label class="field-label">排序（小在前）</label>
+              <input class="text-input mono" id="pkSort" type="number" value="0"/>
+            </div>
+          </div>
+          <p class="hint" id="pkRuleHint"></p>
+          <div style="display:flex;gap:8px;">
+            <button class="btn primary small" id="btnPkSave" type="button">保存套餐</button>
+            <button class="btn ghost small" id="btnPkCancel" type="button" hidden>取消编辑</button>
+          </div>
+          <p class="hint" id="pkMsg"></p>
+        </div>
+        <div style="overflow-x:auto;margin-top:12px;">
+          <table id="pkTable">
+            <thead>
+              <tr><th>名称</th><th>积分</th><th>价格</th><th>归属</th><th class="mono">排序</th><th>状态</th><th>操作</th></tr>
+            </thead>
+            <tbody id="pkRows"><tr><td colspan="7" class="hint">加载中…</td></tr></tbody>
+          </table>
+        </div>
       </div>
 
       <div style="height:16px;"></div>
@@ -626,6 +679,7 @@
       loadUsers();
       loadRedeemList();
       loadInviteList();
+      loadProducts();
     }
 
     /* ---------- 渲染：生成选项（头像页参考图入口） ---------- */
@@ -1316,6 +1370,136 @@
     $('invQuery').addEventListener('keydown', function (e) { if (e.key === 'Enter') { invPage = 1; loadInviteList(); } });
     $('btnInvPrev').addEventListener('click', function () { if (invPage > 1) { invPage--; loadInviteList(); } });
     $('btnInvNext').addEventListener('click', function () { invPage++; loadInviteList(); });
+
+    /* ---------- 充值套餐：钱包弹窗的套餐卡片 ----------
+       服务端：GET /api/admin/products + save/delete/switch。
+       总开关只切 app_config.productsEnabled，不动每条套餐的上下架状态。 */
+    var pkItems = [];
+    var pkEditingId = '';
+
+    function pkYuan(cents) { return '¥' + ((Number(cents) || 0) / 100).toFixed(2).replace(/\.00$/, ''); }
+
+    function loadProducts() {
+      return adminApi('GET', '/api/admin/products').then(function (data) {
+        pkItems = (data && data.items) || [];
+        $('pkEnabled').checked = !data || data.enabled !== false;
+        renderProducts();
+      }).catch(function (err) {
+        $('pkRows').innerHTML = '<tr><td colspan="7" class="hint">套餐加载失败：' + esc((err && err.message) || '') + '</td></tr>';
+      });
+    }
+
+    function renderProducts() {
+      var tbody = $('pkRows');
+      if (!pkItems.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="hint">还没有套餐，先在上方新增一条</td></tr>';
+        return;
+      }
+      tbody.innerHTML = pkItems.map(function (p) {
+        var target = p.product === 'avatar' ? '头像' : (p.product === 'pixelart' ? '拼豆' : '通用');
+        return '<tr data-pk-id="' + esc(p.id) + '">'
+          + '<td>' + esc(p.name) + '</td>'
+          + '<td class="mono">' + p.credits + '</td>'
+          + '<td class="mono">' + pkYuan(p.priceCents) + '</td>'
+          + '<td>' + target + '</td>'
+          + '<td class="mono">' + (p.sort || 0) + '</td>'
+          + '<td><span class="redeem-badge ' + (p.active ? 'open' : 'closed') + '">' + (p.active ? '在售' : '已下架') + '</span></td>'
+          + '<td>'
+          + '<button class="btn ghost small" data-pk-act="edit">编辑</button> '
+          + '<button class="btn ghost small" data-pk-act="toggle">' + (p.active ? '下架' : '上架') + '</button> '
+          + '<button class="btn ghost small" data-pk-act="del">删除</button>'
+          + '</td></tr>';
+      }).join('');
+    }
+
+    function pkFillForm(p) {
+      pkEditingId = p ? p.id : '';
+      $('pkFormTitle').textContent = p ? '编辑套餐' : '新增套餐';
+      $('btnPkCancel').hidden = !p;
+      $('pkName').value = p ? p.name : '';
+      $('pkCredits').value = p ? p.credits : 100;
+      $('pkPrice').value = p ? (p.priceCents / 100) : 9.9;
+      $('pkProduct').value = p ? (p.product || '') : '';
+      $('pkSort').value = p ? (p.sort || 0) : 0;
+    }
+
+    function findPk(id) {
+      for (var i = 0; i < pkItems.length; i++) { if (pkItems[i].id === id) { return pkItems[i]; } }
+      return null;
+    }
+
+    $('btnPkSave').addEventListener('click', function () {
+      var name = $('pkName').value.trim();
+      var credits = parseInt($('pkCredits').value, 10);
+      var priceCents = Math.round(parseFloat($('pkPrice').value) * 100);
+      if (!name) { $('pkMsg').textContent = '请填写套餐名称'; return; }
+      if (!credits || credits <= 0) { $('pkMsg').textContent = '积分应为正整数'; return; }
+      if (!priceCents || priceCents <= 0) { $('pkMsg').textContent = '价格应大于 0'; return; }
+      $('btnPkSave').disabled = true;
+      adminApi('POST', '/api/admin/products/save', {
+        id: pkEditingId || undefined,
+        name: name,
+        credits: credits,
+        priceCents: priceCents,
+        product: $('pkProduct').value,
+        sort: parseInt($('pkSort').value, 10) || 0
+      }).then(function () {
+        $('pkMsg').textContent = pkEditingId ? '已保存修改' : '已新增套餐「' + name + '」';
+        pkFillForm(null);
+        loadProducts();
+      }).catch(function (err) { $('pkMsg').textContent = walletErrText(err); })
+        .then(function () { $('btnPkSave').disabled = false; });
+    });
+
+    $('btnPkCancel').addEventListener('click', function () { pkFillForm(null); $('pkMsg').textContent = ''; });
+
+    /* 总开关：一键下掉 / 恢复全部套餐。关掉时前台查询直接返空。 */
+    $('pkEnabled').addEventListener('change', function () {
+      var on = $('pkEnabled').checked;
+      $('pkEnabled').disabled = true;
+      adminApi('POST', '/api/admin/products/switch', { enabled: on }).then(function () {
+        $('pkMsg').textContent = on ? '已开放充值套餐' : '已一键下掉全部套餐（前台立即不显示，配置保留）';
+      }).catch(function (err) {
+        $('pkEnabled').checked = !on; /* 失败回滚 UI */
+        $('pkMsg').textContent = walletErrText(err);
+      }).then(function () { $('pkEnabled').disabled = false; });
+    });
+
+    $('pkRows').addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('button[data-pk-act]') : null;
+      if (!btn) { return; }
+      var tr = btn.closest('tr');
+      var id = tr ? tr.getAttribute('data-pk-id') : '';
+      var item = findPk(id);
+      if (!item) { return; }
+      var act = btn.getAttribute('data-pk-act');
+      if (act === 'edit') {
+        pkFillForm(item);
+        $('pkMsg').textContent = '';
+        return;
+      }
+      if (act === 'toggle') {
+        btn.disabled = true;
+        adminApi('POST', '/api/admin/products/save', {
+          id: item.id, name: item.name, credits: item.credits,
+          priceCents: item.priceCents, product: item.product,
+          sort: item.sort, active: !item.active
+        }).then(loadProducts).catch(function (err) {
+          $('pkMsg').textContent = walletErrText(err);
+          btn.disabled = false;
+        });
+        return;
+      }
+      if (act === 'del') {
+        if (!window.confirm('确定删除套餐「' + item.name + '」？不可恢复（也可先下架保留配置）。')) { return; }
+        adminApi('POST', '/api/admin/products/delete', { id: item.id })
+          .then(function () {
+            if (pkEditingId === item.id) { pkFillForm(null); }
+            loadProducts();
+          })
+          .catch(function (err) { $('pkMsg').textContent = walletErrText(err); });
+      }
+    });
 
 
     $('btnCreateInvite').addEventListener('click', function () {

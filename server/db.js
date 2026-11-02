@@ -133,6 +133,22 @@ CREATE TABLE IF NOT EXISTS app_config (
   updated_at INTEGER NOT NULL
 );
 
+/* 充值套餐（钱包弹窗「充值套餐」网格的数据源）。
+ * 自建版此前 app_products.select 恒返空 → 前台永远「暂无可售套餐」。
+ * product 为空 = 全产品通用；platform.js 客户端按产品过滤。
+ * 总开关不在表里：存 app_config.data.productsEnabled（默认开），
+ * 一键下掉 = 管理后台开关置 false，前台查询直接返空。 */
+CREATE TABLE IF NOT EXISTS app_products (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  credits     INTEGER NOT NULL,
+  price_cents INTEGER NOT NULL,
+  product     TEXT,
+  sort        INTEGER NOT NULL DEFAULT 0,
+  active      INTEGER NOT NULL DEFAULT 1,
+  created_at  INTEGER NOT NULL
+);
+
 /* 文件索引：正文在磁盘 storage/ 下，这里只存元信息，便于列表与容量统计 */
 CREATE TABLE IF NOT EXISTS files (
   key        TEXT PRIMARY KEY,

@@ -670,6 +670,104 @@ function handleRedeemList(req, res, url) {
   });
 }
 
+/* ---------- 充值套餐 ----------
+ * 数据在 app_products 表；总开关（一键下掉全部套餐）存 app_config.data.productsEnabled。
+ * 开关不走「保存配置」通道：config 保存只写 providers/styles/settings，
+ * 两边互不覆盖。前台查询（/api/db/query → app_products）关掉时直接返空。 */
+const PRODUCT_TARGETS = ['', 'avatar', 'pixelart'];  // 空 = 通用（全产品可见）
+
+function readProductsEnabled() {
+  const data = readAppConfigData();
+  return data.productsEnabled !== false;
+}
+
+function handleProductsList(req, res) {
+  const user = requireAdmin(req, res);
+  if (!user) { return; }
+  const rows = dbmod.db.prepare(
+    'SELECT id, name, credits, price_cents, product, sort, active, created_at FROM app_products ' +
+    'ORDER BY sort ASC, id ASC'
+  ).all();
+  return sendJson(res, 200, {
+    enabled: readProductsEnabled(),
+    items: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      credits: r.credits,
+      priceCents: r.price_cents,
+      product: r.product || '',
+      sort: r.sort,
+      active: Number(r.active) === 1,
+      createdAt: r.created_at
+    })),
+    error: null
+  });
+}
+
+/* 校验并归一化一条套餐；出错返回 { error }，成功返回 { row } */
+function normalizeProduct(body, out) {
+  out.name = cleanStr(body.name, 60);
+  if (!out.name) { return '套餐需要一个名称'; }
+  out.credits = Math.floor(Number(body.credits));
+  if (!Number.isFinite(out.credits) || out.credits <= 0 || out.credits > 10000000) {
+    return '积分必须是 1 ~ 10000000 的整数';
+  }
+  out.priceCents = Math.round(Number(body.priceCents));
+  if (!Number.isFinite(out.priceCents) || out.priceCents <= 0 || out.priceCents > 100000000) {
+    return '价格必须是 0.01 ~ 1000000 元';
+  }
+  out.product = cleanStr(body.product, 40);
+  if (PRODUCT_TARGETS.indexOf(out.product) === -1) { return '归属产品不支持：' + out.product; }
+  out.sort = Math.floor(Number(body.sort)) || 0;
+  out.active = body.active === undefined ? true : !!body.active;
+  return '';
+}
+
+async function handleProductSave(req, res) {
+  const user = requireAdmin(req, res);
+  if (!user) { return; }
+  const body = await readJson(req);
+  const p = {};
+  const bad = normalizeProduct(body || {}, p);
+  if (bad) { return sendJson(res, 400, { error: { code: 'BAD_PRODUCT', message: bad } }); }
+  const d = dbmod.db;
+  if (body.id) {
+    const id = cleanStr(body.id, 60);
+    const row = d.prepare('SELECT id FROM app_products WHERE id = ?').get(id);
+    if (!row) { return sendJson(res, 404, { error: { code: 'NO_PRODUCT', message: '没有这个套餐' } }); }
+    d.prepare('UPDATE app_products SET name = ?, credits = ?, price_cents = ?, product = ?, sort = ?, active = ? WHERE id = ?')
+      .run(p.name, p.credits, p.priceCents, p.product, p.sort, p.active ? 1 : 0, id);
+    return sendJson(res, 200, { ok: true, id: id });
+  }
+  const id = dbmod.newId('pk_');
+  d.prepare('INSERT INTO app_products (id, name, credits, price_cents, product, sort, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, p.name, p.credits, p.priceCents, p.product, p.sort, p.active ? 1 : 0, dbmod.nowMs());
+  return sendJson(res, 200, { ok: true, id: id });
+}
+
+async function handleProductDelete(req, res) {
+  const user = requireAdmin(req, res);
+  if (!user) { return; }
+  const body = await readJson(req);
+  const id = cleanStr((body || {}).id, 60);
+  if (!id) { return sendJson(res, 400, { error: { code: 'BAD_ID', message: '缺少套餐 id' } }); }
+  const info = dbmod.db.prepare('DELETE FROM app_products WHERE id = ?').run(id);
+  if (!info.changes) { return sendJson(res, 404, { error: { code: 'NO_PRODUCT', message: '没有这个套餐' } }); }
+  return sendJson(res, 200, { ok: true });
+}
+
+/* 总开关：一键下掉 / 恢复全部套餐（前台查询直接返空，不动每条套餐的上下架状态） */
+async function handleProductSwitch(req, res) {
+  const user = requireAdmin(req, res);
+  if (!user) { return; }
+  const body = await readJson(req);
+  const enabled = !body || body.enabled !== false;
+  const data = readAppConfigData();
+  data.productsEnabled = enabled;
+  writeAppConfigData(data);
+  return sendJson(res, 200, { ok: true, enabled: enabled });
+}
+
 function handleUsers(req, res, url) {
   const user = requireAdmin(req, res);
   if (!user) { return; }
@@ -709,6 +807,10 @@ const ROUTES = {
   '/api/admin/invite': { POST: handleInviteCreate },
   '/api/admin/invite/list': { GET: handleInviteList },
   '/api/admin/invite/update': { POST: handleInviteUpdate },
+  '/api/admin/products': { GET: handleProductsList },
+  '/api/admin/products/save': { POST: handleProductSave },
+  '/api/admin/products/delete': { POST: handleProductDelete },
+  '/api/admin/products/switch': { POST: handleProductSwitch },
   '/api/admin/users': { GET: handleUsers }
 };
 

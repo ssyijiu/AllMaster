@@ -110,10 +110,24 @@ const TABLES = {
       return [{ id: row.id, data: data }];
     }
   },
-  /* 套餐：本地暂无产品套餐表，返回空 → 前端回落到内置套餐 */
+  /* 套餐：读 app_products 表（admin.html 配置），按 sort 升序。
+     总开关在 app_config.data.productsEnabled（默认开）——关掉时返空，
+     前台钱包显示「暂无可售套餐」，与该产品无在售套餐的表现一致。 */
   app_products: {
     needAuth: false,
-    select: function () { return []; }
+    select: function () {
+      const cfgRow = dbmod.db.prepare('SELECT data FROM app_config WHERE id = ?').get('default');
+      if (cfgRow) {
+        try {
+          const data = JSON.parse(cfgRow.data);
+          if (data && data.productsEnabled === false) { return []; }
+        } catch (_) { /* 配置坏行不挡套餐 */ }
+      }
+      return dbmod.db.prepare(
+        'SELECT id, name, credits, price_cents, product, sort, active FROM app_products ' +
+        'WHERE active = 1 ORDER BY sort ASC, id ASC'
+      ).all();
+    }
   }
 };
 

@@ -66,6 +66,7 @@ const ADMIN_PATHS = [
   '/api/admin/bootstrap', '/api/admin/config', '/api/admin/grant',
   '/api/admin/redeem', '/api/admin/redeem/list',
   '/api/admin/invite', '/api/admin/invite/list', '/api/admin/invite/update',
+  '/api/admin/products', '/api/admin/products/save', '/api/admin/products/delete', '/api/admin/products/switch',
   '/api/admin/users'
 ];
 
