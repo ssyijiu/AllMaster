@@ -335,6 +335,25 @@ function explainFailure(code, signal, timedOut, stderrTail, stdoutTail) {
   return wrapReason(reason.length > 2000 ? reason.slice(0, 2000) + '…' : reason);
 }
 
+/* 经典后端（val-perler）按 X-WB-Id 隔离并发：同一身份同时只能跑一张，第二张直接 429 user_busy。
+   若全站共用配置里一个固定 ID，所有用户就会互相顶掉，所以按登录用户派生稳定 UUID：
+   token 的 sub（平台用户 id）已在服务端验签，这里只解码读取，不重复鉴权。
+   同一账号跨登录/跨设备稳定，不同用户必然不同 → 各自独立排队。 */
+function wbIdFromRequest(req, fallback) {
+  const m = /^Bearer\s+(.+)$/i.exec(String((req && req.headers && req.headers.authorization) || ''));
+  if (!m) { return fallback || ''; }
+  let seed = '';
+  try {
+    const payload = JSON.parse(Buffer.from(String(m[1]).split('.')[1] || '', 'base64url').toString('utf8'));
+    seed = String((payload && payload.sub) || '');
+  } catch (_) { /* 非 JWT（旧 token / 测试桩）：退回整串 hash，同样做到一人一身份 */ }
+  if (!seed) { seed = m[1]; }
+  const h = crypto.createHash('sha256').update('pixelart-wb-id:' + seed).digest('hex');
+  const variant = ((parseInt(h[16], 16) & 0x3) | 0x8).toString(16);
+  return [h.slice(0, 8), h.slice(8, 12), '5' + h.slice(13, 16),
+    variant + h.slice(17, 20), h.slice(20, 32)].join('-');
+}
+
 /* ---------- 任务生命周期 ---------- */
 
 function findOutputHtml(workDir) {
@@ -562,10 +581,12 @@ function createEngine(options) {
     const env = Object.assign({}, process.env);
     if (backend === 'valperler') {
       /* 经典后端：选用旧生图客户端（val-perler.qq.com）、关闭色块规整（保留其原始输出）、
-         WB ID 经环境变量下发走活动池额度（密钥/身份不进代码/命令行） */
+         WB ID 经环境变量下发（密钥/身份不进代码/命令行）。身份按登录用户派生，
+         不能全站共用一个，否则并发超过 1 必然 429 user_busy。 */
       env.PERLER_IMAGE_SCRIPT = 'image_render_vp.py';
       env.PERLER_BLOCK_CLEANUP = '0';
-      if (cfg.accUserId) { env.ACC_USER_ID = cfg.accUserId; }
+      const wb = t.wbId || cfg.accUserId;
+      if (wb) { env.ACC_USER_ID = wb; }
     } else {
       /* apinebula 后端：生图凭据经环境变量下发（复用 promptLLM 的 baseUrl/apiKey，imageModel 可单独指定） */
       const pLLM = cfg.promptLLM || {};
@@ -664,6 +685,8 @@ function createEngine(options) {
     }
     tasks.set(id, {
       status: 'running', workDir, startedAt: Date.now(), styleId, subject: subjectFallback,
+      /* 经典后端的并发隔离身份（按登录用户派生，见 wbIdFromRequest） */
+      wbId: wbIdFromRequest(req, ''),
       /* 备注存下来：下发图纸页时要注入到 window.PIXELART_NOTE，供导出文件名使用 */
       notes: String(body.notes || '').trim().slice(0, 200),
       /* 生成单号（服务端在调用本函数前挂在 req 上）：任务结束据此结算 */
@@ -874,7 +897,9 @@ function createEngine(options) {
     }
     tasks.set(newId, {
       status: 'running', workDir, startedAt: Date.now(), styleId: t.styleId, subject: t.subject,
-      notes: t.notes || '', regenFrom: id
+      notes: t.notes || '', regenFrom: id,
+      /* 重转沿用发起者身份，取不到再退回原任务身份 */
+      wbId: wbIdFromRequest(req, t.wbId || '')
     });
     sendJson(res, 200, { taskId: newId });
     startRegenTask(newId, workDir, effectImage, promptPath, t.styleId);
@@ -953,5 +978,5 @@ function createEngine(options) {
   };
 }
 
-/* explainFailure 单独导出：纯函数，给失败文案的用例直接测 */
-module.exports = { createEngine, loadStyleGuide, explainFailure };
+/* explainFailure / wbIdFromRequest 单独导出：纯函数，给用例直接测 */
+module.exports = { createEngine, loadStyleGuide, explainFailure, wbIdFromRequest };
