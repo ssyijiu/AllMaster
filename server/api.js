@@ -331,7 +331,8 @@ function handleRedeemPreview(req, res, url) {
  * 只收 kind / vid / product / path；时间与账号由服务端补（Authorization 有就绑）。
  * **不存 IP、UA、referer**：IP 只用于内存限流，进程重启即清。
  * 返回 204 永远不带 body —— 埋点失败绝不能影响页面任何交互。 */
-const TRACK_KINDS = { pv: 1, identify: 1 };
+/* pv 打开页面 / identify 登录（访客与账号绑定）/ upload 成功选中并压缩了一张图 */
+const TRACK_KINDS = { pv: 1, identify: 1, upload: 1 };
 const TRACK_LIMIT = 300;            /* 每 IP 每小时 */
 const TRACK_WINDOW = 3600 * 1000;
 const trackHits = new Map();

@@ -220,6 +220,43 @@ function firstPvByVisitor(product, fromMs) {
   return m;
 }
 
+/* 四步漏斗：打开页面 → 完成登录 → 上传图片 → 首次出图
+   分母与 ① 相同（窗口内首访的访客），每一步都要求发生在该访客首访后的 7 个自然日内。
+
+   「完成登录」「上传图片」来自埋点（kind = identify / upload），出图来自订单。
+   出图必然「登录过且上传过」（生成按钮先卡登录、再卡有没有图），所以出图的人
+   反向补进登录与上传两步 —— 否则历史数据里会出现「0 人上传、却有人出图」。
+   但**不**把「上传过」补成「登录过」：拼豆页允许先选图、点生成时才弹登录，
+   上传了却没登录的人正是最大的漏点，要如实留在漏斗里（此时上传条会比登录条长）。 */
+function funnelStepsOf(range, product, vids, firstPv, genVids) {
+  const login = new Set();
+  const upload = new Set();
+
+  if (vids.length) {
+    const want = new Set(vids);
+    const sql = "SELECT visitor_id AS vid, kind, day FROM events " +
+      "WHERE kind IN ('identify','upload') AND day >= ?" +
+      (product ? ' AND (product = ? OR product IS NULL)' : '');
+    const params = product ? [range.from, product] : [range.from];
+    allRows(sql, params).forEach(function (r) {
+      if (!want.has(r.vid)) { return; }
+      const first = firstPv.get(r.vid);
+      if (!first || r.day < first) { return; }        /* 首访之前的不算 */
+      if (diffDays(first, r.day) > 7) { return; }     /* 超出 7 日窗口的不算 */
+      if (r.kind === 'upload') { upload.add(r.vid); } else { login.add(r.vid); }
+    });
+  }
+
+  genVids.forEach(function (vid) { upload.add(vid); login.add(vid); });
+
+  return [
+    { key: 'page', label: '打开页面', n: vids.length },
+    { key: 'login', label: '完成登录', n: login.size },
+    { key: 'upload', label: '上传图片', n: upload.size },
+    { key: 'gen', label: '首次出图', n: genVids.size }
+  ];
+}
+
 /* ---------------- 指标 ① 7 日转化率（打开页面 → 首次出图） ---------------- */
 
 function funnelMeta(range, product, ex) {
@@ -240,17 +277,19 @@ function funnelMeta(range, product, ex) {
       newVisitorVids.push(vid);
     }
   });
+  const genVids = new Set();
   newVisitorVids.forEach(function (vid) {
     const firstVisit = visitors.get(vid);
     const uid = vmap.get(vid);
     const g = uid ? firstGen.get(uid) : null;
     const hit = !!g && g >= firstVisit && diffDays(firstVisit, g) <= 7;
-    if (hit) { converted += 1; return; }
+    if (hit) { converted += 1; genVids.add(vid); return; }
     /* 没转化：观察期满才算真流失，不满 7 天的挂起，免得拉低转化率 */
     if (diffDays(firstVisit, today()) < 7) { pending += 1; }
     else { matured += 1; }
   });
   const judged = converted + matured;
+  const steps = funnelStepsOf(range, product, newVisitorVids, visitors, genVids);
 
   const niU = notIn('id', ex || []);
   const signups = one(
@@ -277,6 +316,7 @@ function funnelMeta(range, product, ex) {
       firstGen: firstGenUsers,
       converted: converted,
       rate: pct(converted, judged),
+      steps: steps,
       note: '7 日转化率：分母是窗口内首次出现的匿名访客，分子是其中首访后 7 日内（含当天）完成首次出图的。' +
         '出图即刻计入；只有「不满 7 天且还没出图」的人才进观察中、暂不进分母。'
     };

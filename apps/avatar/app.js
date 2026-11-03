@@ -839,6 +839,8 @@
       els.uploadPreview.hidden = false;
       showHint('');
       updateSteps();
+      /* 埋点：看板漏斗「打开页面 → 完成登录 → 上传图片 → 首次出图」的第三步 */
+      if (typeof Platform.track === 'function') { Platform.track('upload'); }
       /* 上传后自动缩放到 1024px PNG blob，供 /images/edits 使用 */
       imageService.resizeImage(file, UPLOAD_RESIZE_PX)
         .then(function (blob) { st.photoBlob = blob; })

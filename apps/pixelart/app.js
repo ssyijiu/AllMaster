@@ -172,6 +172,8 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
         $('dzEmpty').hidden = true;
         $('dzPreview').hidden = false;
         updateSteps();
+        /* 埋点：看板漏斗「打开页面 → 完成登录 → 上传图片 → 首次出图」的第三步 */
+        if (typeof Platform.track === 'function') { Platform.track('upload'); }
       });
     };
     reader.onerror = function () {

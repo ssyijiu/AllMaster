@@ -82,6 +82,14 @@
     .fn-row.drop .fn-bar i { background: var(--brand-600); opacity: .75; }
     .fn-num { text-align: right; font-variant-numeric: tabular-nums; color: var(--fg-2); font-weight: 510; }
 
+    /* 大漏斗：四步转化，右侧百分比；最后一步（首次出图）用暖色收尾 */
+    .funnel.big { gap: 15px; }
+    .funnel.big .fn-row { grid-template-columns: 76px minmax(0,1fr) 58px; font-size: 13px; color: var(--fg-2); }
+    .funnel.big .fn-bar { height: 10px; }
+    .funnel.big .fn-num { font-size: 13.5px; font-weight: 590; color: var(--fg); }
+    .fn-bar i.accent { background: #E6883C; }
+    .section-hint { font-size: 12px; color: var(--meta); flex: none; }
+
     /* 分布条 */
     .dist { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--ink-100); }
     .dist i { display: block; height: 100%; }
@@ -143,6 +151,8 @@
       .page { padding: 20px 16px 56px; }
       .brand-sub { display: none; }
       .kpi-value { font-size: 34px; }
+      /* 提示语别跟标题抢宽度，否则「同一批新访客，看看断在第几步」会被挤成竖排 */
+      .section-hint { display: none; }
     }
     /* 窄屏表格：绝对值那列让位，保住日期与回访率不换行（否则日期会折成两行） */
     @media (max-width: 640px) {
@@ -267,11 +277,12 @@
         <section class="panel">
           <div class="section-head">
             <div>
-              <div class="section-title">转化漏斗</div>
-              <div class="section-desc">同一时间窗口内的绝对量</div>
+              <div class="section-title">转化漏斗 · 7 日转化率</div>
+              <div class="section-desc">同一批新访客，看看断在第几步</div>
             </div>
+            <div class="section-hint">断点在哪一步，就先去做那一步的摩擦力</div>
           </div>
-          <div class="funnel" id="bigFunnel"></div>
+          <div class="funnel big" id="bigFunnel"></div>
           <p class="hint" id="funnelNote" style="margin-top:14px;"></p>
         </section>
 
@@ -325,6 +336,8 @@
             <h4>① 7 日转化率（打开页面 → 首次出图）</h4>
             <p class="spec-lead">人来了，能不能一路走完「打开 → 注册 → 上传 → 出第一张图」。率低就是登录或上传有摩擦。</p>
             <dl>
+              <dt>漏斗四步</dt>
+              <dd>打开页面 → 完成登录 → 上传图片 → 首次出图。四步都是<b>同一批新访客</b>在首访后 7 日内的进度，一眼看出卡在哪一步。</dd>
               <dt>分母</dt>
               <dd>窗口内<b>第一次出现</b>的匿名访客。同一浏览器来十次算一个；首访早于窗口的老访客不算。</dd>
               <dt>分子</dt>
@@ -570,11 +583,17 @@
         var bar = document.createElement('div');
         bar.className = 'fn-bar';
         var fill = document.createElement('i');
-        fill.style.width = Math.max(2, Math.round((r.n / max) * 100)) + '%';
+        if (r.accent) { fill.className = 'accent'; }
+        /* 有 pct 就按百分比画（四步漏斗），否则按占总量的比例画（卡片内小漏斗） */
+        var hasPct = r.pct !== undefined;
+        var w = hasPct ? (r.pct || 0) : Math.round((r.n / max) * 100);
+        fill.style.width = (hasPct && !r.pct ? 0 : Math.max(1.5, w)) + '%';
         bar.appendChild(fill);
         var num = document.createElement('span');
         num.className = 'fn-num';
-        num.textContent = fmtNum(r.n);
+        num.textContent = hasPct
+          ? (r.pct ? (Math.round(r.pct * 10) / 10) + '%' : '—')
+          : fmtNum(r.n);
         row.appendChild(lab); row.appendChild(bar); row.appendChild(num);
         el.appendChild(row);
       });
@@ -732,17 +751,26 @@
     function renderSections(d) {
       var f = d.funnel, p = d.perUser, r = d.retention;
 
-      /* 大漏斗 */
+      /* 大漏斗：四步（打开 → 登录 → 上传 → 出图），没有访问数据时退回注册口径 */
       var rows = [];
-      if (f.basis === 'visitor') {
-        rows = [{ label: '访客', n: f.visitors }, { label: '注册', n: f.signups }, { label: '首图', n: f.converted }];
-      } else {
-        rows = [{ label: '注册', n: f.signups }, { label: '首图', n: f.converted }];
+      if (f.basis === 'visitor' && f.steps && f.steps.length) {
+        var base = f.steps[0].n || 0;
+        rows = f.steps.map(function (s, i) {
+          return {
+            label: s.label,
+            n: s.n,
+            pct: base ? (s.n / base * 100) : 0,
+            accent: i === f.steps.length - 1
+          };
+        });
+      } else if (f.signups) {
+        rows = [{ label: '注册', n: f.signups }, { label: '首图', n: f.converted, accent: true }];
       }
       renderFunnel($('bigFunnel'), rows, false);
       $('funnelNote').textContent = f.basis === 'visitor'
-        ? '大漏斗按窗口内全部新访客 ' + f.visitors + ' 人展示；① 的转化率只按其中已满 7 天的 ' +
-          f.judged + ' 人计算，另有 ' + f.pending + ' 人还在观察期。'
+        ? '分母是窗口内首访的 ' + fmtNum(f.visitors) + ' 位新访客（打开页面记 100%），各步都是这批人里走到那一步的人数；' +
+          '① 的率只按已满 7 天的 ' + fmtNum(f.judged) + ' 人计算，另有 ' + fmtNum(f.pending) + ' 人还在观察期。' +
+          '若「上传图片」比「完成登录」还多，说明有人先选图、到生成时才被登录拦住 —— 这正是要优化的漏点，不是数据错了。'
         : (f.signups
           ? f.note
           : '统计范围内还没有访客与注册数据；等第一位真实用户进来后，这里会开始累积漏斗。');
