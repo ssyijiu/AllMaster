@@ -956,14 +956,27 @@ function createEngine(options) {
     return sendJson(res, 404, { error: { message: '任务不存在或未归档' } });
   }
 
-  /* GET /styles → 画风列表（缩略图服务端读 assert 资产转 base64，前端无需直访 assert 目录） */
+  /* GET /styles → 画风列表（缩略图走 /apps/pixelart/assets/style-picker/<id>.webp 静态直链，
+     不再内联 base64——原来 5 张图塞进同一份 JSON 有 760KB，首屏要等整包才渲染）。
+     直链带 ?v=<内容哈希>，命中 serveStatic 的 immutable 一年缓存：改图自动换 URL，未改则零请求。 */
+  const THUMB_DIR = path.join(__dirname, 'assets', 'style-picker');
+  const thumbVerCache = new Map();   /* id → {key, ver}：key=mtime+size，文件没变就不重算哈希 */
+  function thumbVersion(id) {
+    const fp = path.join(THUMB_DIR, id + '.webp');
+    let st;
+    try { st = fs.statSync(fp); } catch (_) { return null; }
+    const key = String(st.mtimeMs) + ':' + st.size;
+    const hit = thumbVerCache.get(id);
+    if (hit && hit.key === key) { return hit.ver; }
+    const ver = crypto.createHash('sha1').update(fs.readFileSync(fp)).digest('hex').slice(0, 8);
+    thumbVerCache.set(id, { key: key, ver: ver });
+    return ver;
+  }
   function handleStyles(res, sendJson) {
     const guide = loadStyleGuide();
     const styles = (guide.styles || []).map((s) => {
-      let thumb = null;
-      try {
-        thumb = 'data:image/png;base64,' + fs.readFileSync(path.join(PERLER_DIR, 'assets', 'style-picker', s.id + '.png')).toString('base64');
-      } catch (_) { /* 缩略图缺失时前端降级为首字母块 */ }
+      const ver = thumbVersion(s.id);
+      const thumb = ver ? ('/apps/pixelart/assets/style-picker/' + encodeURIComponent(s.id) + '.webp?v=' + ver) : null;
       return { id: s.id, label: s.label, tip: s.tip || '', scope: s.scope || 'all', thumb: thumb,
         demo: s.demo || '' };  /* 示例图纸任务 ID：前端拼 /api/pixelart-vp/task/html?id= 做「打开拼豆图纸」链接 */
     });

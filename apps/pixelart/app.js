@@ -83,16 +83,24 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
 
   /* ---------- 画风列表 ---------- */
   function loadStyles() {
+    var strip = $('styleStrip');
+    /* 首屏是骨架屏（index.html 里 5 个 .style-skel），这里只在失败时换成可点的重试 */
     fetch(PIXELART_API + '/styles').then(function (r) { return r.json(); }).then(function (data) {
       var list = (data && data.styles) || [];
-      if (!list.length) { $('styleStrip').innerHTML = '<p class="hint">画风加载失败，刷新重试</p>'; return; }
+      if (!list.length) { return styleLoadFailed('画风加载失败'); }
       Store.styles = list;
       Store.styleHint = (data && data.hint) || '';
       renderStyleStrip();
-    }).catch(function () {
-      $('styleStrip').innerHTML = '<p class="hint">画风加载失败，刷新重试</p>';
-    });
+    }).catch(function () { styleLoadFailed('画风加载失败'); });
   }
+  function styleLoadFailed(msg) {
+    var strip = $('styleStrip');
+    if (!strip) { return; }
+    strip.setAttribute('aria-busy', 'false');
+    strip.innerHTML = '<p class="hint">' + msg + ' · <button type="button" class="link-btn" id="styleRetry">重试</button></p>';    var btn = $('styleRetry');
+    if (btn) { btn.addEventListener('click', function () { strip.setAttribute('aria-busy', 'true'); strip.innerHTML = SKELETON_HTML; loadStyles(); }); }
+  }
+  var SKELETON_HTML = new Array(6).join('<span class="style-skel"></span>');
 
   /* 画风说明行：选中谁就显示谁的 tip（点选可见，移动端不依赖悬停）；无 tip 回落全局文案。
      有示例图纸（demo 任务 ID）时在说明后跟「打开拼豆图纸」链接，指向该画风的样例图纸页。 */
@@ -122,9 +130,10 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
       Store.styleId = avail.length ? avail[0].id : 'original';
     }
     updateStyleHint();
+    strip.setAttribute('aria-busy', 'false');
     strip.innerHTML = avail.map(function (s) {
       var art = s.thumb
-        ? '<img src="' + s.thumb + '" alt="' + s.label + '画风预览" />'
+        ? '<img src="' + s.thumb + '" alt="' + s.label + '画风预览" width="260" height="260" decoding="async" />'
         : '<span class="style-letter">' + s.label.charAt(0) + '</span>';
       return '<button type="button" class="style-card' + (s.id === Store.styleId ? ' cur' : '') + '" data-sid="' + s.id + '" title="' + (s.tip || s.label) + '">'
         + '<span class="card-art">' + art

@@ -213,6 +213,26 @@
       gap: var(--space-3);
     }
     .style-grid .hint { margin: 0; }
+    /* 首屏骨架：占位块与真实画风卡同尺寸（92px 图 + 名称），带一层缓慢流光。
+       画风列表本身很小（~1KB），骨架基本一闪而过；慢网下也不会出现「空着像坏了」的状态。 */
+    .style-skel {
+      display: block; height: 118px; border-radius: var(--radius-lg);
+      border: 1.5px solid var(--border-soft);
+      background: linear-gradient(100deg, var(--ink-50) 34%, #EEF1F5 50%, var(--ink-50) 66%);
+      background-size: 260% 100%;
+      animation: skel-sweep 1.15s linear infinite;
+    }
+    @keyframes skel-sweep {
+      from { background-position: 140% 0; }
+      to { background-position: -60% 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .style-skel { animation: none; }
+    }
+    .style-grid .link-btn {
+      background: none; border: 0; padding: 0; cursor: pointer;
+      font: inherit; color: var(--teal-700); text-decoration: underline; text-underline-offset: 2px;
+    }
     .style-card {
       position: relative;
       border: 1.5px solid var(--border-soft); border-radius: var(--radius-lg);
