@@ -278,7 +278,7 @@ function funnelMeta(range, product, ex) {
       converted: converted,
       rate: pct(converted, judged),
       note: '分母是窗口内首次出现的匿名访客；分子是其中首访后 7 日内完成首次出图的访客。' +
-        '首访不满 7 天的先挂起（观察中），不进分母。'
+        '出图即刻计入（当天首访当天出图也算）；只有「不满 7 天且还没出图」的人才进观察中、暂不进分母。'
     };
   }
   return {

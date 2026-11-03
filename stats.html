@@ -331,8 +331,10 @@
               <dd>这些人里，在<b>首访后 7 个自然日内</b>（含当天）完成首次成功出图的。</dd>
               <dt>首次出图</dt>
               <dd>该账号全历史的<b>第一张</b>成功图，失败单不算。</dd>
+              <dt>当天出图</dt>
+              <dd>首访当天就出图的人<b>立刻计入分子</b>，不等满 7 天 —— 分子里绝大多数都是这种。</dd>
               <dt>观察期</dt>
-              <dd>首访不满 7 天的人先挂起、不进分母，否则最近几天的率天然偏低。卡片上的率只按「可判定」的人算。</dd>
+              <dd>只有「首访不满 7 天、<b>至今还没出图</b>」的人才挂起。他已经确定不是分子，留在分母里只会把率往下拉。</dd>
             </dl>
           </article>
 
@@ -503,13 +505,13 @@
       if (f.basis === 'visitor') {
         if (!f.judged) {
           setKpiNA($('k1'), '观察中');
-          $('k1sub').textContent = fmtNum(f.visitors) + ' 位新访客还没满 7 天，暂时判不了';
+          $('k1sub').textContent = fmtNum(f.pending) + ' 位新访客还没出图，等观察满 7 天再判';
           $('k1tag').className = 'tag warn';
           $('k1tag').textContent = '7 天后可见';
         } else {
           setKpi($('k1'), fmtPct(f.rate));
           $('k1sub').textContent = '可判定 ' + fmtNum(f.judged) + ' 人 → 首图 ' + fmtNum(f.converted) +
-            (f.pending ? ' · 观察中 ' + fmtNum(f.pending) : '');
+            (f.pending ? ' · 观察中 ' + fmtNum(f.pending) + '（未出图）' : '');
           $('k1tag').className = 'tag ' + (f.rate >= 15 ? 'up' : 'warn');
           $('k1tag').textContent = f.rate >= 15 ? '转化正常' : '摩擦力偏大';
         }
