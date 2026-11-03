@@ -925,6 +925,12 @@
         var errCode = String((err && err.redeemCode) || '');
         var retryable = errCode === 'TOO_MANY' || !errCode;   /* 没码 = 网络/服务异常 */
         if (!retryable) { dropPending(pendingKey(claim.type)); }
+        /* 链接本身已停用/过期/领完：预览接口已按见面礼给数（source=welcome），
+           紧接着会兜底发 2 积分。这时再弹一条红字「链接已停止发放」，
+           用户会以为注册失败。静默丢掉这条错误，只留见面礼到账提示。 */
+        var linkDead = errCode === 'BATCH_CLOSED' || errCode === 'BATCH_EXPIRED' ||
+                       errCode === 'BATCH_EXHAUSTED' || errCode === 'BATCH_INVALID';
+        if (linkDead && newUserHint.loaded && newUserHint.source === 'welcome') { return; }
         redeemToast(err.message || '领取失败，请稍后重试', 'error');
         throw { retryable: retryable };
       });

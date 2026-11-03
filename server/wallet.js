@@ -349,7 +349,8 @@ function welcomeAvailable(userId) {
 /* 注册福利预览：注册前就告诉访客「本次注册能拿几分」。
  * 金额在注册前就确定——带码/批次看面值，什么都没带看见面礼。
  * 只读、不鉴权；**不透露码的可用状态**（已用/过期的码照回面值，有效性由领取时判），
- * 查不到或名额领完一律回落见面礼，与「领取失败 → 兜底见面礼」的实际行为一致。 */
+ * 查不到、批次已停用/过期、名额领完，一律回落见面礼 ——
+ * 必须与「领取失败 → 兜底见面礼」的实际行为一致，不能显示 10 实际给 2。 */
 function newUserPreview(code, batch) {
   const c = String(code || '').trim().toUpperCase();
   const b = String(batch || '').trim().toUpperCase();
@@ -358,14 +359,29 @@ function newUserPreview(code, batch) {
     if (row) { return { credits: Number(row.credits) || 0, source: 'code' }; }
   }
   if (b && b !== WELCOME_BATCH) {
-    /* 与 redeemBatchCore 的选码同口径：一张还能领的码的面值就是这批的面值 */
-    const row = dbmod.db.prepare(
-      'SELECT credits FROM redeem_codes WHERE batch = ? AND used_by IS NULL ' +
-      'AND (expires_at IS NULL OR expires_at >= ?) ORDER BY code LIMIT 1'
-    ).get(b, dbmod.nowMs());
-    if (row) { return { credits: Number(row.credits) || 0, source: 'batch' }; }
+    const credits = batchPreviewCredits(b);
+    if (credits > 0) { return { credits: credits, source: 'batch' }; }
   }
   return { credits: WELCOME_CREDITS, source: 'welcome' };
+}
+
+/* 这批链接现在还能领到几分：0 = 领不到（按见面礼算）。
+ * 判定顺序与 redeemBatchCore 一致：批次存在 → 启用 → 未过期 → 有可用码。
+ * 早先只看「有没有没用过的码」，批次停用后码还躺在池子里，于是仍显示面值 10，
+ * 点进来却只能拿到见面礼 2（2026-11-03 线上反馈的 bug）。 */
+function batchPreviewCredits(b) {
+  const bt = dbmod.db.prepare(
+    'SELECT credits, active, expires_at FROM redeem_batches WHERE batch = ?'
+  ).get(b);
+  if (!bt) { return 0; }
+  if (!Number(bt.active)) { return 0; }
+  if (bt.expires_at && Number(bt.expires_at) < dbmod.nowMs()) { return 0; }
+  /* 与 redeemBatchCore 的选码同口径：一张还能领的码的面值就是这批的面值 */
+  const row = dbmod.db.prepare(
+    'SELECT credits FROM redeem_codes WHERE batch = ? AND used_by IS NULL ' +
+    'AND (expires_at IS NULL OR expires_at >= ?) ORDER BY code LIMIT 1'
+  ).get(b, dbmod.nowMs());
+  return row ? (Number(row.credits) || 0) : 0;
 }
 
 /* 支付入账：ref = 支付单号，重放幂等（返回 duplicated 供回调判断） */
