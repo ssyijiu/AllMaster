@@ -39,11 +39,12 @@ __pycache__/
 apps/pixelart/assert/生图对比/
 
 # ===== 算法测试原图：图片体积大，本地保留即可；manifest.json（含 subject 判读）入仓库 =====
-apps/pixelart/assert/算法测试原图/**/*.png
-apps/pixelart/assert/算法测试原图/**/*.jpg
-apps/pixelart/assert/算法测试原图/**/*.jpeg
-apps/pixelart/assert/算法测试原图/**/*.webp
-apps/pixelart/assert/算法测试原图\ 1102/
+# 通配「算法测试原图*」覆盖无后缀目录与按日期新建的「算法测试原图 YYYYMMDD」目录
+# 注意：gitignore 不支持 {png,jpg} 花括号，必须一条一个后缀
+apps/pixelart/assert/算法测试原图*/**/*.png
+apps/pixelart/assert/算法测试原图*/**/*.jpg
+apps/pixelart/assert/算法测试原图*/**/*.jpeg
+apps/pixelart/assert/算法测试原图*/**/*.webp
 
 # ===== 画风示例图源素材（38MB 原图纸，示例图已裁切入库，源文件本地保留）=====
 apps/pixelart/assert/素材/
