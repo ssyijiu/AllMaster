@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>点豆科技 · 数据看板</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23FFD02F'/%3E%3Cpath d='M9 22V13M14 22V9M19 22V15M24 22V11' stroke='%231C1C1E' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E" />
+  <style>
+    :root {
+      --brand: #4262FF; --brand-600: #3550D9; --brand-50: #EEF2FF; --brand-100: #DFE6FF;
+      --ink-900: #1C1C1E; --ink-700: #43485E; --ink-500: #5F6478; --ink-400: #8E91A0;
+      --ink-200: #E5E7EC; --ink-100: #F2F3F6; --ink-50: #F7F8FA;
+      --bg: #FBFBFD; --surface: #FFFFFF; --fg: var(--ink-900); --fg-2: var(--ink-700);
+      --muted: var(--ink-500); --meta: var(--ink-400); --border: var(--ink-200);
+      --danger: #DC2626; --success: #16A34A; --warning: #D97706;
+      --grad-brand: linear-gradient(135deg, #1C1C1E 0%, #2C2C34 100%);
+      --font: "Inter", "Noto Sans SC", -apple-system, "PingFang SC", sans-serif;
+      --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      --radius: 12px; --radius-lg: 16px;
+      --shadow: 0 1px 2px rgba(5,0,56,0.05), 0 1px 3px rgba(5,0,56,0.04);
+      --shadow-lg: 0 8px 24px rgba(5,0,56,0.10), 0 2px 8px rgba(5,0,56,0.05);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    [hidden] { display: none !important; }
+    body { font-family: var(--font); background: var(--bg); color: var(--fg); font-size: 14px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+
+    .topbar { position: sticky; top: 0; z-index: 10; background: rgba(255,255,255,.92); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-bottom: 1px solid var(--ink-100); }
+    .topbar-inner { max-width: 1180px; margin: 0 auto; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .brand { display: flex; align-items: center; gap: 9px; font-weight: 590; font-size: 16px; white-space: nowrap; }
+    .brand-logo { width: 28px; height: 28px; border-radius: 9px; background: #FFD02F; color: #1C1C1E; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+    .brand-sub { color: var(--meta); font-weight: 400; font-size: 13px; }
+    .topbar-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+
+    .btn { height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid transparent; font-size: 13px; font-weight: 510; display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; font-family: inherit; background: none; color: var(--fg-2); white-space: nowrap; transition: background-color 120ms ease, border-color 120ms ease; text-decoration: none; }
+    .btn.primary { background: var(--grad-brand); color: #fff; }
+    .btn.primary:hover { background: linear-gradient(135deg, #2C2C34 0%, #3A3A44 100%); }
+    .btn.ghost { border-color: var(--border); background: #fff; }
+    .btn.ghost:hover { background: var(--ink-50); }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn.small { height: 32px; padding: 0 11px; font-size: 12.5px; }
+
+    select.chip { height: 32px; padding: 0 8px; border-radius: 9px; border: 1px solid var(--border); background: #fff; color: var(--fg-2); font-family: inherit; font-size: 13px; outline: none; cursor: pointer; }
+    select.chip:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(66,98,255,.18); }
+
+    .page { max-width: 1180px; margin: 0 auto; padding: 28px 24px 72px; }
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow); padding: 22px 22px 20px; }
+
+    .gate { max-width: 420px; margin: 64px auto; }
+    .gate h2 { font-size: 18px; font-weight: 590; margin-bottom: 4px; }
+    .gate p { color: var(--muted); font-size: 13px; }
+    .field-label { display: block; font-size: 13px; font-weight: 510; color: var(--fg-2); margin: 16px 0 6px; }
+    .text-input { width: 100%; height: 40px; padding: 0 12px; font-size: 14px; font-family: inherit; border: 1px solid var(--border); border-radius: 10px; background: #fff; color: var(--fg); outline: none; }
+    .text-input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(66,98,255,.18); }
+    .code-row { display: flex; gap: 8px; }
+    .code-row .text-input { flex: 1; }
+    .hint { margin-top: 12px; font-size: 13px; color: var(--muted); min-height: 20px; }
+    .hint.err { color: var(--danger); }
+    .hint.ok { color: var(--success); }
+
+    /* ---------- 指标卡 ---------- */
+    .kpi-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+    .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow); padding: 20px 20px 18px; display: flex; flex-direction: column; min-width: 0; }
+    .kpi-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+    .kpi-no { width: 22px; height: 22px; flex: none; border-radius: 7px; background: var(--brand-50); color: var(--brand-600); font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+    .kpi-title { font-size: 13.5px; font-weight: 590; color: var(--fg-2); }
+    .kpi-why { font-size: 12px; color: var(--meta); margin-top: 3px; line-height: 1.5; }
+    .kpi-value { font-size: 38px; font-weight: 680; letter-spacing: -.02em; line-height: 1.1; margin: 14px 0 2px; font-variant-numeric: tabular-nums; }
+    .kpi-value .unit { font-size: 17px; font-weight: 560; color: var(--muted); margin-left: 5px; }
+    .kpi-value.na { color: var(--ink-400); font-size: 26px; }
+    .kpi-sub { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .kpi-foot { margin-top: auto; padding-top: 12px; }
+    .tag { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: var(--ink-100); color: var(--ink-500); }
+    .tag.up { background: #F0FDF4; color: #15803D; }
+    .tag.warn { background: #FFFBEB; color: #B45309; }
+
+    /* 漏斗条 */
+    .funnel { display: flex; flex-direction: column; gap: 7px; }
+    .fn-row { display: grid; grid-template-columns: 52px minmax(0,1fr) 46px; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+    .fn-bar { height: 8px; border-radius: 999px; background: var(--ink-100); overflow: hidden; }
+    .fn-bar i { display: block; height: 100%; border-radius: 999px; background: var(--brand); transition: width .5s ease; }
+    .fn-row.drop .fn-bar i { background: var(--brand-600); opacity: .75; }
+    .fn-num { text-align: right; font-variant-numeric: tabular-nums; color: var(--fg-2); font-weight: 510; }
+
+    /* 分布条 */
+    .dist { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--ink-100); }
+    .dist i { display: block; height: 100%; }
+    .dist-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 9px; font-size: 11.5px; color: var(--muted); }
+    .dist-legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .dot { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
+
+    /* ---------- 区块 ---------- */
+    .section { margin-top: 16px; }
+    .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+    .section-title { font-size: 15px; font-weight: 590; }
+    .section-desc { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+    .grid-2 { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(0,1fr); gap: 16px; }
+
+    .chart-wrap { position: relative; }
+    .chart-legend { display: flex; gap: 16px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .chart-legend b { font-weight: 510; color: var(--fg-2); }
+    .chart-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+    svg.chart { display: block; width: 100%; height: auto; overflow: visible; }
+    .chart-tip { position: absolute; pointer-events: none; background: #1C1C1E; color: #fff; border-radius: 8px; padding: 7px 10px; font-size: 12px; line-height: 1.5; white-space: nowrap; box-shadow: var(--shadow-lg); transform: translate(-50%, -100%); opacity: 0; transition: opacity .12s ease; z-index: 5; }
+    .chart-tip b { font-weight: 600; }
+
+    table.cohort { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.cohort th { text-align: left; font-weight: 510; color: var(--meta); font-size: 12px; padding: 0 8px 8px; border-bottom: 1px solid var(--ink-100); white-space: nowrap; }
+    table.cohort td { padding: 9px 8px; border-bottom: 1px solid var(--ink-50); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    table.cohort td.day { font-family: var(--mono); font-size: 12.5px; }
+    table.cohort tr:last-child td { border-bottom: none; }
+    table.cohort .r { text-align: right; }
+    .empty { padding: 26px 8px; text-align: center; color: var(--meta); font-size: 13px; }
+
+    .foot { margin-top: 20px; font-size: 12px; color: var(--meta); line-height: 1.8; }
+    .foot b { color: var(--ink-500); font-weight: 510; }
+
+    @media (max-width: 900px) {
+      .kpi-grid { grid-template-columns: minmax(0, 1fr); }
+      .grid-2 { grid-template-columns: minmax(0, 1fr); }
+      .topbar-inner { padding: 10px 16px; flex-wrap: wrap; }
+      .page { padding: 20px 16px 56px; }
+      .brand-sub { display: none; }
+      .kpi-value { font-size: 34px; }
+    }
+    /* 窄屏表格：绝对值那列让位，保住日期与回访率不换行（否则日期会折成两行） */
+    @media (max-width: 640px) {
+      table.cohort { font-size: 12.5px; }
+      table.cohort th, table.cohort td { padding: 8px 4px; }
+      table.cohort th:nth-child(3), table.cohort td:nth-child(3) { display: none; }
+      table.cohort th:nth-child(4), table.cohort td:nth-child(4) { text-align: right; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="brand-logo">豆</span>
+        <span>数据看板<span class="brand-sub">&nbsp;· 点豆科技</span></span>
+      </div>
+      <div class="topbar-actions">
+        <select class="chip" id="selDays" aria-label="时间范围">
+          <option value="7">近 7 天</option>
+          <option value="14">近 14 天</option>
+          <option value="30" selected>近 30 天</option>
+          <option value="90">近 90 天</option>
+        </select>
+        <select class="chip" id="selProduct" aria-label="产品">
+          <option value="all">全部产品</option>
+          <option value="pixelart">拼豆图纸</option>
+          <option value="avatar">头像</option>
+        </select>
+        <button class="btn ghost small" id="btnReload" type="button">刷新</button>
+        <a class="btn ghost small" href="/admin.html">后台</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <!-- 登录门：未登录不请求任何指标 -->
+    <section class="panel gate" id="gate">
+      <h2>管理员登录</h2>
+      <p>数据看板仅限管理员邮箱访问，验证码会发到该邮箱。</p>
+      <label class="field-label" for="gateEmail">邮箱</label>
+      <input class="text-input" id="gateEmail" type="email" autocomplete="email" placeholder="you@example.com" />
+      <label class="field-label" for="gateCode">验证码</label>
+      <div class="code-row">
+        <input class="text-input" id="gateCode" type="text" inputmode="numeric" maxlength="6" placeholder="6 位数字" />
+        <button class="btn ghost" id="btnSendCode" type="button">发送验证码</button>
+      </div>
+      <button class="btn primary" id="btnLogin" type="button" style="width:100%;margin-top:16px;">登录</button>
+      <p class="hint" id="gateMsg"></p>
+    </section>
+
+    <div id="board" hidden>
+      <!-- 三个核心指标 -->
+      <section class="kpi-grid">
+        <article class="kpi">
+          <div class="kpi-head">
+            <div>
+              <div class="kpi-title">① 打开页面 → 首次出图</div>
+              <div class="kpi-why">直接反映登录、上传环节的摩擦力</div>
+            </div>
+            <span class="kpi-no">1</span>
+          </div>
+          <div class="kpi-value" id="k1">—</div>
+          <div class="kpi-sub" id="k1sub"></div>
+          <div class="kpi-foot">
+            <div class="funnel" id="k1funnel"></div>
+            <div style="margin-top:10px;"><span class="tag" id="k1tag"></span></div>
+          </div>
+        </article>
+
+        <article class="kpi">
+          <div class="kpi-head">
+            <div>
+              <div class="kpi-title">② 人均生成张数</div>
+              <div class="kpi-why">反映图纸质量：好就会多转几张试试</div>
+            </div>
+            <span class="kpi-no">2</span>
+          </div>
+          <div class="kpi-value" id="k2">—</div>
+          <div class="kpi-sub" id="k2sub"></div>
+          <div class="kpi-foot">
+            <div class="dist" id="k2dist"></div>
+            <div class="dist-legend" id="k2legend"></div>
+          </div>
+        </article>
+
+        <article class="kpi">
+          <div class="kpi-head">
+            <div>
+              <div class="kpi-title">③ 7 日内二次回访率</div>
+              <div class="kpi-why">决定这是「一次性玩具」还是「工具」</div>
+            </div>
+            <span class="kpi-no">3</span>
+          </div>
+          <div class="kpi-value" id="k3">—</div>
+          <div class="kpi-sub" id="k3sub"></div>
+          <div class="kpi-foot"><span class="tag" id="k3tag"></span></div>
+        </article>
+      </section>
+
+      <!-- 趋势 -->
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <div class="section-title">每日趋势</div>
+            <div class="section-desc" id="trendDesc">成功出图张数与访客数</div>
+          </div>
+          <div class="chart-legend">
+            <span><i style="background:#4262FF;"></i>成功出图 <b id="lgGens">0</b></span>
+            <span><i style="background:#D97706;"></i>访客 <b id="lgVisitors">0</b></span>
+          </div>
+        </div>
+        <div class="chart-wrap" id="chartWrap">
+          <svg class="chart" id="chart" viewBox="0 0 1000 260" preserveAspectRatio="none" role="img" aria-label="每日趋势图"></svg>
+          <div class="chart-tip" id="chartTip"></div>
+        </div>
+      </section>
+
+      <div class="section grid-2">
+        <!-- 漏斗 -->
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <div class="section-title">转化漏斗</div>
+              <div class="section-desc">同一时间窗口内的绝对量</div>
+            </div>
+          </div>
+          <div class="funnel" id="bigFunnel"></div>
+          <p class="hint" id="funnelNote" style="margin-top:14px;"></p>
+        </section>
+
+        <!-- 人均分布 -->
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <div class="section-title">生成张数分布</div>
+              <div class="section-desc">按「有出图的用户」每人窗口内张数分档</div>
+            </div>
+          </div>
+          <div class="dist" id="bigDist" style="height:14px;"></div>
+          <div class="dist-legend" id="bigLegend" style="margin-top:12px;font-size:12.5px;"></div>
+          <p class="hint" id="perUserNote" style="margin-top:14px;"></p>
+        </section>
+      </div>
+
+      <!-- 回访队列 -->
+      <section class="panel section">
+        <div class="section-head">
+          <div>
+            <div class="section-title">7 日回访 · 按首次活跃日分队列</div>
+            <div class="section-desc">只统计已满 7 天的队列；「观察中」的队列天数还不够，暂不参与</div>
+          </div>
+        </div>
+        <table class="cohort" id="cohortTable">
+          <thead>
+            <tr>
+              <th>首次活跃</th>
+              <th class="r">新增用户</th>
+              <th class="r">7 日内回访</th>
+              <th class="r">回访率</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <p class="hint" id="cohortNote"></p>
+      </section>
+
+      <p class="foot" id="footNote"></p>
+    </div>
+  </main>
+
+  <script src="/shared/local-cloud.js"></script>
+  <script>
+  (function () {
+    'use strict';
+    var $ = function (id) { return document.getElementById(id); };
+    var client = window.LocalCloud && window.LocalCloud.createClient ? window.LocalCloud.createClient() : null;
+    var state = { days: 30, product: 'all', data: null, loading: false };
+
+    /* ---------- 请求 ---------- */
+    function token() {
+      try { return localStorage.getItem('localcloud.token') || ''; } catch (_) { return ''; }
+    }
+    function apiGet(path) {
+      var headers = {};
+      var t = token();
+      if (t) { headers.Authorization = 'Bearer ' + t; }
+      return fetch(path, { headers: headers }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (body) {
+          if (!r.ok) {
+            var e = new Error((body && body.error && body.error.message) || ('请求失败 ' + r.status));
+            e.code = (body && body.error && body.error.code) || 'HTTP_' + r.status;
+            throw e;
+          }
+          return body;
+        });
+      });
+    }
+    function apiPost(path, body) {
+      return fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {})
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (out) {
+          if (!r.ok) {
+            var e = new Error((out && out.error && out.error.message) || ('请求失败 ' + r.status));
+            e.code = (out && out.error && out.error.code) || 'HTTP_' + r.status;
+            throw e;
+          }
+          return out;
+        });
+      });
+    }
+
+    /* ---------- 登录门 ---------- */
+    function gateMsg(text, cls) {
+      var el = $('gateMsg');
+      el.textContent = text || '';
+      el.className = 'hint' + (cls ? ' ' + cls : '');
+    }
+    var sendTimer = null;
+    $('btnSendCode').addEventListener('click', function () {
+      var email = String($('gateEmail').value || '').trim();
+      if (!email) { return gateMsg('请先填写邮箱', 'err'); }
+      var btn = $('btnSendCode');
+      btn.disabled = true;
+      gateMsg('正在发送…');
+      apiPost('/api/admin/login/send', { email: email }).then(function () {
+        gateMsg('验证码已发送，请查收邮箱（含垃圾箱）', 'ok');
+        var left = 60;
+        btn.textContent = left + 's';
+        sendTimer = setInterval(function () {
+          left -= 1;
+          if (left <= 0) { clearInterval(sendTimer); btn.disabled = false; btn.textContent = '发送验证码'; return; }
+          btn.textContent = left + 's';
+        }, 1000);
+      }).catch(function (e) {
+        btn.disabled = false;
+        gateMsg(e.code === 'NOT_ADMIN' ? '该邮箱没有数据看板权限' : (e.message || '发送失败'), 'err');
+      });
+    });
+
+    $('btnLogin').addEventListener('click', function () {
+      var email = String($('gateEmail').value || '').trim();
+      var code = String($('gateCode').value || '').trim();
+      if (!email || !code) { return gateMsg('请填写邮箱与验证码', 'err'); }
+      var btn = $('btnLogin');
+      btn.disabled = true;
+      gateMsg('正在登录…');
+      apiPost('/api/admin/login/verify', { email: email, code: code }).then(function (out) {
+        if (!out || !out.token) { throw new Error('登录响应异常，请重试'); }
+        var adopt = (client && client.auth.adoptSession)
+          ? client.auth.adoptSession(out.token)
+          : Promise.reject(new Error('登录组件未就绪'));
+        return adopt;
+      }).then(function () {
+        btn.disabled = false;
+        gateMsg('');
+        boot();
+      }).catch(function (e) {
+        btn.disabled = false;
+        gateMsg(e.code === 'NOT_ADMIN' ? '该邮箱没有数据看板权限' : (e.message || '登录失败'), 'err');
+      });
+    });
+
+    /* ---------- 格式化 ---------- */
+    function fmtPct(v) {
+      if (v === null || v === undefined) { return '—'; }
+      return (Math.round(v * 10) / 10) + '%';
+    }
+    function fmtNum(v) {
+      if (v === null || v === undefined) { return '—'; }
+      return String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    }
+    function setKpi(el, value, unit) {
+      el.className = 'kpi-value';
+      el.innerHTML = '';
+      el.appendChild(document.createTextNode(value));
+      if (unit) {
+        var s = document.createElement('span');
+        s.className = 'unit';
+        s.textContent = unit;
+        el.appendChild(s);
+      }
+    }
+    function setKpiNA(el, text) {
+      el.className = 'kpi-value na';
+      el.textContent = text;
+    }
+
+    /* ---------- 渲染 KPI ---------- */
+    function renderKpis(d) {
+      var f = d.funnel, p = d.perUser, r = d.retention;
+
+      /* ① 转化率 */
+      if (f.basis === 'visitor') {
+        setKpi($('k1'), fmtPct(f.rate));
+        $('k1sub').textContent = '新访客 ' + fmtNum(f.visitors) + ' → 首次出图 ' + fmtNum(f.converted);
+        $('k1tag').className = 'tag ' + (f.rate >= 15 ? 'up' : 'warn');
+        $('k1tag').textContent = f.rate === null ? '暂无数据' : (f.rate >= 15 ? '转化正常' : '摩擦力偏大');
+      } else {
+        setKpi($('k1'), fmtPct(f.rate));
+        $('k1sub').textContent = '新注册 ' + fmtNum(f.signups) + ' → 首次出图 ' + fmtNum(f.converted);
+        $('k1tag').className = 'tag warn';
+        $('k1tag').textContent = '暂按注册口径（埋点未覆盖本窗口）';
+      }
+      renderFunnel($('k1funnel'), [
+        { label: f.basis === 'visitor' ? '访客' : '注册', n: f.basis === 'visitor' ? f.visitors : f.signups },
+        { label: '首图', n: f.converted }
+      ], true);
+
+      /* ② 人均张数 */
+      if (p.users > 0) {
+        setKpi($('k2'), String(Math.round(p.avg * 100) / 100), '张 / 人');
+        $('k2sub').textContent = fmtNum(p.total) + ' 张 · ' + fmtNum(p.users) + ' 位出图用户';
+      } else {
+        setKpiNA($('k2'), '暂无出图');
+        $('k2sub').textContent = '本窗口没有成功出图';
+      }
+      renderDist($('k2dist'), p.distribution, '7px');
+      renderLegend($('k2legend'), p.distribution, true);
+
+      /* ③ 回访 */
+      if (r.cohortSize > 0) {
+        setKpi($('k3'), fmtPct(r.rate));
+        $('k3sub').textContent = fmtNum(r.returned) + ' / ' + fmtNum(r.cohortSize) + ' 人回访（已满 7 天）';
+        $('k3tag').className = 'tag ' + (r.rate >= 20 ? 'up' : '');
+        $('k3tag').textContent = r.rate >= 20 ? '有工具属性' : '更像一次性使用';
+      } else {
+        setKpiNA($('k3'), '观察中');
+        $('k3sub').textContent = r.pending ? fmtNum(r.pending) + ' 位新用户还没满 7 天' : '还没有满 7 天的队列';
+        $('k3tag').className = 'tag warn';
+        $('k3tag').textContent = '7 天后可见';
+      }
+    }
+
+    function renderFunnel(el, rows, mini) {
+      el.innerHTML = '';
+      var max = 1;
+      rows.forEach(function (r) { if (r.n > max) { max = r.n; } });
+      rows.forEach(function (r) {
+        var row = document.createElement('div');
+        row.className = 'fn-row';
+        var lab = document.createElement('span');
+        lab.textContent = r.label;
+        var bar = document.createElement('div');
+        bar.className = 'fn-bar';
+        var fill = document.createElement('i');
+        fill.style.width = Math.max(2, Math.round((r.n / max) * 100)) + '%';
+        bar.appendChild(fill);
+        var num = document.createElement('span');
+        num.className = 'fn-num';
+        num.textContent = fmtNum(r.n);
+        row.appendChild(lab); row.appendChild(bar); row.appendChild(num);
+        el.appendChild(row);
+      });
+    }
+
+    var DIST_COLORS = ['#A3B5FF', '#7188FF', '#4262FF', '#233491'];
+    function renderDist(el, dist, h) {
+      el.innerHTML = '';
+      var total = dist.reduce(function (s, d) { return s + d.users; }, 0);
+      el.style.height = h || '10px';
+      if (!total) {
+        var empty = document.createElement('i');
+        empty.style.cssText = 'width:100%;background:var(--ink-100);';
+        el.appendChild(empty);
+        return;
+      }
+      dist.forEach(function (d, i) {
+        if (!d.users) { return; }
+        var seg = document.createElement('i');
+        seg.style.width = (d.users / total * 100) + '%';
+        seg.style.background = DIST_COLORS[i];
+        seg.title = d.label + '：' + d.users + ' 人';
+        el.appendChild(seg);
+      });
+    }
+    function renderLegend(el, dist, withCount) {
+      el.innerHTML = '';
+      dist.forEach(function (d, i) {
+        var s = document.createElement('span');
+        var dot = document.createElement('i');
+        dot.className = 'dot';
+        dot.style.background = DIST_COLORS[i];
+        s.appendChild(dot);
+        s.appendChild(document.createTextNode(d.label + (withCount ? ' · ' + d.users + ' 人' : '')));
+        el.appendChild(s);
+      });
+    }
+
+    /* ---------- 趋势图（纯 SVG） ---------- */
+    function renderChart(trend) {
+      var svg = $('chart');
+      var wrap = $('chartWrap');
+      /* 按容器真实像素画，再交给 viewBox —— 手机上不会被等比压扁（文字仍是 10px） */
+      var W = Math.max(280, Math.round(wrap.clientWidth || 1000));
+      var narrow = W < 620;
+      var H = narrow ? 210 : 260;
+      var padL = narrow ? 30 : 38, padR = 10, padT = 12, padB = narrow ? 22 : 26;
+      var iw = W - padL - padR, ih = H - padT - padB;
+      svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      svg.style.height = H + 'px';
+      svg.innerHTML = '';
+      var ns = 'http://www.w3.org/2000/svg';
+      function node(tag, attrs, text) {
+        var el = document.createElementNS(ns, tag);
+        Object.keys(attrs || {}).forEach(function (k) { el.setAttribute(k, attrs[k]); });
+        if (text !== undefined) { el.textContent = text; }
+        return el;
+      }
+
+      var gens = trend.map(function (d) { return d.gens; });
+      var vis = trend.map(function (d) { return d.visitors; });
+      var maxY = Math.max.apply(null, gens.concat(vis).concat([1]));
+      maxY = niceMax(maxY);
+
+      /* 网格 + y 轴刻度 */
+      var ticksY = narrow ? 3 : 4;
+      for (var g = 0; g <= ticksY; g++) {
+        var y = padT + ih - (ih * g / ticksY);
+        svg.appendChild(node('line', { x1: padL, y1: y, x2: W - padR, y2: y, stroke: g === 0 ? '#E5E7EC' : '#F2F3F6', 'stroke-width': 1 }));
+        svg.appendChild(node('text', { x: padL - 7, y: y + 3.5, 'text-anchor': 'end', 'font-size': 9.5, fill: '#8E91A0' }, String(Math.round(maxY * g / ticksY))));
+      }
+
+      var n = trend.length;
+      var step = n > 1 ? iw / (n - 1) : iw;
+      function px(i) { return padL + (n > 1 ? step * i : iw / 2); }
+      function py(v) { return padT + ih - (ih * (v / maxY)); }
+
+      /* 开头整段没有数据（埋点上线前 / 产品还没冷启动）时，用浅灰底说明，
+         避免读者把「一条贴着 0 的直线」误读成「访问量归零」 */
+      var firstData = -1;
+      for (var q = 0; q < n; q++) { if (trend[q].visitors > 0 || trend[q].gens > 0) { firstData = q; break; } }
+      if (firstData > 0) {
+        var gapW = Math.max(0, px(firstData - 1) + step / 2 - padL);
+        svg.appendChild(node('rect', { x: padL, y: padT, width: gapW, height: ih, fill: 'rgba(28,28,30,0.035)' }));
+        if (gapW > 64) {
+          svg.appendChild(node('text', {
+            x: padL + gapW / 2, y: padT + ih / 2, 'text-anchor': 'middle', 'font-size': 10, fill: '#B6B9C4'
+          }, '无数据'));
+        }
+      }
+
+      /* 出图面积 */
+      var area = 'M' + px(0) + ',' + (padT + ih);
+      gens.forEach(function (v, i) { area += ' L' + px(i) + ',' + py(v); });
+      area += ' L' + px(n - 1) + ',' + (padT + ih) + ' Z';
+      svg.appendChild(node('path', { d: area, fill: 'rgba(66,98,255,0.10)' }));
+      var line = gens.map(function (v, i) { return (i ? 'L' : 'M') + px(i) + ',' + py(v); }).join(' ');
+      svg.appendChild(node('path', { d: line, fill: 'none', stroke: '#4262FF', 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+
+      /* 访客虚线 */
+      var vline = vis.map(function (v, i) { return (i ? 'L' : 'M') + px(i) + ',' + py(v); }).join(' ');
+      svg.appendChild(node('path', { d: vline, fill: 'none', stroke: '#D97706', 'stroke-width': 1.6, 'stroke-dasharray': '4 4', 'stroke-linejoin': 'round' }));
+
+      /* 点（稀疏数据才画，避免糊成一条） */
+      if (n <= 31) {
+        gens.forEach(function (v, i) {
+          svg.appendChild(node('circle', { cx: px(i), cy: py(v), r: n > 14 ? 2.6 : 3.2, fill: '#4262FF' }));
+        });
+      }
+
+      /* x 轴日期：按宽度取 4~7 个刻度 */
+      var ticks = Math.min(narrow ? 4 : 7, n);
+      for (var t = 0; t < ticks; t++) {
+        var idx = ticks === 1 ? 0 : Math.round((n - 1) * t / (ticks - 1));
+        var d0 = trend[idx].day.slice(5);
+        svg.appendChild(node('text', {
+          x: px(idx), y: H - 8, 'text-anchor': t === 0 ? 'start' : (t === ticks - 1 ? 'end' : 'middle'),
+          'font-size': 10, fill: '#8E91A0'
+        }, d0));
+      }
+
+      /* hover：整列热区 + 垂直参考线 + tooltip */
+      var hover = node('line', { x1: 0, y1: padT, x2: 0, y2: padT + ih, stroke: '#C5D1FF', 'stroke-width': 1, opacity: 0 });
+      svg.appendChild(hover);
+      var tip = $('chartTip');
+      var hit = node('rect', { x: padL, y: padT, width: iw, height: ih, fill: 'transparent' });
+      svg.appendChild(hit);
+      hit.addEventListener('mousemove', function (ev) {
+        var rect = svg.getBoundingClientRect();
+        var rel = (ev.clientX - rect.left) / rect.width * W;
+        var i = n > 1 ? Math.round((rel - padL) / step) : 0;
+        i = Math.max(0, Math.min(n - 1, i));
+        var x = px(i);
+        hover.setAttribute('x1', x); hover.setAttribute('x2', x); hover.setAttribute('opacity', 1);
+        var row = trend[i];
+        tip.innerHTML = '<b>' + row.day + '</b><br>出图 ' + row.gens + ' 张 · 访客 ' + row.visitors +
+          '<br>新注册 ' + row.signups + ' · 活跃 ' + row.activeUsers;
+        tip.style.left = (x / W * rect.width) + 'px';
+        tip.style.top = (padT + 8) + 'px';
+        tip.style.opacity = 1;
+      });
+      hit.addEventListener('mouseleave', function () {
+        hover.setAttribute('opacity', 0);
+        tip.style.opacity = 0;
+      });
+    }
+    function niceMax(v) {
+      var p = Math.pow(10, Math.floor(Math.log10(v)));
+      var m = v / p;
+      var nice = m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10;
+      return nice * p;
+    }
+
+    /* ---------- 漏斗 / 分布 / 队列 ---------- */
+    function renderSections(d) {
+      var f = d.funnel, p = d.perUser, r = d.retention;
+
+      /* 大漏斗 */
+      var rows = [];
+      if (f.basis === 'visitor') {
+        rows = [{ label: '访客', n: f.visitors }, { label: '注册', n: f.signups }, { label: '首图', n: f.converted }];
+      } else {
+        rows = [{ label: '注册', n: f.signups }, { label: '首图', n: f.converted }];
+      }
+      renderFunnel($('bigFunnel'), rows, false);
+      $('funnelNote').textContent = f.note + (f.basis === 'visitor'
+        ? ''
+        : '（新访客数据从访问埋点上线当天开始才有）');
+
+      /* 人均分布 */
+      renderDist($('bigDist'), p.distribution, '14px');
+      renderLegend($('bigLegend'), p.distribution, true);
+      var note = p.note;
+      if (p.avgPerSignup !== null) { note += ' 同期每个新注册用户平均 ' + p.avgPerSignup + ' 张。'; }
+      if (p.byProduct && p.byProduct.length) {
+        note += ' 分产品：' + p.byProduct.map(function (x) {
+          return (x.product === 'pixelart' ? '拼豆' : x.product === 'avatar' ? '头像' : x.product) + ' ' + x.gens + ' 张';
+        }).join('、') + '。';
+      }
+      $('perUserNote').textContent = note;
+
+      /* 回访表 */
+      var tbody = $('cohortTable').querySelector('tbody');
+      tbody.innerHTML = '';
+      if (!r.cohorts.length) {
+        tbody.innerHTML = '<tr><td colspan="5"><div class="empty">本窗口没有新增活跃用户</div></td></tr>';
+      } else {
+        r.cohorts.slice(0, 15).forEach(function (c) {
+          var tr = document.createElement('tr');
+          /* 不满 7 天的队列还没观察完，回访率没有意义，显示占位 */
+          var rate = (c.mature && c.size) ? Math.round(c.returned / c.size * 1000) / 10 : null;
+          tr.innerHTML = '<td class="day">' + c.day + '</td>' +
+            '<td class="r">' + c.size + '</td>' +
+            '<td class="r">' + c.returned + '</td>' +
+            '<td class="r">' + (rate === null ? '—' : rate + '%') + '</td>' +
+            '<td>' + (c.mature ? '<span class="tag">已满 7 天</span>' : '<span class="tag warn">观察中</span>') + '</td>';
+          tbody.appendChild(tr);
+        });
+      }
+      $('cohortNote').textContent = r.note +
+        (r.pending ? ' 另有 ' + r.pending + ' 位新用户还在观察期。' : '');
+
+      /* 页脚口径 */
+      var tr = d.tracking;
+      $('footNote').innerHTML = '<b>口径</b>：' + f.note + ' ' + p.note + ' ' + r.note + '<br>' +
+        '<b>数据</b>：生成数据来自订单表（历史可回溯）；访问与注册来自 ' +
+        (tr.since ? ('<b>' + tr.since + '</b> 起上线的埋点') : '即将上线的埋点') +
+        '，当前累计 ' + fmtNum(tr.events) + ' 条访问记录、' + fmtNum(tr.totals.users) + ' 个注册用户、' + fmtNum(tr.totals.orders) + ' 笔生成单。' +
+        '埋点只记录匿名访客标识与页面路径，不记录 IP、设备型号与来源链接。';
+    }
+
+    /* ---------- 加载 ---------- */
+    function load() {
+      if (state.loading) { return; }
+      state.loading = true;
+      $('btnReload').disabled = true;
+      apiGet('/api/admin/stats?days=' + state.days + '&product=' + encodeURIComponent(state.product))
+        .then(function (out) {
+          state.data = out.data;
+          $('gate').hidden = true;
+          $('board').hidden = false;
+          renderKpis(state.data);
+          renderSections(state.data);
+          renderChart(state.data.trend);
+          $('lgGens').textContent = fmtNum(state.data.perUser.total);
+          $('lgVisitors').textContent = fmtNum(state.data.trend.reduce(function (s, x) { return s + x.visitors; }, 0));
+        })
+        .catch(function (e) {
+          if (e.code === 'AUTH_REQUIRED') {
+            $('gate').hidden = false;
+            $('board').hidden = true;
+            gateMsg('登录已过期，请重新登录', 'err');
+          } else if (e.code === 'NOT_ADMIN') {
+            $('gate').hidden = false;
+            $('board').hidden = true;
+            gateMsg('该账号没有数据看板权限', 'err');
+          } else {
+            $('board').hidden = false;
+            $('gate').hidden = true;
+            alert(e.message || '加载失败');
+          }
+        })
+        .then(function () {
+          state.loading = false;
+          $('btnReload').disabled = false;
+        });
+    }
+
+    function boot() {
+      if (!client) { gateMsg('登录组件未就绪，请刷新页面', 'err'); return; }
+      client.auth.getSession().then(function (res) {
+        if (res && res.data && res.data.user) { load(); }
+        else {
+          $('gate').hidden = false;
+          $('board').hidden = true;
+          $('gateEmail').focus();
+        }
+      }).catch(function () {
+        $('gate').hidden = false;
+      });
+    }
+
+    $('btnReload').addEventListener('click', load);
+    $('selDays').addEventListener('change', function () {
+      state.days = Number(this.value) || 30;
+      if (state.data) { load(); }
+    });
+    $('selProduct').addEventListener('change', function () {
+      state.product = this.value || 'all';
+      if (state.data) { load(); }
+    });
+    $('gateCode').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { $('btnLogin').click(); }
+    });
+
+    /* 窗口尺寸变了重画：图表按像素绘制，不重画会保持旧宽度 */
+    var resizeTimer = null;
+    window.addEventListener('resize', function () {
+      if (!state.data) { return; }
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () { renderChart(state.data.trend); }, 160);
+    });
+
+    boot();
+  })();
+  </script>
+</body>
+</html>

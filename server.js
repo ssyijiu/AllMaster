@@ -67,7 +67,7 @@ const ADMIN_PATHS = [
   '/api/admin/redeem', '/api/admin/redeem/list',
   '/api/admin/invite', '/api/admin/invite/list', '/api/admin/invite/update',
   '/api/admin/products', '/api/admin/products/save', '/api/admin/products/delete', '/api/admin/products/switch',
-  '/api/admin/users'
+  '/api/admin/users', '/api/admin/stats'
 ];
 
 /* 生成单（P3）：一次生成 = 一单，先建单扣费，成功/失败必须结算。
@@ -1196,6 +1196,7 @@ const server = http.createServer((req, res) => {
   if (pathOnly.indexOf('/api/auth/') === 0 ||
       pathOnly === '/api/db/query' ||
       pathOnly === '/api/redeem/preview' ||
+      pathOnly === '/api/track' ||
       pathOnly.indexOf('/api/rpc/') === 0 ||
       pathOnly.indexOf('/api/storage/') === 0 ||
       pathOnly.indexOf('/files/') === 0) {
@@ -1227,6 +1228,12 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && (pathOnly === '/agreement' || pathOnly === '/agreement/')) {
     /* 用户协议与隐私政策（登录场景法定必备）：单页两份文档，锚点 #terms / #privacy */
     req.url = '/agreement.html' + (fullUrl.search || '');
+    return serveStatic(req, res);
+  }
+  if (req.method === 'GET' && (pathOnly === '/stats' || pathOnly === '/stats/')) {
+    /* 数据看板（仅管理员）：页面本身是静态的，数据走 /api/admin/stats，
+       未登录时页面只显示登录门，不会泄露任何指标 */
+    req.url = '/stats.html' + (fullUrl.search || '');
     return serveStatic(req, res);
   }
   if (req.method === 'GET' && (pathOnly === '/pixelart' || pathOnly === '/pixelart/')) {

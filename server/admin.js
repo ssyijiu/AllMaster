@@ -23,6 +23,7 @@ const crypto = require('crypto');
 const dbmod = require('./db');
 const auth = require('./auth');
 const wallet = require('./wallet');
+const stats = require('./stats');
 
 const ROOT = path.join(__dirname, '..');
 /* 与 server.js 用同一份路径规则：环境变量可覆盖，测试才能指向临时目录，
@@ -792,6 +793,16 @@ function handleUsers(req, res, url) {
   return sendJson(res, 200, { data: data, error: null });
 }
 
+/* 数据看板（/stats.html）：三个核心指标 + 趋势。
+   全部服务端算，前端只画 —— 口径只此一处，CLI 也能复用同一函数。 */
+function handleStats(req, res, url) {
+  const user = requireAdmin(req, res);
+  if (!user) { return; }
+  const days = url && url.searchParams.get('days');
+  const product = url && url.searchParams.get('product');
+  return sendJson(res, 200, { data: stats.overview({ days: days, product: product }), error: null });
+}
+
 function randomCode(len) {
   let out = '';
   for (let i = 0; i < len; i++) { out += ALPHABET[crypto.randomInt(0, ALPHABET.length)]; }
@@ -818,7 +829,8 @@ const ROUTES = {
   '/api/admin/products/save': { POST: handleProductSave },
   '/api/admin/products/delete': { POST: handleProductDelete },
   '/api/admin/products/switch': { POST: handleProductSwitch },
-  '/api/admin/users': { GET: handleUsers }
+  '/api/admin/users': { GET: handleUsers },
+  '/api/admin/stats': { GET: handleStats }
 };
 
 async function handle(req, res, pathOnly, url) {

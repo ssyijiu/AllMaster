@@ -393,6 +393,69 @@
   }
   ensureLoginModal();
 
+  /* =========================================================
+   * 访问埋点（/api/track）—— 数据看板的「打开页面」分母
+   * ---------------------------------------------------------
+   * 只发四个字段：kind / vid / product / path。vid 是 localStorage 里的
+   * 匿名随机串，不含任何个人信息；登录后同一条记录会带上 user_id，
+   * 把「访客」与「账号」串起来（登录前打开页面也能追溯）。
+   * 任何失败都静默：埋点坏了不能影响页面任何功能。
+   * ========================================================= */
+  var TRACK_VID_KEY = 'platform.vid';
+  var TRACK_VID_RE = /^[A-Za-z0-9_-]{8,40}$/;
+
+  function trackVisitorId() {
+    try {
+      var v = localStorage.getItem(TRACK_VID_KEY);
+      if (v && TRACK_VID_RE.test(v)) { return v; }
+      var out = '';
+      if (window.crypto && window.crypto.getRandomValues) {
+        var bytes = new Uint8Array(12);
+        window.crypto.getRandomValues(bytes);
+        for (var i = 0; i < bytes.length; i++) { out += ('0' + bytes[i].toString(16)).slice(-2); }
+      } else {
+        for (var j = 0; j < 24; j++) { out += Math.floor(Math.random() * 16).toString(16); }
+      }
+      localStorage.setItem(TRACK_VID_KEY, out);
+      return out;
+    } catch (_) { return ''; }
+  }
+
+  /* 页面 → 产品标识：与 styles/套餐里的 product 字段同名 */
+  function trackProduct() {
+    var p = String((window.location && window.location.pathname) || '');
+    if (p.indexOf('/apps/avatar') === 0) { return 'avatar'; }
+    if (p.indexOf('/my') === 0) { return 'my'; }
+    if (p.indexOf('/stats') === 0) { return 'stats'; }
+    return 'pixelart';
+  }
+
+  function track(kind) {
+    try {
+      if (typeof fetch !== 'function') { return; }   /* 老 jsdom 环境没有 fetch */
+      var vid = trackVisitorId();
+      if (!vid) { return; }
+      var headers = { 'Content-Type': 'application/json' };
+      var token = '';
+      try { token = localStorage.getItem('localcloud.token') || ''; } catch (_) {}
+      if (token) { headers.Authorization = 'Bearer ' + token; }
+      fetch('/api/track', {
+        method: 'POST',
+        headers: headers,
+        keepalive: true,      /* 关页/跳转时也能发出去 */
+        body: JSON.stringify({
+          kind: kind || 'pv',
+          vid: vid,
+          product: trackProduct(),
+          path: String((window.location && window.location.pathname) || '').slice(0, 120)
+        })
+      }).catch(function () {});
+    } catch (_) {}
+  }
+  Platform.track = track;
+  /* 每个页面加载记一次「打开」；defer 脚本执行时 DOM 已解析 */
+  track('pv');
+
   Platform.setup = function (ctx) {
     var els = ctx.els;
     /* 登录方式从「手机号」换成「邮箱」：旧页面/旧测试仍传 loginPhone/errPhone，
@@ -1045,6 +1108,8 @@
       renderAuthUI();
       /* 登录：初始化积分钱包并处理支付回跳；退出：隐藏钱包并清零余额 */
       if (Store.state.user) {
+        /* 埋点：把匿名访客与账号绑上（数据看板算「打开→出图」转化要用） */
+        track('identify');
         walletService.refresh().then(function () {
           handlePaidReturn();
           /* 兑换链接：等余额拉回来再兑，提示里的「已到账 N 积分」才有据可依 */
@@ -1403,7 +1468,6 @@
     captureRedeemLink();
     ensureNewUserPill();
     loadNewUserHint();
-
     return {
       applySession: applySession,
       ensureAuth: ensureAuth,

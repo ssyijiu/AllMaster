@@ -158,6 +158,25 @@ CREATE TABLE IF NOT EXISTS files (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_files_owner ON files(owner, created_at DESC);
+
+/* 访问日志（数据看板用，2026-11-03 起）：只记「谁在哪天打开了哪个页面」，
+   **不存 IP、UA、referer**。visitor_id 是浏览器 localStorage 里的匿名随机串，
+   用于算「打开页面 → 首次出图」的分母；登录后同一条记录会补上 user_id，
+   从而把访客与账号串起来。kind 只允许 pv / identify（见 server/api.js）。
+   day 按东八区切（与所有报表口径一致），避免 UTC 跨日把一天拆成两天。 */
+CREATE TABLE IF NOT EXISTS events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts         INTEGER NOT NULL,
+  day        TEXT NOT NULL,
+  kind       TEXT NOT NULL,
+  user_id    TEXT,
+  visitor_id TEXT,
+  product    TEXT,
+  path       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_events_day ON events(day, kind);
+CREATE INDEX IF NOT EXISTS idx_events_visitor ON events(visitor_id, day);
+CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id, day);
 `;
 
 let db = null;

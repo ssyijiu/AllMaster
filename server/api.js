@@ -19,6 +19,7 @@ const path = require('path');
 const dbmod = require('./db');
 const auth = require('./auth');
 const wallet = require('./wallet');
+const stats = require('./stats');
 const storage = require('./storage');
 const { createLocalCloud } = require('./local-cloud');
 
@@ -326,6 +327,54 @@ function handleRedeemPreview(req, res, url) {
   return sendJson(res, 200, wallet.newUserPreview(url.searchParams.get('code'), url.searchParams.get('batch')));
 }
 
+/* ---------- 访问埋点（公开、极轻量） ----------
+ * 只收 kind / vid / product / path；时间与账号由服务端补（Authorization 有就绑）。
+ * **不存 IP、UA、referer**：IP 只用于内存限流，进程重启即清。
+ * 返回 204 永远不带 body —— 埋点失败绝不能影响页面任何交互。 */
+const TRACK_KINDS = { pv: 1, identify: 1 };
+const TRACK_LIMIT = 300;            /* 每 IP 每小时 */
+const TRACK_WINDOW = 3600 * 1000;
+const trackHits = new Map();
+
+function trackOverLimit(ip) {
+  const now = Date.now();
+  if (trackHits.size > 4000) {
+    trackHits.forEach(function (v, k) { if (!v || v.resetAt <= now) { trackHits.delete(k); } });
+  }
+  const cur = trackHits.get(ip);
+  if (!cur || cur.resetAt <= now) {
+    trackHits.set(ip, { n: 1, resetAt: now + TRACK_WINDOW });
+    return false;
+  }
+  cur.n += 1;
+  return cur.n > TRACK_LIMIT;
+}
+
+async function handleTrack(req, res) {
+  if (req.method !== 'POST') {
+    return sendJson(res, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: '仅支持 POST' } });
+  }
+  const done = function () { res.writeHead(204, { 'Cache-Control': 'no-store' }); res.end(); };
+  /* 超限静默丢弃：宁可少记一条，也别给前端制造错误路径 */
+  if (trackOverLimit(clientIp(req))) { return done(); }
+
+  let body = {};
+  try { body = await readJson(req); } catch (_) { return done(); }
+  const kind = String((body && body.kind) || 'pv');
+  const vid = String((body && body.vid) || '').trim();
+  if (!TRACK_KINDS[kind] || !/^[A-Za-z0-9_-]{8,40}$/.test(vid)) { return done(); }
+
+  const product = /^[a-z0-9-]{1,32}$/.test(String((body && body.product) || ''))
+    ? String(body.product) : null;
+  const pagePath = String((body && body.path) || '').slice(0, 120) || null;
+  const user = auth.userFromRequest(req);
+  const now = Date.now();
+  dbmod.db.prepare(
+    'INSERT INTO events (ts, day, kind, user_id, visitor_id, product, path) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(now, stats.dayOf(now), kind, user ? user.id : null, vid, product, pagePath);
+  return done();
+}
+
 /**
  * 统一入口：返回 true 表示已处理。
  * @param {object} ctx 预留（日志等）
@@ -333,6 +382,12 @@ function handleRedeemPreview(req, res, url) {
 async function handle(req, res, ctx) {
   const url = new URL(req.url || '/', 'http://localhost');
   const pathOnly = url.pathname;
+  if (pathOnly === '/api/track') {
+    try { await handleTrack(req, res); } catch (e) {
+      try { res.writeHead(204, { 'Cache-Control': 'no-store' }); res.end(); } catch (_) {}
+    }
+    return true;
+  }
   if (pathOnly === '/api/redeem/preview') {
     try { handleRedeemPreview(req, res, url); } catch (e) {
       sendJson(res, 500, { error: { code: 'INTERNAL', message: (e && e.message) || '服务异常' } });
