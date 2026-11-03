@@ -318,6 +318,18 @@
       animation: rise var(--motion-slow) var(--ease-exit);
     }
     .modal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+    /* 弹窗关闭钮：登录弹窗由平台层注入，样式必须落在共用层（不能依赖某个产品的 CSS） */
+    .btn-close-modal {
+      width: 32px; height: 32px; flex: none;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: none; border-radius: var(--radius-full);
+      background: var(--ink-100); color: var(--muted);
+      font-size: 18px; line-height: 1;
+      cursor: pointer; -webkit-appearance: none; appearance: none;
+      transition: background-color var(--motion-fast) var(--ease-standard),
+                  color var(--motion-fast) var(--ease-standard);
+    }
+    .btn-close-modal:hover { background: var(--border); color: var(--fg); }
     .modal-head h3 { font-size: var(--text-xl); font-weight: var(--weight-announce); }
     .modal-desc {
       margin: var(--space-3) 0 0;

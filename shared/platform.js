@@ -342,6 +342,52 @@
     return node;
   };
 
+  /* =========================================================
+   * 登录弹窗：DOM 只此一份，由平台层注入
+   * 页面（拼豆 / 头像 / 我的）不再各写一份 HTML：结构、文案、
+   * 「同意协议」那行都只在这里改，避免三处漂移（改一处忘两处）。
+   * 注入发生在平台层脚本执行时（defer，DOM 已就绪），早于各产品 app.js，
+   * 所以产品侧 $('loginModal') 照样能取到节点。
+   * ========================================================= */
+  var LOGIN_MODAL_ID = 'loginModal';
+  function ensureLoginModal() {
+    if (!document.body || document.getElementById(LOGIN_MODAL_ID)) { return; }
+    var mask = document.createElement('div');
+    mask.className = 'modal-mask';
+    mask.id = LOGIN_MODAL_ID;
+    mask.innerHTML = [
+      '<div class="modal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">',
+      '  <div class="modal-head">',
+      '    <h3 id="loginTitle">登录</h3>',
+      /* 关闭钮用文字 ×：/my 页没有 svg sprite，图标会空白；样式在 base.css */
+      '    <button class="btn-close-modal" id="btnCloseLogin" type="button" aria-label="关闭登录">×</button>',
+      '  </div>',
+      '  <p class="modal-desc">登录后积分与作品全平台同步，换设备也不丢。不登录也可以先逛逛。</p>',
+      '',
+      '  <span class="group-label">邮箱验证码登录 / 注册</span>',
+      '  <label class="field-label" for="loginEmail">邮箱</label>',
+      '  <div class="phone-row">',
+      '    <input type="email" id="loginEmail" class="text-input mono" maxlength="254"',
+      '           placeholder="you@example.com" autocomplete="email" />',
+      '    <button class="btn secondary small" id="btnSendCode" type="button">获取验证码</button>',
+      '  </div>',
+      '  <p class="field-error" id="errEmail" hidden>请输入正确的邮箱地址</p>',
+      '',
+      '  <label class="field-label" for="loginCode">验证码</label>',
+      '  <input type="text" id="loginCode" class="text-input mono" inputmode="numeric" maxlength="6"',
+      '         placeholder="6 位邮箱验证码" autocomplete="one-time-code" />',
+      '  <p class="field-error" id="errCode" hidden>请输入正确的验证码</p>',
+      '',
+      '  <button class="btn primary big" id="btnPhoneLogin" type="button">登录 / 注册</button>',
+      '  <p class="hint" id="loginMsg"></p>',
+      '  <p class="hint">登录 / 注册即代表同意 <a href="/agreement#terms" target="_blank" rel="noopener">《用户协议》</a> 与 <a href="/agreement#privacy" target="_blank" rel="noopener">《隐私政策》</a></p>',
+      '</div>'
+    ].join('\n');
+    mask.hidden = true;
+    document.body.appendChild(mask);
+  }
+  ensureLoginModal();
+
   Platform.setup = function (ctx) {
     var els = ctx.els;
     /* 登录方式从「手机号」换成「邮箱」：旧页面/旧测试仍传 loginPhone/errPhone，
