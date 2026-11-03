@@ -1224,6 +1224,11 @@ const server = http.createServer((req, res) => {
     req.url = '/shared/my.html' + (fullUrl.search || '');
     return serveStatic(req, res);
   }
+  if (req.method === 'GET' && (pathOnly === '/agreement' || pathOnly === '/agreement/')) {
+    /* 用户协议与隐私政策（登录场景法定必备）：单页两份文档，锚点 #terms / #privacy */
+    req.url = '/agreement.html' + (fullUrl.search || '');
+    return serveStatic(req, res);
+  }
   if (req.method === 'GET' && (pathOnly === '/pixelart' || pathOnly === '/pixelart/')) {
     /* 拼豆大师·经典版（/pixelart）：与主页完全同一套页面与功能，唯一差异是生图后端
        （val-perler.qq.com 经典模型）。页面复用 apps/pixelart/index.html，在此注入

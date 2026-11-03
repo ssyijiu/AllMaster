@@ -296,6 +296,8 @@
        ============================================================ */
     .hint { margin-top: var(--space-3); font-size: var(--text-sm); color: var(--muted); min-height: 20px; line-height: 1.5; }
     .hint.warn { color: var(--warning); }
+    .hint a { color: var(--teal-600); text-decoration: none; }
+    .hint a:hover { text-decoration: underline; }
 
     /* ============================================================
        Section 12: 弹窗（设置 / 大图预览）
