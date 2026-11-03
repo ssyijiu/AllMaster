@@ -114,6 +114,13 @@
 
     .foot { margin-top: 20px; font-size: 12px; color: var(--meta); line-height: 1.8; }
     .foot b { color: var(--ink-500); font-weight: 510; }
+    .since-note {
+      margin: 0 0 14px; padding: 9px 14px;
+      font-size: 12.5px; color: var(--muted); line-height: 1.6;
+      background: var(--ink-50); border: 1px solid var(--ink-100);
+      border-radius: 10px;
+    }
+    .since-note b { color: var(--ink-700); font-weight: 510; }
 
     @media (max-width: 900px) {
       .kpi-grid { grid-template-columns: minmax(0, 1fr); }
@@ -174,6 +181,7 @@
     </section>
 
     <div id="board" hidden>
+      <p class="since-note" id="sinceNote"></p>
       <!-- 三个核心指标 -->
       <section class="kpi-grid">
         <article class="kpi">
@@ -420,18 +428,31 @@
 
       /* ① 转化率 */
       if (f.basis === 'visitor') {
-        setKpi($('k1'), fmtPct(f.rate));
-        $('k1sub').textContent = '新访客 ' + fmtNum(f.visitors) + ' → 首次出图 ' + fmtNum(f.converted);
-        $('k1tag').className = 'tag ' + (f.rate >= 15 ? 'up' : 'warn');
-        $('k1tag').textContent = f.rate === null ? '暂无数据' : (f.rate >= 15 ? '转化正常' : '摩擦力偏大');
-      } else {
+        if (!f.judged) {
+          setKpiNA($('k1'), '观察中');
+          $('k1sub').textContent = fmtNum(f.visitors) + ' 位新访客还没满 7 天，暂时判不了';
+          $('k1tag').className = 'tag warn';
+          $('k1tag').textContent = '7 天后可见';
+        } else {
+          setKpi($('k1'), fmtPct(f.rate));
+          $('k1sub').textContent = '可判定 ' + fmtNum(f.judged) + ' 人 → 首图 ' + fmtNum(f.converted) +
+            (f.pending ? ' · 观察中 ' + fmtNum(f.pending) : '');
+          $('k1tag').className = 'tag ' + (f.rate >= 15 ? 'up' : 'warn');
+          $('k1tag').textContent = f.rate >= 15 ? '转化正常' : '摩擦力偏大';
+        }
+      } else if (f.signups > 0) {
         setKpi($('k1'), fmtPct(f.rate));
         $('k1sub').textContent = '新注册 ' + fmtNum(f.signups) + ' → 首次出图 ' + fmtNum(f.converted);
         $('k1tag').className = 'tag warn';
-        $('k1tag').textContent = '暂按注册口径（埋点未覆盖本窗口）';
+        $('k1tag').textContent = '暂按注册口径（没有访客数据）';
+      } else {
+        setKpiNA($('k1'), '暂无数据');
+        $('k1sub').textContent = '统计起点 ' + d.range.since + ' 起还没有访客';
+        $('k1tag').className = 'tag warn';
+        $('k1tag').textContent = '等待真实流量';
       }
       renderFunnel($('k1funnel'), [
-        { label: f.basis === 'visitor' ? '访客' : '注册', n: f.basis === 'visitor' ? f.visitors : f.signups },
+        { label: f.basis === 'visitor' ? '可判定' : '注册', n: f.basis === 'visitor' ? f.judged : f.signups },
         { label: '首图', n: f.converted }
       ], true);
 
@@ -642,9 +663,10 @@
         rows = [{ label: '注册', n: f.signups }, { label: '首图', n: f.converted }];
       }
       renderFunnel($('bigFunnel'), rows, false);
-      $('funnelNote').textContent = f.note + (f.basis === 'visitor'
-        ? ''
-        : '（新访客数据从访问埋点上线当天开始才有）');
+      $('funnelNote').textContent = f.basis === 'visitor'
+        ? '大漏斗按窗口内全部新访客 ' + f.visitors + ' 人展示；① 的转化率只按其中已满 7 天的 ' +
+          f.judged + ' 人计算，另有 ' + f.pending + ' 人还在观察期。'
+        : f.note + '（访客数据从统计起点 ' + d.range.since + ' 开始累积）';
 
       /* 人均分布 */
       renderDist($('bigDist'), p.distribution, '14px');
@@ -681,10 +703,18 @@
 
       /* 页脚口径 */
       var tr = d.tracking;
+      var ex = tr.excluded || { accounts: 0, emails: [] };
+      $('sinceNote').innerHTML = '<b>数据从 ' + tr.since + ' 起统计。</b>' +
+        '此前为内部试跑数据，不计入任何指标。' +
+        (d.range.truncated
+          ? '本窗口实际覆盖 ' + d.range.days + ' 天（你选的 ' + d.range.requested + ' 天还没攒满）。'
+          : '') +
+        (ex.accounts ? '已排除 ' + ex.accounts + ' 个内部账号。' : '');
       $('footNote').innerHTML = '<b>口径</b>：' + f.note + ' ' + p.note + ' ' + r.note + '<br>' +
-        '<b>数据</b>：生成数据来自订单表（历史可回溯）；访问与注册来自 ' +
-        (tr.since ? ('<b>' + tr.since + '</b> 起上线的埋点') : '即将上线的埋点') +
-        '，当前累计 ' + fmtNum(tr.events) + ' 条访问记录、' + fmtNum(tr.totals.users) + ' 个注册用户、' + fmtNum(tr.totals.orders) + ' 笔生成单。' +
+        '<b>统计起点</b>：<b>' + tr.since + '</b> —— 此前全是内部试跑数据，不计入任何指标' +
+        (ex.accounts ? '；已排除 ' + ex.accounts + ' 个内部账号（' + ex.emails.join('、') + '）' : '') + '。<br>' +
+        '<b>数据</b>：生成来自订单表，访问与注册来自埋点；起点以来累计 ' + fmtNum(tr.events) + ' 条访问记录、' +
+        fmtNum(tr.totals.users) + ' 个注册用户、' + fmtNum(tr.totals.orders) + ' 笔生成单。' +
         '埋点只记录匿名访客标识与页面路径，不记录 IP、设备型号与来源链接。';
     }
 

@@ -9,15 +9,23 @@
  * 口径统一按**东八区自然日**切（与后台其它报表一致），不是 UTC。
  *
  * 数据来源分两类，页面上会标清楚：
- *   - 生成：orders 表（历史可回溯到上线第一天）
+ *   - 生成：orders 表
  *   - 访问/注册：events 表（2026-11-03 起埋点）+ users 表
- * 所以埋点上线前的日期，「打开页面」的分母不存在，转化率会标记 untracked，
- * 绝不拿注册数冒充访客数 —— 那样率会虚高，看板就失去意义了。
+ *
+ * **统计起点（SINCE）**：2026-11-03。这之前的订单、注册、访问全部是内部
+ * 试跑数据，一律不计入任何指标 —— 不是「降级计算」，是直接当不存在。
+ * 窗口起点早于 SINCE 时自动截断到 SINCE，页面标注实际覆盖天数。
+ * 需要重置起点时改环境变量 STATS_SINCE（YYYY-MM-DD），不用动代码。
+ *
+ * **内部账号排除**：默认排除 ADMIN_EMAILS 里的账号（自己的测试号不算真实
+ * 用户）；要单独指定用 STATS_EXCLUDE_EMAILS，设为 - 则不排除任何人。
+ * 排除是**账号级**的：该账号的订单、活跃日不计，它用过的浏览器 visitor_id
+ * 也从访客里剔掉。
  *
  * 定义（避免以后各说各话）：
  *   访客        = 浏览器 localStorage 里的匿名 visitor_id
  *   新访客      = 首次出现落在窗口内的访客
- *   首次出图    = 该用户第一条 status='succeeded' 的订单
+ *   首次出图    = 该用户 SINCE 之后第一条 status='succeeded' 的订单
  *   转化率      = 窗口内新访客中，在首访后 7 日内产生首个成功出图的占比
  *   人均生成张数 = 窗口内成功生成总数 ÷ 窗口内有成功生成的用户数
  *   7 日回访    = 首次活跃日落在窗口内的用户，在第 2~7 天再次活跃（访问或生成）的占比
@@ -27,6 +35,13 @@ const dbmod = require('./db');
 
 const DAY_MS = 86400000;
 const TZ = 8 * 3600 * 1000;
+
+const DEFAULT_SINCE = '2026-11-03';
+
+function sinceDay() {
+  const v = String(process.env.STATS_SINCE || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : DEFAULT_SINCE;
+}
 
 /* 本地日 <-> UTC 毫秒：只用日期字符串做算术，避免夏令时/时区漂移 */
 function dayOf(ms) {
@@ -59,7 +74,19 @@ function pct(a, b) {
 function rangeOf(days) {
   const n = Math.max(1, Math.min(365, Number(days) || 30));
   const to = today();
-  return { from: addDays(to, -(n - 1)), to: to, days: n };
+  const since = sinceDay();
+  const wantFrom = addDays(to, -(n - 1));
+  /* 不早于统计起点：之前的数据是内部试跑，看一眼都算污染 */
+  let from = wantFrom < since ? since : wantFrom;
+  if (from > to) { from = to; }
+  return {
+    from: from,
+    to: to,
+    days: diffDays(from, to) + 1,
+    requested: n,
+    since: since,
+    truncated: from > wantFrom
+  };
 }
 
 /* ---------------- 基础取数 ---------------- */
@@ -71,18 +98,54 @@ function one(sql, params) {
   return dbmod.db.prepare(sql).get.apply(dbmod.db.prepare(sql), params);
 }
 
-function genRows(from, to, product) {
+/* ---------------- 内部账号排除 ---------------- */
+
+function excludedEmails() {
+  const raw = process.env.STATS_EXCLUDE_EMAILS;
+  if (raw === undefined) {
+    /* 没显式配置时，默认把自己的管理员账号当内部账号 */
+    return String(process.env.ADMIN_EMAILS || '')
+      .split(',').map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean);
+  }
+  const v = String(raw).trim();
+  if (v === '-' || v === 'none') { return []; }
+  return v.split(',').map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean);
+}
+
+function excludedUids() {
+  const emails = excludedEmails();
+  if (!emails.length) { return []; }
+  const holes = emails.map(function () { return '?'; }).join(',');
+  return allRows('SELECT id FROM users WHERE lower(email) IN (' + holes + ')', emails)
+    .map(function (r) { return r.id; });
+}
+
+/* 拼 "AND col NOT IN (?,?,...)" 与对应参数，空名单时返回空串 */
+function notIn(col, ids) {
+  if (!ids.length) { return { sql: '', params: [] }; }
+  return {
+    sql: ' AND ' + col + ' NOT IN (' + ids.map(function () { return '?'; }).join(',') + ')',
+    params: ids.slice()
+  };
+}
+
+function genRows(from, to, product, ex) {
+  const ni = notIn('user_id', ex || []);
   const sql = 'SELECT user_id AS uid, ' + dayExpr('created_at') + ' AS day, product, status, created_at ' +
     "FROM orders WHERE status = 'succeeded' AND " + dayExpr('created_at') + ' >= ? AND ' + dayExpr('created_at') + ' <= ?' +
-    (product ? ' AND product = ?' : '');
-  const params = product ? [from, to, product] : [from, to];
+    (product ? ' AND product = ?' : '') + ni.sql;
+  const params = (product ? [from, to, product] : [from, to]).concat(ni.params);
   return allRows(sql, params);
 }
 
-function firstGenByUser(product) {
-  const sql = "SELECT user_id AS uid, MIN(created_at) AS ms FROM orders WHERE status = 'succeeded'" +
-    (product ? ' AND product = ?' : '') + ' GROUP BY user_id';
-  const rows = product ? allRows(sql, [product]) : allRows(sql, []);
+/* 首次出图只在 SINCE 之后找：更早的订单是内部试跑，不算「首次」 */
+function firstGenByUser(product, ex) {
+  const ni = notIn('user_id', ex || []);
+  const sql = "SELECT user_id AS uid, MIN(created_at) AS ms FROM orders WHERE status = 'succeeded' AND " +
+    dayExpr('created_at') + ' >= ?' + (product ? ' AND product = ?' : '') + ni.sql +
+    ' GROUP BY user_id';
+  const params = (product ? [sinceDay(), product] : [sinceDay()]).concat(ni.params);
+  const rows = allRows(sql, params);
   const m = new Map();
   rows.forEach(function (r) { m.set(r.uid, dayOf(r.ms)); });
   return m;
@@ -109,40 +172,49 @@ function firstPvByVisitor(product) {
 
 /* ---------------- 指标 ① 打开页面 → 首次出图 ---------------- */
 
-function funnelMeta(range, product) {
+function funnelMeta(range, product, ex) {
+  const exSet = new Set(ex || []);
   const visitors = firstPvByVisitor(product);
   const vmap = visitorUsers();
-  const firstGen = firstGenByUser(product);
+  const firstGen = firstGenByUser(product, ex);
 
-  let newVisitors = 0;      /* 首访落在窗口内的访客 */
+  let newVisitors = 0;      /* 首访落在窗口内的访客（已剔除内部账号的浏览器） */
   let converted = 0;        /* 其中首访后 7 日内首次出图的 */
+  let matured = 0;          /* 观察期满、确认没转化的 */
+  let pending = 0;          /* 首访还不满 7 天，暂时判不了 */
   const newVisitorVids = [];
   visitors.forEach(function (day, vid) {
+    const owner = vmap.get(vid);
+    if (owner && exSet.has(owner)) { return; }
     if (day >= range.from && day <= range.to) {
       newVisitors += 1;
       newVisitorVids.push(vid);
     }
   });
   newVisitorVids.forEach(function (vid) {
+    const firstVisit = visitors.get(vid);
     const uid = vmap.get(vid);
     const g = uid ? firstGen.get(uid) : null;
-    if (!g) { return; }
-    const firstVisit = visitors.get(vid);
-    if (g >= firstVisit && diffDays(firstVisit, g) <= 7) { converted += 1; }
+    const hit = !!g && g >= firstVisit && diffDays(firstVisit, g) <= 7;
+    if (hit) { converted += 1; return; }
+    /* 没转化：观察期满才算真流失，不满 7 天的挂起，免得拉低转化率 */
+    if (diffDays(firstVisit, today()) < 7) { pending += 1; }
+    else { matured += 1; }
   });
+  const judged = converted + matured;
 
+  const niU = notIn('id', ex || []);
   const signups = one(
-    'SELECT COUNT(*) AS n FROM (SELECT ' + dayExpr('created_at') + ' AS day FROM users) WHERE day >= ? AND day <= ?',
-    [range.from, range.to]
+    'SELECT COUNT(*) AS n FROM (SELECT ' + dayExpr('created_at') + ' AS day, id FROM users) ' +
+    'WHERE day >= ? AND day <= ?' + niU.sql,
+    [range.from, range.to].concat(niU.params)
   ).n;
 
-  /* 窗口内首次出图的用户数（账号口径，历史可回溯） */
+  /* 窗口内首次出图的用户数（账号口径） */
   let firstGenUsers = 0;
   firstGen.forEach(function (day) {
     if (day >= range.from && day <= range.to) { firstGenUsers += 1; }
   });
-
-  const tracked = one("SELECT MIN(day) AS d, COUNT(*) AS n FROM events", []);
 
   /* 有访问数据 → 访客口径；没有 → 退回「注册 → 首图」，并明确标注 */
   if (newVisitors > 0) {
@@ -150,31 +222,37 @@ function funnelMeta(range, product) {
       basis: 'visitor',
       label: '新访客 → 首次出图',
       visitors: newVisitors,
+      judged: judged,
+      pending: pending,
       signups: signups,
       firstGen: firstGenUsers,
       converted: converted,
-      rate: pct(converted, newVisitors),
-      note: '分母是窗口内首次出现的匿名访客；分子是其中首访后 7 日内完成首次出图的访客。'
+      rate: pct(converted, judged),
+      note: '分母是窗口内首次出现的匿名访客；分子是其中首访后 7 日内完成首次出图的访客。' +
+        '首访不满 7 天的先挂起（观察中），不进分母。'
     };
   }
   return {
     basis: 'signup',
     label: '新注册 → 首次出图',
     visitors: 0,
+    judged: 0,
+    pending: 0,
     signups: signups,
     firstGen: firstGenUsers,
     converted: Math.min(firstGenUsers, signups),
     rate: pct(Math.min(firstGenUsers, signups), signups),
-    note: tracked && tracked.n
-      ? '本窗口没有访问数据（埋点覆盖不到），暂按「新注册 → 首次出图」计算。'
-      : '访问埋点刚刚上线，还没有数据；暂按「新注册 → 首次出图」计算。'
+    note: (range.truncated
+      ? '统计起点 ' + sinceDay() + ' 起还没有访客数据，'
+      : '本窗口没有访问数据（埋点未覆盖），') +
+      '暂按「新注册 → 首次出图」计算。'
   };
 }
 
 /* ---------------- 指标 ② 人均生成张数 ---------------- */
 
-function perUserMeta(range, product) {
-  const gens = genRows(range.from, range.to, product);
+function perUserMeta(range, product, ex) {
+  const gens = genRows(range.from, range.to, product, ex);
   const byUser = new Map();
   gens.forEach(function (r) { byUser.set(r.uid, (byUser.get(r.uid) || 0) + 1); });
 
@@ -193,9 +271,11 @@ function perUserMeta(range, product) {
 
   const total = gens.length;
   const users = byUser.size;
+  const niU = notIn('id', ex || []);
   const signups = one(
-    'SELECT COUNT(*) AS n FROM (SELECT ' + dayExpr('created_at') + ' AS day FROM users) WHERE day >= ? AND day <= ?',
-    [range.from, range.to]
+    'SELECT COUNT(*) AS n FROM (SELECT ' + dayExpr('created_at') + ' AS day, id FROM users) ' +
+    'WHERE day >= ? AND day <= ?' + niU.sql,
+    [range.from, range.to].concat(niU.params)
   ).n;
 
   let byProduct = [];
@@ -226,14 +306,19 @@ function perUserMeta(range, product) {
 
 /* ---------------- 指标 ③ 7 日内二次回访 ---------------- */
 
-/* 每个用户的活跃日：访问（events 带 user_id）∪ 任意下单（含失败，用了就算活跃） */
-function activityDays(product) {
-  const evSql = "SELECT user_id AS uid, day FROM events WHERE user_id IS NOT NULL" +
-    (product ? ' AND (product = ? OR product IS NULL)' : '');
-  const odSql = 'SELECT user_id AS uid, ' + dayExpr('created_at') + ' AS day FROM orders' +
-    (product ? ' WHERE product = ?' : '');
-  const sql = evSql + ' UNION ' + odSql;
-  const rows = product ? allRows(sql, [product, product]) : allRows(sql, []);
+/* 每个用户的活跃日：访问（events 带 user_id）∪ 任意下单（含失败，用了就算活跃）。
+   只取 SINCE 之后：更早的活动是内部试跑，会把「首次活跃日」拖到 10 月，
+   凭空造出一条本不存在的队列。 */
+function activityDays(product, ex) {
+  const ni = notIn('user_id', ex || []);
+  const since = sinceDay();
+  const evSql = "SELECT user_id AS uid, day FROM events WHERE user_id IS NOT NULL AND day >= ?" +
+    (product ? ' AND (product = ? OR product IS NULL)' : '') + ni.sql;
+  const odSql = 'SELECT user_id AS uid, ' + dayExpr('created_at') + ' AS day FROM orders WHERE ' +
+    dayExpr('created_at') + ' >= ?' + (product ? ' AND product = ?' : '') + ni.sql;
+  const evParams = [since].concat(product ? [product] : []).concat(ni.params);
+  const odParams = [since].concat(product ? [product] : []).concat(ni.params);
+  const rows = allRows(evSql + ' UNION ' + odSql, evParams.concat(odParams));
   const m = new Map();   /* uid -> Set(day) */
   rows.forEach(function (r) {
     if (!r.uid) { return; }
@@ -243,8 +328,8 @@ function activityDays(product) {
   return m;
 }
 
-function retentionMeta(range, product) {
-  const act = activityDays(product);
+function retentionMeta(range, product, ex) {
+  const act = activityDays(product, ex);
   const cohorts = new Map();   /* day -> {size, returned} */
   let total = 0;
   let returned = 0;
@@ -285,32 +370,45 @@ function retentionMeta(range, product) {
 
 /* ---------------- 趋势 ---------------- */
 
-function trendMeta(range, product) {
-  const pvSql = product
-    ? "SELECT day, COUNT(*) AS hits, COUNT(DISTINCT visitor_id) AS visitors FROM events WHERE kind = 'pv' AND day >= ? AND day <= ? AND (product = ? OR product IS NULL) GROUP BY day"
-    : "SELECT day, COUNT(*) AS hits, COUNT(DISTINCT visitor_id) AS visitors FROM events WHERE kind = 'pv' AND day >= ? AND day <= ? GROUP BY day";
+function trendMeta(range, product, ex) {
+  /* 内部账号用过的浏览器也算内部：把它们的 visitor_id 从访问量里剔掉 */
+  const exSet = new Set(ex || []);
+  const badVids = [];
+  if (exSet.size) {
+    visitorUsers().forEach(function (uid, vid) {
+      if (exSet.has(uid)) { badVids.push(vid); }
+    });
+  }
+  const niV = notIn('visitor_id', badVids);
+
+  const pvSql = "SELECT day, COUNT(*) AS hits, COUNT(DISTINCT visitor_id) AS visitors FROM events " +
+    "WHERE kind = 'pv' AND day >= ? AND day <= ?" +
+    (product ? ' AND (product = ? OR product IS NULL)' : '') + niV.sql + ' GROUP BY day';
   const pv = new Map();
-  (product ? allRows(pvSql, [range.from, range.to, product]) : allRows(pvSql, [range.from, range.to]))
+  allRows(pvSql, (product ? [range.from, range.to, product] : [range.from, range.to]).concat(niV.params))
     .forEach(function (r) { pv.set(r.day, r); });
 
   const su = new Map();
+  const niU = notIn('id', ex || []);
   allRows(
-    'SELECT day, COUNT(*) AS n FROM (SELECT ' + dayExpr('created_at') + ' AS day FROM users) WHERE day >= ? AND day <= ? GROUP BY day',
-    [range.from, range.to]
+    'SELECT day, COUNT(*) AS n FROM (SELECT ' + dayExpr('created_at') + ' AS day, id FROM users) ' +
+    'WHERE day >= ? AND day <= ?' + niU.sql + ' GROUP BY day',
+    [range.from, range.to].concat(niU.params)
   ).forEach(function (r) { su.set(r.day, r.n); });
 
   const ge = new Map();
-  genRows(range.from, range.to, product).forEach(function (r) {
+  genRows(range.from, range.to, product, ex).forEach(function (r) {
     ge.set(r.day, (ge.get(r.day) || 0) + 1);
   });
 
+  const niA = notIn('uid', ex || []);
   const actSql = 'SELECT day, COUNT(DISTINCT uid) AS n FROM (' +
     "SELECT day, user_id AS uid FROM events WHERE user_id IS NOT NULL AND day >= ? AND day <= ?" +
     ' UNION ' +
     'SELECT ' + dayExpr('created_at') + ' AS day, user_id AS uid FROM orders WHERE ' + dayExpr('created_at') + ' >= ? AND ' + dayExpr('created_at') + ' <= ?' +
-    ') GROUP BY day';
+    ') WHERE 1 = 1' + niA.sql + ' GROUP BY day';
   const au = new Map();
-  allRows(actSql, [range.from, range.to, range.from, range.to])
+  allRows(actSql, [range.from, range.to, range.from, range.to].concat(niA.params))
     .forEach(function (r) { au.set(r.day, r.n); });
 
   const out = [];
@@ -335,16 +433,18 @@ function overview(opts) {
   const o = opts || {};
   const range = rangeOf(o.days);
   const product = o.product && o.product !== 'all' ? String(o.product) : '';
+  const ex = excludedUids();
 
-  const funnel = funnelMeta(range, product);
-  const perUser = perUserMeta(range, product);
-  const retention = retentionMeta(range, product);
-  const trend = trendMeta(range, product);
+  const funnel = funnelMeta(range, product, ex);
+  const perUser = perUserMeta(range, product, ex);
+  const retention = retentionMeta(range, product, ex);
+  const trend = trendMeta(range, product, ex);
 
-  const since = one("SELECT MIN(day) AS d FROM events", []);
+  /* 页脚的量也按统计起点算，免得「累计 193 单」这种历史数字混进来 */
   const totals = one(
-    'SELECT (SELECT COUNT(*) FROM users) AS users, (SELECT COUNT(*) FROM orders) AS orders, ' +
-    '(SELECT COUNT(*) FROM events) AS events', []);
+    'SELECT (SELECT COUNT(*) FROM users WHERE ' + dayExpr('created_at') + ' >= ?) AS users, ' +
+    '(SELECT COUNT(*) FROM orders WHERE ' + dayExpr('created_at') + ' >= ?) AS orders, ' +
+    '(SELECT COUNT(*) FROM events WHERE day >= ?) AS events', [range.since, range.since, range.since]);
 
   return {
     range: range,
@@ -354,9 +454,10 @@ function overview(opts) {
     retention: retention,
     trend: trend,
     tracking: {
-      since: since && since.d ? since.d : null,
+      since: range.since,
       events: totals.events,
-      totals: { users: totals.users, orders: totals.orders }
+      totals: { users: totals.users, orders: totals.orders },
+      excluded: { accounts: ex.length, emails: excludedEmails() }
     },
     generatedAt: Date.now()
   };
