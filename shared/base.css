@@ -539,3 +539,27 @@
       }
       .pf-toast { padding: 10px 12px; font-size: var(--text-sm); }
     }
+
+    /* 新用户福利小条：底部居中，只给游客看（登录后由 renderAuthUI 隐藏）。
+       点整条打开登录框，× 可关掉并记入 sessionStorage（本会话不再出现）。 */
+    .pf-newuser {
+      position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+      z-index: 88; display: flex; align-items: center; gap: 10px;
+      max-width: min(92vw, 480px); padding: 10px 12px 10px 16px;
+      border-radius: 999px;
+      background: var(--surface); color: var(--fg);
+      border: 1px solid var(--success-border);
+      box-shadow: 0 8px 24px rgba(28, 28, 30, .12);
+      font-size: var(--text-sm); line-height: 1.4;
+      cursor: pointer; user-select: none;
+    }
+    .pf-newuser[hidden] { display: none; }
+    .pf-newuser-text { min-width: 0; }
+    .pf-newuser-close {
+      flex: none; width: 22px; height: 22px; padding: 0;
+      border: none; background: none; cursor: pointer;
+      border-radius: 50%; color: var(--fg-2);
+      font-size: 15px; line-height: 1;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .pf-newuser-close:hover { background: rgba(0, 0, 0, .06); color: var(--fg); }

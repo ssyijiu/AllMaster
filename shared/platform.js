@@ -261,7 +261,7 @@
     '        <svg class="icon icon-16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4 L12 12 M12 4 L4 12"/></svg>',
     '      </button>',
     '    </div>',
-    '    <p class="modal-desc">积分全平台通用：1 积分 = 生成 1 次；生成失败自动退回；新用户有 2 次免费体验。</p>',
+    '    <p class="modal-desc">积分全平台通用：1 积分 = 生成 1 次；生成失败自动退回；新用户注册即送 2 积分。</p>',
     '    <p class="wallet-balance">',
     '      <span class="wb-label">当前余额</span>',
     '      <span class="wb-num"><b id="walletBalanceBig">–</b>积分</span>',
@@ -393,6 +393,8 @@
       /* 首页不再放「退出」按钮（两个产品页已删），/my 顶栏保留；
          这里按节点是否存在决定，缺了不影响其它按钮渲染。 */
       if (els.btnSignOut) { els.btnSignOut.hidden = !user; }
+      /* 新用户福利小条：只给游客看，登录即消失 */
+      renderNewUserHint();
       var chip = els.userChip;
       if (!chip) { return; }
       if (chip.tagName === 'A') {
@@ -889,7 +891,11 @@
         if (!linkRedeem.prompted && els.loginModal) {
           linkRedeem.prompted = true;
           openLogin();
-          showLoginMsg('登录后将自动为你领取链接里的积分', false);
+          /* 面值若已从预览接口拿到就一并说，转化更直接；没拿到就维持原话 */
+          var hintMsg = newUserHint.loaded && newUserHint.credits > 0 && newUserHint.source !== 'welcome'
+            ? '登录后将自动为你领取 ' + newUserHint.credits + ' 积分'
+            : '登录后将自动为你领取链接里的积分';
+          showLoginMsg(hintMsg, false);
         }
         return Promise.resolve();
       }
@@ -1219,9 +1225,104 @@
       });
     }
 
+    /* =========================================================
+     * 新用户福利提示：注册前就告诉访客「本次注册能拿几分」
+     * ---------------------------------------------------------
+     * 金额在注册前就确定：带 ?code=/?batch= 的链接看面值（服务端
+     * /api/redeem/preview 按领取时同口径选码），什么都没带看见面礼。
+     * 三处可见：
+     *   ① 游客常驻小条（底部居中，可关，sessionStorage 记住本次会话）；
+     *   ② 登录弹窗副标题；
+     *   ③ 带链接未登录时，自动弹出的登录框提示带上面值。
+     * 登录后小条自动消失（renderAuthUI 统一管）。
+     * ========================================================= */
+    var newUserHint = { credits: 0, source: '', loaded: false };
+    var NEWUSER_DISMISS_KEY = 'platform.newUserHintDismissed';
+
+    function newUserHintText() {
+      if (!newUserHint.loaded || !(newUserHint.credits > 0)) { return ''; }
+      var verb = newUserHint.source === 'welcome' ? '注册即送' : '注册即领';
+      return verb + ' ' + newUserHint.credits + ' 积分（1 积分 = 免费生成 1 次）';
+    }
+
+    function ensureNewUserPill() {
+      if (!document.body || document.getElementById('pfNewUserHint')) { return; }
+      var pill = document.createElement('div');
+      pill.id = 'pfNewUserHint';
+      pill.className = 'pf-newuser';
+      pill.hidden = true;
+      pill.setAttribute('role', 'note');
+      var text = document.createElement('span');
+      text.className = 'pf-newuser-text';
+      var close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'pf-newuser-close';
+      close.setAttribute('aria-label', '关闭新用户提示');
+      close.textContent = '×';
+      close.addEventListener('click', function (e) {
+        e.stopPropagation();
+        try { sessionStorage.setItem(NEWUSER_DISMISS_KEY, '1'); } catch (_) {}
+        pill.hidden = true;
+      });
+      /* 点小条直接打开登录框：福利提示本来的目的就是转化 */
+      pill.addEventListener('click', function () {
+        if (!Store.state.user && els.loginModal) { openLogin(); }
+      });
+      pill.appendChild(text);
+      pill.appendChild(close);
+      document.body.appendChild(pill);
+    }
+
+    function renderNewUserHint() {
+      var text = newUserHintText();
+      /* 登录弹窗副标题：三页共用一段 HTML，动态改这里不用动每个页面 */
+      if (els.loginModal) {
+        var desc = els.loginModal.querySelector('.modal-desc');
+        if (desc && text) {
+          desc.textContent = '新用户' + text + '，积分全平台通用。不登录也可以先逛逛。';
+        }
+      }
+      /* 面值比自动弹窗晚到是常态（预览接口要过一个往返）：弹窗还开着、
+         且仍显示兜底话时，把「领取链接里的积分」升级成具体数字 */
+      if (text && newUserHint.source !== 'welcome' && !Store.state.user &&
+          linkRedeem.prompted && els.loginModal && !els.loginModal.hidden &&
+          /领取链接里的积分/.test(els.loginMsg.textContent)) {
+        showLoginMsg('登录后将自动为你领取 ' + newUserHint.credits + ' 积分', false);
+      }
+      var pill = document.getElementById('pfNewUserHint');
+      if (!pill) { return; }
+      var dismissed = false;
+      try { dismissed = !!sessionStorage.getItem(NEWUSER_DISMISS_KEY); } catch (_) {}
+      pill.hidden = !text || dismissed || !!Store.state.user;
+      if (text) { pill.querySelector('.pf-newuser-text').textContent = text; }
+    }
+
+    function loadNewUserHint() {
+      if (newUserHint.loaded) { return Promise.resolve(); }
+      /* 守卫：个别极简环境（老测试 / 被裁剪的 webview）没有 fetch，跳过即可 */
+      if (typeof fetch !== 'function') { newUserHint.loaded = true; renderNewUserHint(); return Promise.resolve(); }
+      var qs = '';
+      pendingClaims().forEach(function (c) {
+        qs += (qs ? '&' : '') + c.type + '=' + encodeURIComponent(c.value);
+      });
+      return fetch('/api/redeem/preview' + (qs ? '?' + qs : ''))
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d && typeof d.credits === 'number' && d.credits > 0) {
+            newUserHint = { credits: d.credits, source: d.source || 'welcome', loaded: true };
+          } else {
+            newUserHint.loaded = true;   /* 拿不到就不显示，别拿错误数字骗人 */
+          }
+        })
+        .catch(function () { newUserHint.loaded = true; })
+        .then(renderNewUserHint);
+    }
+
     /* 页面一加载就把链接里的兑换码收进 sessionStorage 并从地址栏抹掉：
        必须先于产品页的 restoreAuth()（那里会看 URL 上有没有 code 判 OAuth 回跳）。 */
     captureRedeemLink();
+    ensureNewUserPill();
+    loadNewUserHint();
 
     return {
       applySession: applySession,

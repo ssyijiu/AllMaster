@@ -318,6 +318,14 @@ function handleFiles(req, res, pathOnly, url) {
   fs.createReadStream(file).pipe(res);
 }
 
+/* ---------- 新用户福利预览（公开只读）：注册前告诉访客注册送几分 ---------- */
+function handleRedeemPreview(req, res, url) {
+  if (req.method !== 'GET') {
+    return sendJson(res, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: '仅支持 GET' } });
+  }
+  return sendJson(res, 200, wallet.newUserPreview(url.searchParams.get('code'), url.searchParams.get('batch')));
+}
+
 /**
  * 统一入口：返回 true 表示已处理。
  * @param {object} ctx 预留（日志等）
@@ -325,6 +333,12 @@ function handleFiles(req, res, pathOnly, url) {
 async function handle(req, res, ctx) {
   const url = new URL(req.url || '/', 'http://localhost');
   const pathOnly = url.pathname;
+  if (pathOnly === '/api/redeem/preview') {
+    try { handleRedeemPreview(req, res, url); } catch (e) {
+      sendJson(res, 500, { error: { code: 'INTERNAL', message: (e && e.message) || '服务异常' } });
+    }
+    return true;
+  }
   if (pathOnly.indexOf('/api/auth/') === 0) {
     try { await handleAuth(req, res, pathOnly); } catch (e) {
       sendJson(res, 500, { error: { code: 'INTERNAL', message: (e && e.message) || '服务异常' } });

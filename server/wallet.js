@@ -346,6 +346,28 @@ function welcomeAvailable(userId) {
   return !seen;
 }
 
+/* 注册福利预览：注册前就告诉访客「本次注册能拿几分」。
+ * 金额在注册前就确定——带码/批次看面值，什么都没带看见面礼。
+ * 只读、不鉴权；**不透露码的可用状态**（已用/过期的码照回面值，有效性由领取时判），
+ * 查不到或名额领完一律回落见面礼，与「领取失败 → 兜底见面礼」的实际行为一致。 */
+function newUserPreview(code, batch) {
+  const c = String(code || '').trim().toUpperCase();
+  const b = String(batch || '').trim().toUpperCase();
+  if (c) {
+    const row = dbmod.db.prepare('SELECT credits FROM redeem_codes WHERE code = ?').get(c);
+    if (row) { return { credits: Number(row.credits) || 0, source: 'code' }; }
+  }
+  if (b && b !== WELCOME_BATCH) {
+    /* 与 redeemBatchCore 的选码同口径：一张还能领的码的面值就是这批的面值 */
+    const row = dbmod.db.prepare(
+      'SELECT credits FROM redeem_codes WHERE batch = ? AND used_by IS NULL ' +
+      'AND (expires_at IS NULL OR expires_at >= ?) ORDER BY code LIMIT 1'
+    ).get(b, dbmod.nowMs());
+    if (row) { return { credits: Number(row.credits) || 0, source: 'batch' }; }
+  }
+  return { credits: WELCOME_CREDITS, source: 'welcome' };
+}
+
 /* 支付入账：ref = 支付单号，重放幂等（返回 duplicated 供回调判断） */
 function payCredit(userId, credits, ref, memo) {
   const amount = Number(credits) || 0;
@@ -406,6 +428,7 @@ module.exports = {
   redeemBatch,
   claimWelcome,
   welcomeAvailable,
+  newUserPreview,
   payCredit,
   grant,
   listTxns,

@@ -1195,6 +1195,7 @@ const server = http.createServer((req, res) => {
   /* 自建服务（登录 / 账本 / 存储 / RPC）：取代 /.cloud 云端依赖 */
   if (pathOnly.indexOf('/api/auth/') === 0 ||
       pathOnly === '/api/db/query' ||
+      pathOnly === '/api/redeem/preview' ||
       pathOnly.indexOf('/api/rpc/') === 0 ||
       pathOnly.indexOf('/api/storage/') === 0 ||
       pathOnly.indexOf('/files/') === 0) {
