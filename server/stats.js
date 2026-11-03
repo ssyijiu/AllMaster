@@ -2,7 +2,7 @@
 /**
  * 数据看板（管理员）—— 三个核心观测指标
  * ---------------------------------------------------------------
- * ① 打开页面 → 首次出图 转化率：反映登录、上传环节的摩擦力
+ * ① 7 日转化率（打开页面 → 首次出图）：反映登录、上传环节的摩擦力
  * ② 人均生成张数：反映图纸质量（好就会多转几张试试）
  * ③ 7 日内二次回访率：决定这是「一次性玩具」还是「工具」
  *
@@ -220,7 +220,7 @@ function firstPvByVisitor(product, fromMs) {
   return m;
 }
 
-/* ---------------- 指标 ① 打开页面 → 首次出图 ---------------- */
+/* ---------------- 指标 ① 7 日转化率（打开页面 → 首次出图） ---------------- */
 
 function funnelMeta(range, product, ex) {
   const badVids = new Set(excludedVids(ex));
@@ -269,7 +269,7 @@ function funnelMeta(range, product, ex) {
   if (newVisitors > 0) {
     return {
       basis: 'visitor',
-      label: '新访客 → 首次出图',
+      label: '新访客 7 日转化',
       visitors: newVisitors,
       judged: judged,
       pending: pending,
@@ -277,8 +277,8 @@ function funnelMeta(range, product, ex) {
       firstGen: firstGenUsers,
       converted: converted,
       rate: pct(converted, judged),
-      note: '分母是窗口内首次出现的匿名访客；分子是其中首访后 7 日内完成首次出图的访客。' +
-        '出图即刻计入（当天首访当天出图也算）；只有「不满 7 天且还没出图」的人才进观察中、暂不进分母。'
+      note: '7 日转化率：分母是窗口内首次出现的匿名访客，分子是其中首访后 7 日内（含当天）完成首次出图的。' +
+        '出图即刻计入；只有「不满 7 天且还没出图」的人才进观察中、暂不进分母。'
     };
   }
   return {
