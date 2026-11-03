@@ -17,15 +17,19 @@
  * 窗口起点早于 SINCE 时自动截断到 SINCE，页面标注实际覆盖天数。
  * 需要重置起点时改环境变量 STATS_SINCE（YYYY-MM-DD），不用动代码。
  *
- * **内部账号排除**：两种口径叠加。
- *   ① 快照时点 SNAPSHOT（默认 2026-11-03 16:30）：该时点**之前注册**的账号
+ * **内部账号排除**：三种口径叠加。
+ *   ① 快照时点 SNAPSHOT（默认 2026-11-03 15:45）：该时点**之前注册**的账号
  *      一律视为内部测试号。产品还没有真实用户，早期账号全是自己试跑；
  *      用「时点」而不是「邮箱清单」，省得每加一个测试号就改一次配置，
  *      也不会漏掉没进 ADMIN_EMAILS 的号。此后注册的账号正常统计。
  *   ② ADMIN_EMAILS 里的账号（管理员自己）：无论什么时候注册都排除。
+ *   ③ 白名单 KEEP_EMAILS：真实用户，**即使注册在快照之前也不排除**。
+ *      2026-11-03 那位真实用户 14:43 注册，比定稿的快照还早，靠这条保住；
+ *      他的访问记录同样不受快照时间切割（否则账号留着、数据全空）。
  * 排除是**账号级**的：该账号的订单、活跃日不计，它用过的浏览器 visitor_id
  * 也从访客里剔掉。环境变量：STATS_SNAPSHOT 调时点（ISO 时间，- 关闭），
- * STATS_EXCLUDE_EMAILS 追加邮箱（- 关闭邮箱那一路）。
+ * STATS_EXCLUDE_EMAILS 追加邮箱（- 关闭邮箱那一路），
+ * STATS_KEEP_EMAILS 白名单（逗号分隔，- 关闭）。
  *
  * 定义（避免以后各说各话）：
  *   访客        = 浏览器 localStorage 里的匿名 visitor_id
@@ -142,6 +146,34 @@ function excludedEmails() {
   return v.split(',').map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean);
 }
 
+/* 真实用户白名单（STATS_KEEP_EMAILS）：快照是「内部测试期截止」这个时间口径，
+   但真实用户可能恰好在截止之前注册（2026-11-03 那位就是 14:43 注册、当时还没定稿）。
+   这类账号列进白名单后，既不算内部账号，它的访问记录也不受快照时间切割。 */
+function keepEmails() {
+  const v = String(process.env.STATS_KEEP_EMAILS || '').trim();
+  if (!v || v === '-' || v === 'none') { return []; }
+  return v.split(',').map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean);
+}
+
+function keepUids() {
+  const emails = keepEmails();
+  if (!emails.length) { return []; }
+  const holes = emails.map(function () { return '?'; }).join(',');
+  return allRows('SELECT id FROM users WHERE lower(email) IN (' + holes + ')', emails)
+    .map(function (r) { return r.id; });
+}
+
+/* 「快照之后」条件。白名单账号的历史记录要放行，否则真实用户会被当成
+   内部测试期数据整段切掉（账号保留、访问和活跃却没了，指标全是空的）。 */
+function cutCond(col) {
+  const keep = keepUids();
+  if (!keep.length) { return { sql: col + ' >= ?', params: [cutoffMs()] }; }
+  return {
+    sql: '(' + col + ' >= ? OR user_id IN (' + keep.map(function () { return '?'; }).join(',') + '))',
+    params: [cutoffMs()].concat(keep)
+  };
+}
+
 function excludedUids() {
   const ids = new Set();
   const emails = excludedEmails();
@@ -155,7 +187,9 @@ function excludedUids() {
     allRows('SELECT id FROM users WHERE created_at < ?', [snap])
       .forEach(function (r) { ids.add(r.id); });
   }
-  return Array.from(ids);
+  /* 白名单优先：真实用户即便注册在快照之前也不排除 */
+  const keep = new Set(keepUids());
+  return Array.from(ids).filter(function (id) { return !keep.has(id); });
 }
 
 /* 内部账号用过的浏览器：这些 visitor_id 的访问也不算真实流量 */
@@ -210,10 +244,11 @@ function visitorUsers() {
   return m;
 }
 
-function firstPvByVisitor(product, fromMs) {
+function firstPvByVisitor(product) {
+  const cut = cutCond('ts');
   const sql = "SELECT visitor_id AS vid, MIN(day) AS day FROM events WHERE kind = 'pv' AND visitor_id IS NOT NULL" +
-    ' AND ts >= ?' + (product ? ' AND (product = ? OR product IS NULL)' : '') + ' GROUP BY visitor_id';
-  const params = product ? [fromMs, product] : [fromMs];
+    ' AND ' + cut.sql + (product ? ' AND (product = ? OR product IS NULL)' : '') + ' GROUP BY visitor_id';
+  const params = product ? cut.params.concat([product]) : cut.params;
   const rows = allRows(sql, params);
   const m = new Map();
   rows.forEach(function (r) { m.set(r.vid, r.day); });
@@ -261,7 +296,7 @@ function funnelStepsOf(range, product, vids, firstPv, genVids) {
 
 function funnelMeta(range, product, ex) {
   const badVids = new Set(excludedVids(ex));
-  const visitors = firstPvByVisitor(product, cutoffMs());
+  const visitors = firstPvByVisitor(product);
   const vmap = visitorUsers();
   const firstGen = firstGenByUser(product, ex);
 
@@ -401,11 +436,12 @@ function perUserMeta(range, product, ex) {
 function activityDays(product, ex) {
   const ni = notIn('user_id', ex || []);
   const since = sinceDay();
-  const evSql = "SELECT user_id AS uid, day FROM events WHERE user_id IS NOT NULL AND day >= ? AND ts >= ?" +
+  const cut = cutCond('ts');
+  const evSql = "SELECT user_id AS uid, day FROM events WHERE user_id IS NOT NULL AND day >= ? AND " + cut.sql +
     (product ? ' AND (product = ? OR product IS NULL)' : '') + ni.sql;
   const odSql = 'SELECT user_id AS uid, ' + dayExpr('created_at') + ' AS day FROM orders WHERE ' +
     dayExpr('created_at') + ' >= ?' + (product ? ' AND product = ?' : '') + ni.sql;
-  const evParams = [since, cutoffMs()].concat(product ? [product] : []).concat(ni.params);
+  const evParams = [since].concat(cut.params).concat(product ? [product] : []).concat(ni.params);
   const odParams = [since].concat(product ? [product] : []).concat(ni.params);
   const rows = allRows(evSql + ' UNION ' + odSql, evParams.concat(odParams));
   const m = new Map();   /* uid -> Set(day) */
@@ -443,7 +479,8 @@ function retentionMeta(range, product, ex) {
   });
 
   const list = Array.from(cohorts.values()).sort(function (a, b) { return (a.day < b.day ? 1 : -1); });
-  const tracked = one('SELECT MIN(day) AS d FROM events WHERE ts >= ?', [cutoffMs()]);
+  const cutT = cutCond('ts');
+  const tracked = one('SELECT MIN(day) AS d FROM events WHERE ' + cutT.sql, cutT.params);
   const since = tracked && tracked.d;
 
   return {
@@ -463,11 +500,12 @@ function trendMeta(range, product, ex) {
   /* 内部账号用过的浏览器也算内部：把它们的 visitor_id 从访问量里剔掉 */
   const niV = notIn('visitor_id', excludedVids(ex));
 
+  const cut = cutCond('ts');
   const pvSql = "SELECT day, COUNT(*) AS hits, COUNT(DISTINCT visitor_id) AS visitors FROM events " +
-    "WHERE kind = 'pv' AND day >= ? AND day <= ? AND ts >= ?" +
+    "WHERE kind = 'pv' AND day >= ? AND day <= ? AND " + cut.sql +
     (product ? ' AND (product = ? OR product IS NULL)' : '') + niV.sql + ' GROUP BY day';
   const pv = new Map();
-  allRows(pvSql, (product ? [range.from, range.to, cutoffMs(), product] : [range.from, range.to, cutoffMs()]).concat(niV.params))
+  allRows(pvSql, [range.from, range.to].concat(cut.params).concat(product ? [product] : []).concat(niV.params))
     .forEach(function (r) { pv.set(r.day, r); });
 
   const su = new Map();
@@ -526,13 +564,14 @@ function overview(opts) {
   const niU = notIn('id', ex);
   const niO = notIn('user_id', ex);
   const niV = notIn('visitor_id', excludedVids(ex));
+  const cutAll = cutCond('ts');
   const totals = {
     users: one('SELECT COUNT(*) AS n FROM users WHERE ' + dayExpr('created_at') + ' >= ?' + niU.sql,
       [range.since].concat(niU.params)).n,
     orders: one('SELECT COUNT(*) AS n FROM orders WHERE ' + dayExpr('created_at') + ' >= ?' + niO.sql,
       [range.since].concat(niO.params)).n,
-    events: one('SELECT COUNT(*) AS n FROM events WHERE day >= ? AND ts >= ?' + niV.sql,
-      [range.since, cutoffMs()].concat(niV.params)).n
+    events: one('SELECT COUNT(*) AS n FROM events WHERE day >= ? AND ' + cutAll.sql + niV.sql,
+      [range.since].concat(cutAll.params).concat(niV.params)).n
   };
   const snap = snapshotMs();
 
@@ -550,7 +589,8 @@ function overview(opts) {
       excluded: {
         accounts: ex.length,
         emails: excludedEmails(),
-        snapshot: snap > 0 ? localStamp(snap) : null
+        snapshot: snap > 0 ? localStamp(snap) : null,
+        kept: keepEmails()
       }
     },
     generatedAt: Date.now()

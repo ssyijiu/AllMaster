@@ -859,12 +859,15 @@
 
       /* 页脚口径 */
       var tr = d.tracking;
-      var ex = tr.excluded || { accounts: 0, emails: [], snapshot: null };
+      var ex = tr.excluded || { accounts: 0, emails: [], snapshot: null, kept: [] };
       var from = ex.snapshot || (tr.since + ' 00:00');
       $('sinceNote').innerHTML = '<b>真实数据从 ' + from + ' 起统计。</b>' +
         (ex.accounts
           ? '此前的注册、订单、访问全部是内部试跑，不计入任何指标；已排除 ' + ex.accounts +
             ' 个内部测试账号（该时点之前注册的全部视为测试号）。'
+          : '') +
+        (ex.kept && ex.kept.length
+          ? ' 真实用户 ' + ex.kept.join('、') + ' 不受该时点限制，照常计入。'
           : '') +
         (d.range.truncated
           ? '本窗口实际覆盖 ' + d.range.days + ' 天（你选的 ' + d.range.requested + ' 天还没攒满）。'
