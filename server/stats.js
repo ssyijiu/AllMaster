@@ -17,10 +17,15 @@
  * 窗口起点早于 SINCE 时自动截断到 SINCE，页面标注实际覆盖天数。
  * 需要重置起点时改环境变量 STATS_SINCE（YYYY-MM-DD），不用动代码。
  *
- * **内部账号排除**：默认排除 ADMIN_EMAILS 里的账号（自己的测试号不算真实
- * 用户）；要单独指定用 STATS_EXCLUDE_EMAILS，设为 - 则不排除任何人。
+ * **内部账号排除**：两种口径叠加。
+ *   ① 快照时点 SNAPSHOT（默认 2026-11-03 16:30）：该时点**之前注册**的账号
+ *      一律视为内部测试号。产品还没有真实用户，早期账号全是自己试跑；
+ *      用「时点」而不是「邮箱清单」，省得每加一个测试号就改一次配置，
+ *      也不会漏掉没进 ADMIN_EMAILS 的号。此后注册的账号正常统计。
+ *   ② ADMIN_EMAILS 里的账号（管理员自己）：无论什么时候注册都排除。
  * 排除是**账号级**的：该账号的订单、活跃日不计，它用过的浏览器 visitor_id
- * 也从访客里剔掉。
+ * 也从访客里剔掉。环境变量：STATS_SNAPSHOT 调时点（ISO 时间，- 关闭），
+ * STATS_EXCLUDE_EMAILS 追加邮箱（- 关闭邮箱那一路）。
  *
  * 定义（避免以后各说各话）：
  *   访客        = 浏览器 localStorage 里的匿名 visitor_id
@@ -38,9 +43,34 @@ const TZ = 8 * 3600 * 1000;
 
 const DEFAULT_SINCE = '2026-11-03';
 
+/* 内部测试期截止：此时点之前注册的账号全部是内部试跑号（2026-11-03 15:45
+   定稿时库里 9 个账号全在此时点之前）。此后注册的账号正常计入统计。 */
+const DEFAULT_SNAPSHOT = '2026-11-03T15:45:00+08:00';
+
 function sinceDay() {
   const v = String(process.env.STATS_SINCE || '').trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : DEFAULT_SINCE;
+}
+
+function snapshotMs() {
+  const v = String(process.env.STATS_SNAPSHOT || '').trim();
+  if (v === '-' || v === 'none') { return 0; }
+  const t = Date.parse(v || DEFAULT_SNAPSHOT);
+  return Number.isFinite(t) ? t : Date.parse(DEFAULT_SNAPSHOT);
+}
+
+/* 取数时间下界：统计起点当天 00:00（本地）与快照时点取较晚者。
+   events 有精确 ts，用它把「快照之前的内部浏览」整段切掉——匿名访客无法
+   按账号归属，只能靠时间切，否则那几条内部 pv 七天后会变成「未转化」。 */
+function cutoffMs() {
+  const dayStart = dayToUtc(sinceDay()) - TZ;
+  const snap = snapshotMs();
+  return snap > dayStart ? snap : dayStart;
+}
+
+/* 本地时间文案（给页面用，别让前端自己猜时区） */
+function localStamp(ms) {
+  return new Date(Number(ms) + TZ).toISOString().slice(0, 16).replace('T', ' ');
 }
 
 /* 本地日 <-> UTC 毫秒：只用日期字符串做算术，避免夏令时/时区漂移 */
@@ -113,11 +143,30 @@ function excludedEmails() {
 }
 
 function excludedUids() {
+  const ids = new Set();
   const emails = excludedEmails();
-  if (!emails.length) { return []; }
-  const holes = emails.map(function () { return '?'; }).join(',');
-  return allRows('SELECT id FROM users WHERE lower(email) IN (' + holes + ')', emails)
-    .map(function (r) { return r.id; });
+  if (emails.length) {
+    const holes = emails.map(function () { return '?'; }).join(',');
+    allRows('SELECT id FROM users WHERE lower(email) IN (' + holes + ')', emails)
+      .forEach(function (r) { ids.add(r.id); });
+  }
+  const snap = snapshotMs();
+  if (snap > 0) {
+    allRows('SELECT id FROM users WHERE created_at < ?', [snap])
+      .forEach(function (r) { ids.add(r.id); });
+  }
+  return Array.from(ids);
+}
+
+/* 内部账号用过的浏览器：这些 visitor_id 的访问也不算真实流量 */
+function excludedVids(exSet) {
+  const set = new Set(exSet || []);
+  if (!set.size) { return []; }
+  const out = [];
+  visitorUsers().forEach(function (uid, vid) {
+    if (set.has(uid)) { out.push(vid); }
+  });
+  return out;
 }
 
 /* 拼 "AND col NOT IN (?,?,...)" 与对应参数，空名单时返回空串 */
@@ -161,10 +210,11 @@ function visitorUsers() {
   return m;
 }
 
-function firstPvByVisitor(product) {
+function firstPvByVisitor(product, fromMs) {
   const sql = "SELECT visitor_id AS vid, MIN(day) AS day FROM events WHERE kind = 'pv' AND visitor_id IS NOT NULL" +
-    (product ? ' AND (product = ? OR product IS NULL)' : '') + ' GROUP BY visitor_id';
-  const rows = product ? allRows(sql, [product]) : allRows(sql, []);
+    ' AND ts >= ?' + (product ? ' AND (product = ? OR product IS NULL)' : '') + ' GROUP BY visitor_id';
+  const params = product ? [fromMs, product] : [fromMs];
+  const rows = allRows(sql, params);
   const m = new Map();
   rows.forEach(function (r) { m.set(r.vid, r.day); });
   return m;
@@ -173,8 +223,8 @@ function firstPvByVisitor(product) {
 /* ---------------- 指标 ① 打开页面 → 首次出图 ---------------- */
 
 function funnelMeta(range, product, ex) {
-  const exSet = new Set(ex || []);
-  const visitors = firstPvByVisitor(product);
+  const badVids = new Set(excludedVids(ex));
+  const visitors = firstPvByVisitor(product, cutoffMs());
   const vmap = visitorUsers();
   const firstGen = firstGenByUser(product, ex);
 
@@ -184,8 +234,7 @@ function funnelMeta(range, product, ex) {
   let pending = 0;          /* 首访还不满 7 天，暂时判不了 */
   const newVisitorVids = [];
   visitors.forEach(function (day, vid) {
-    const owner = vmap.get(vid);
-    if (owner && exSet.has(owner)) { return; }
+    if (badVids.has(vid)) { return; }
     if (day >= range.from && day <= range.to) {
       newVisitors += 1;
       newVisitorVids.push(vid);
@@ -312,11 +361,11 @@ function perUserMeta(range, product, ex) {
 function activityDays(product, ex) {
   const ni = notIn('user_id', ex || []);
   const since = sinceDay();
-  const evSql = "SELECT user_id AS uid, day FROM events WHERE user_id IS NOT NULL AND day >= ?" +
+  const evSql = "SELECT user_id AS uid, day FROM events WHERE user_id IS NOT NULL AND day >= ? AND ts >= ?" +
     (product ? ' AND (product = ? OR product IS NULL)' : '') + ni.sql;
   const odSql = 'SELECT user_id AS uid, ' + dayExpr('created_at') + ' AS day FROM orders WHERE ' +
     dayExpr('created_at') + ' >= ?' + (product ? ' AND product = ?' : '') + ni.sql;
-  const evParams = [since].concat(product ? [product] : []).concat(ni.params);
+  const evParams = [since, cutoffMs()].concat(product ? [product] : []).concat(ni.params);
   const odParams = [since].concat(product ? [product] : []).concat(ni.params);
   const rows = allRows(evSql + ' UNION ' + odSql, evParams.concat(odParams));
   const m = new Map();   /* uid -> Set(day) */
@@ -354,7 +403,7 @@ function retentionMeta(range, product, ex) {
   });
 
   const list = Array.from(cohorts.values()).sort(function (a, b) { return (a.day < b.day ? 1 : -1); });
-  const tracked = one("SELECT MIN(day) AS d FROM events", []);
+  const tracked = one('SELECT MIN(day) AS d FROM events WHERE ts >= ?', [cutoffMs()]);
   const since = tracked && tracked.d;
 
   return {
@@ -372,20 +421,13 @@ function retentionMeta(range, product, ex) {
 
 function trendMeta(range, product, ex) {
   /* 内部账号用过的浏览器也算内部：把它们的 visitor_id 从访问量里剔掉 */
-  const exSet = new Set(ex || []);
-  const badVids = [];
-  if (exSet.size) {
-    visitorUsers().forEach(function (uid, vid) {
-      if (exSet.has(uid)) { badVids.push(vid); }
-    });
-  }
-  const niV = notIn('visitor_id', badVids);
+  const niV = notIn('visitor_id', excludedVids(ex));
 
   const pvSql = "SELECT day, COUNT(*) AS hits, COUNT(DISTINCT visitor_id) AS visitors FROM events " +
-    "WHERE kind = 'pv' AND day >= ? AND day <= ?" +
+    "WHERE kind = 'pv' AND day >= ? AND day <= ? AND ts >= ?" +
     (product ? ' AND (product = ? OR product IS NULL)' : '') + niV.sql + ' GROUP BY day';
   const pv = new Map();
-  allRows(pvSql, (product ? [range.from, range.to, product] : [range.from, range.to]).concat(niV.params))
+  allRows(pvSql, (product ? [range.from, range.to, cutoffMs(), product] : [range.from, range.to, cutoffMs()]).concat(niV.params))
     .forEach(function (r) { pv.set(r.day, r); });
 
   const su = new Map();
@@ -440,11 +482,19 @@ function overview(opts) {
   const retention = retentionMeta(range, product, ex);
   const trend = trendMeta(range, product, ex);
 
-  /* 页脚的量也按统计起点算，免得「累计 193 单」这种历史数字混进来 */
-  const totals = one(
-    'SELECT (SELECT COUNT(*) FROM users WHERE ' + dayExpr('created_at') + ' >= ?) AS users, ' +
-    '(SELECT COUNT(*) FROM orders WHERE ' + dayExpr('created_at') + ' >= ?) AS orders, ' +
-    '(SELECT COUNT(*) FROM events WHERE day >= ?) AS events', [range.since, range.since, range.since]);
+  /* 页脚的量也按统计起点算、也剔掉内部账号，免得「累计 193 单」这种历史数字混进来 */
+  const niU = notIn('id', ex);
+  const niO = notIn('user_id', ex);
+  const niV = notIn('visitor_id', excludedVids(ex));
+  const totals = {
+    users: one('SELECT COUNT(*) AS n FROM users WHERE ' + dayExpr('created_at') + ' >= ?' + niU.sql,
+      [range.since].concat(niU.params)).n,
+    orders: one('SELECT COUNT(*) AS n FROM orders WHERE ' + dayExpr('created_at') + ' >= ?' + niO.sql,
+      [range.since].concat(niO.params)).n,
+    events: one('SELECT COUNT(*) AS n FROM events WHERE day >= ? AND ts >= ?' + niV.sql,
+      [range.since, cutoffMs()].concat(niV.params)).n
+  };
+  const snap = snapshotMs();
 
   return {
     range: range,
@@ -457,7 +507,11 @@ function overview(opts) {
       since: range.since,
       events: totals.events,
       totals: { users: totals.users, orders: totals.orders },
-      excluded: { accounts: ex.length, emails: excludedEmails() }
+      excluded: {
+        accounts: ex.length,
+        emails: excludedEmails(),
+        snapshot: snap > 0 ? localStamp(snap) : null
+      }
     },
     generatedAt: Date.now()
   };

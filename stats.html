@@ -122,9 +122,23 @@
     }
     .since-note b { color: var(--ink-700); font-weight: 510; }
 
+    /* 指标口径说明：三栏卡片，窄屏一栏 */
+    .spec { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .spec-item { background: var(--ink-50); border: 1px solid var(--ink-100); border-radius: var(--radius); padding: 15px 16px 16px; min-width: 0; }
+    .spec-item h4 { font-size: 13.5px; font-weight: 590; color: var(--fg); margin-bottom: 8px; }
+    .spec-lead { font-size: 12.5px; color: var(--ink-500); line-height: 1.65; margin-bottom: 10px; }
+    .spec-item dl { display: grid; grid-template-columns: 60px minmax(0, 1fr); gap: 7px 10px; }
+    .spec-item dt { font-size: 12px; color: var(--meta); white-space: nowrap; }
+    .spec-item dd { font-size: 12.5px; color: var(--ink-500); line-height: 1.65; }
+    .spec-item dd b { color: var(--ink-700); font-weight: 510; }
+    .spec-warn { margin-top: 14px; padding: 10px 14px; border-radius: 10px; font-size: 12.5px; line-height: 1.7;
+      background: #FFF9EC; border: 1px solid #F6E3B8; color: #7A5B12; }
+    .spec-warn b { color: #6B4E0B; font-weight: 590; }
+
     @media (max-width: 900px) {
       .kpi-grid { grid-template-columns: minmax(0, 1fr); }
       .grid-2 { grid-template-columns: minmax(0, 1fr); }
+      .spec { grid-template-columns: minmax(0, 1fr); }
       .topbar-inner { padding: 10px 16px; flex-wrap: wrap; }
       .page { padding: 20px 16px 56px; }
       .brand-sub { display: none; }
@@ -298,6 +312,65 @@
         <p class="hint" id="cohortNote"></p>
       </section>
 
+      <!-- 指标口径 -->
+      <section class="panel section">
+        <div class="section-head">
+          <div>
+            <div class="section-title">指标口径</div>
+            <div class="section-desc">每个数字怎么算、什么时候才有意义 —— 免得同一张报表两种读法</div>
+          </div>
+        </div>
+        <div class="spec">
+          <article class="spec-item">
+            <h4>① 打开页面 → 首次出图</h4>
+            <p class="spec-lead">人来了，能不能一路走完「打开 → 注册 → 上传 → 出第一张图」。率低就是登录或上传有摩擦。</p>
+            <dl>
+              <dt>分母</dt>
+              <dd>窗口内<b>第一次出现</b>的匿名访客。同一浏览器来十次算一个；首访早于窗口的老访客不算。</dd>
+              <dt>分子</dt>
+              <dd>这些人里，在<b>首访后 7 个自然日内</b>（含当天）完成首次成功出图的。</dd>
+              <dt>首次出图</dt>
+              <dd>该账号全历史的<b>第一张</b>成功图，失败单不算。</dd>
+              <dt>观察期</dt>
+              <dd>首访不满 7 天的人先挂起、不进分母，否则最近几天的率天然偏低。卡片上的率只按「可判定」的人算。</dd>
+            </dl>
+          </article>
+
+          <article class="spec-item">
+            <h4>② 人均生成张数</h4>
+            <p class="spec-lead">图纸够不够好：好就会多转几张试试。只看「1 张」说明要么够用一次，要么第一张不满意就走了。</p>
+            <dl>
+              <dt>分子</dt>
+              <dd>窗口内<b>成功出图总张数</b>，失败单不计。</dd>
+              <dt>分母</dt>
+              <dd>窗口内<b>有成功出图</b>的用户数。没出图的人不进分母，那属于 ① 的问题。</dd>
+              <dt>看哪里</dt>
+              <dd>均值容易被少数重度用户拉高，<b>下方的四档分布更可信</b>。同时显示分产品数据。</dd>
+            </dl>
+          </article>
+
+          <article class="spec-item">
+            <h4>③ 7 日内二次回访</h4>
+            <p class="spec-lead">这是工具还是一次性玩具。玩具：来一次、出一张、不再回来。</p>
+            <dl>
+              <dt>队列</dt>
+              <dd>按账号的<b>首次活跃日</b>分组。窗口只决定哪些队列参与统计，不改变一个人属于哪组。</dd>
+              <dt>活跃</dt>
+              <dd>登录状态下访问页面，<b>或</b>下过任何一单（含失败单 —— 他动手试了就算）。</dd>
+              <dt>分子</dt>
+              <dd>该队列里，在第 <b>D+1 ~ D+7 天</b>任意一天再次活跃的人。首活跃当天再打开不算。</dd>
+              <dt>满 7 天</dt>
+              <dd>今天新来的人今天不可能回访，混进来会把率稀释成「看起来很低」。不满 7 天的显示「观察中」、率显示 —。</dd>
+            </dl>
+          </article>
+        </div>
+        <p class="spec-warn">
+          <b>数据边界：</b>生成与注册来自订单表、用户表；访问来自 2026-11-03 上线的埋点（每次页面加载记一条，只存匿名标识与路径，<b>不存 IP、设备型号、来源链接</b>）。
+          清缓存、换浏览器、无痕模式都会被算成新访客；同一浏览器先后登录两个账号时，转化归最新那个账号。
+          统计范围之前的注册、订单、访问全部是内部试跑，一律不计。
+        </p>
+      </section>
+
       <p class="foot" id="footNote"></p>
     </div>
   </main>
@@ -447,7 +520,7 @@
         $('k1tag').textContent = '暂按注册口径（没有访客数据）';
       } else {
         setKpiNA($('k1'), '暂无数据');
-        $('k1sub').textContent = '统计起点 ' + d.range.since + ' 起还没有访客';
+        $('k1sub').textContent = '还没有访客 —— 等第一位真实用户进来';
         $('k1tag').className = 'tag warn';
         $('k1tag').textContent = '等待真实流量';
       }
@@ -666,7 +739,9 @@
       $('funnelNote').textContent = f.basis === 'visitor'
         ? '大漏斗按窗口内全部新访客 ' + f.visitors + ' 人展示；① 的转化率只按其中已满 7 天的 ' +
           f.judged + ' 人计算，另有 ' + f.pending + ' 人还在观察期。'
-        : f.note + '（访客数据从统计起点 ' + d.range.since + ' 开始累积）';
+        : (f.signups
+          ? f.note
+          : '统计范围内还没有访客与注册数据；等第一位真实用户进来后，这里会开始累积漏斗。');
 
       /* 人均分布 */
       renderDist($('bigDist'), p.distribution, '14px');
@@ -703,17 +778,19 @@
 
       /* 页脚口径 */
       var tr = d.tracking;
-      var ex = tr.excluded || { accounts: 0, emails: [] };
-      $('sinceNote').innerHTML = '<b>数据从 ' + tr.since + ' 起统计。</b>' +
-        '此前为内部试跑数据，不计入任何指标。' +
+      var ex = tr.excluded || { accounts: 0, emails: [], snapshot: null };
+      var from = ex.snapshot || (tr.since + ' 00:00');
+      $('sinceNote').innerHTML = '<b>真实数据从 ' + from + ' 起统计。</b>' +
+        (ex.accounts
+          ? '此前的注册、订单、访问全部是内部试跑，不计入任何指标；已排除 ' + ex.accounts +
+            ' 个内部测试账号（该时点之前注册的全部视为测试号）。'
+          : '') +
         (d.range.truncated
           ? '本窗口实际覆盖 ' + d.range.days + ' 天（你选的 ' + d.range.requested + ' 天还没攒满）。'
-          : '') +
-        (ex.accounts ? '已排除 ' + ex.accounts + ' 个内部账号。' : '');
-      $('footNote').innerHTML = '<b>口径</b>：' + f.note + ' ' + p.note + ' ' + r.note + '<br>' +
-        '<b>统计起点</b>：<b>' + tr.since + '</b> —— 此前全是内部试跑数据，不计入任何指标' +
-        (ex.accounts ? '；已排除 ' + ex.accounts + ' 个内部账号（' + ex.emails.join('、') + '）' : '') + '。<br>' +
-        '<b>数据</b>：生成来自订单表，访问与注册来自埋点；起点以来累计 ' + fmtNum(tr.events) + ' 条访问记录、' +
+          : '');
+      $('footNote').innerHTML = '<b>口径</b>：真实数据从 <b>' + from + '</b> 起统计 ——' +
+        (ex.accounts ? '此前 ' + ex.accounts + ' 个账号及其浏览记录（全部为内部试跑）不计入' : '此前为内部试跑数据，不计入') + '。<br>' +
+        '<b>数据</b>：生成来自订单表，访问与注册来自埋点；范围内累计 ' + fmtNum(tr.events) + ' 条访问记录、' +
         fmtNum(tr.totals.users) + ' 个注册用户、' + fmtNum(tr.totals.orders) + ' 笔生成单。' +
         '埋点只记录匿名访客标识与页面路径，不记录 IP、设备型号与来源链接。';
     }
