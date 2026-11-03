@@ -90,12 +90,18 @@
     .fn-bar i.accent { background: #E6883C; }
     .section-hint { font-size: 12px; color: var(--meta); flex: none; }
 
-    /* 分布条 */
+    /* 分布条（卡片内紧凑版） */
     .dist { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--ink-100); }
     .dist i { display: block; height: 100%; }
     .dist-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 9px; font-size: 11.5px; color: var(--muted); }
     .dist-legend span { display: inline-flex; align-items: center; gap: 5px; }
     .dot { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
+
+    /* 大面板的分布：与四步漏斗同构，一档一行（左档位 / 中条 / 右人数） */
+    .funnel.dist-bars { gap: 15px; }
+    .funnel.dist-bars .fn-row { grid-template-columns: 84px minmax(0,1fr) 52px; font-size: 13px; color: var(--fg-2); }
+    .funnel.dist-bars .fn-bar { height: 10px; }
+    .funnel.dist-bars .fn-num { font-size: 13.5px; font-weight: 590; color: var(--fg); }
 
     /* ---------- 区块 ---------- */
     .section { margin-top: 16px; }
@@ -107,7 +113,10 @@
     .chart-wrap { position: relative; }
     .chart-legend { display: flex; gap: 16px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
     .chart-legend b { font-weight: 510; color: var(--fg-2); }
-    .chart-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+    /* 图例的线型必须和图里一致：出图是实线（下面是浅蓝面积），访客是虚线 */
+    .chart-legend i { display: inline-block; width: 16px; height: 0; margin-right: 6px; vertical-align: middle;
+      border-top: 2px solid #4262FF; }
+    .chart-legend i.dash { border-top: 1.6px dashed #D97706; }
     svg.chart { display: block; width: 100%; height: auto; overflow: visible; }
     .chart-tip { position: absolute; pointer-events: none; background: #1C1C1E; color: #fff; border-radius: 8px; padding: 7px 10px; font-size: 12px; line-height: 1.5; white-space: nowrap; box-shadow: var(--shadow-lg); transform: translate(-50%, -100%); opacity: 0; transition: opacity .12s ease; z-index: 5; }
     .chart-tip b { font-weight: 600; }
@@ -262,8 +271,8 @@
             <div class="section-desc" id="trendDesc">成功出图张数与访客数</div>
           </div>
           <div class="chart-legend">
-            <span><i style="background:#4262FF;"></i>成功出图 <b id="lgGens">0</b></span>
-            <span><i style="background:#D97706;"></i>访客 <b id="lgVisitors">0</b></span>
+            <span><i></i>成功出图 <b id="lgGens">0</b> 张</span>
+            <span><i class="dash"></i>访客 <b id="lgVisitors">0</b> 人</span>
           </div>
         </div>
         <div class="chart-wrap" id="chartWrap">
@@ -293,9 +302,9 @@
               <div class="section-title">生成张数分布</div>
               <div class="section-desc">按「有出图的用户」每人窗口内张数分档</div>
             </div>
+            <div class="section-hint">条长 = 该档占出图用户的比例</div>
           </div>
-          <div class="dist" id="bigDist" style="height:14px;"></div>
-          <div class="dist-legend" id="bigLegend" style="margin-top:12px;font-size:12.5px;"></div>
+          <div class="funnel dist-bars" id="bigDist"></div>
           <p class="hint" id="perUserNote" style="margin-top:14px;"></p>
         </section>
       </div>
@@ -584,16 +593,17 @@
         bar.className = 'fn-bar';
         var fill = document.createElement('i');
         if (r.accent) { fill.className = 'accent'; }
-        /* 有 pct 就按百分比画（四步漏斗），否则按占总量的比例画（卡片内小漏斗） */
+        if (r.color) { fill.style.background = r.color; }
+        /* 有 pct 就按百分比画（四步漏斗、分布），否则按占最大值的比例画（卡片内小漏斗） */
         var hasPct = r.pct !== undefined;
         var w = hasPct ? (r.pct || 0) : Math.round((r.n / max) * 100);
         fill.style.width = (hasPct && !r.pct ? 0 : Math.max(1.5, w)) + '%';
         bar.appendChild(fill);
         var num = document.createElement('span');
         num.className = 'fn-num';
-        num.textContent = hasPct
-          ? (r.pct ? (Math.round(r.pct * 10) / 10) + '%' : '—')
-          : fmtNum(r.n);
+        num.textContent = r.text !== undefined
+          ? r.text
+          : (hasPct ? (r.pct ? (Math.round(r.pct * 10) / 10) + '%' : '—') : fmtNum(r.n));
         row.appendChild(lab); row.appendChild(bar); row.appendChild(num);
         el.appendChild(row);
       });
@@ -658,18 +668,22 @@
       var maxY = Math.max.apply(null, gens.concat(vis).concat([1]));
       maxY = niceMax(maxY);
 
-      /* 网格 + y 轴刻度 */
-      var ticksY = narrow ? 3 : 4;
+      /* y 轴刻度：计数类数据，刻度必须是整数且互不相同。
+         小流量时（比如只有 2 个访客）maxY 比刻度数还小，直接按 maxY 取刻度，
+         否则会出现「2 2 1 1 0」这种重复标签。 */
+      var ticksY = Math.min(narrow ? 3 : 4, Math.max(1, maxY));
+      var stepY = Math.max(1, Math.ceil(maxY / ticksY));
+      var topY = stepY * ticksY;
       for (var g = 0; g <= ticksY; g++) {
         var y = padT + ih - (ih * g / ticksY);
         svg.appendChild(node('line', { x1: padL, y1: y, x2: W - padR, y2: y, stroke: g === 0 ? '#E5E7EC' : '#F2F3F6', 'stroke-width': 1 }));
-        svg.appendChild(node('text', { x: padL - 7, y: y + 3.5, 'text-anchor': 'end', 'font-size': 9.5, fill: '#8E91A0' }, String(Math.round(maxY * g / ticksY))));
+        svg.appendChild(node('text', { x: padL - 7, y: y + 3.5, 'text-anchor': 'end', 'font-size': 9.5, fill: '#8E91A0' }, String(stepY * g)));
       }
 
       var n = trend.length;
       var step = n > 1 ? iw / (n - 1) : iw;
       function px(i) { return padL + (n > 1 ? step * i : iw / 2); }
-      function py(v) { return padT + ih - (ih * (v / maxY)); }
+      function py(v) { return padT + ih - (ih * (v / topY)); }
 
       /* 开头整段没有数据（埋点上线前 / 产品还没冷启动）时，用浅灰底说明，
          避免读者把「一条贴着 0 的直线」误读成「访问量归零」 */
@@ -685,23 +699,42 @@
         }
       }
 
+      /* 只画有数据的段：埋点上线前那段交给上面的灰块说明。
+         以前从第 0 天就开始画，两条线在 0 上重叠成一串点和一条杠，
+         看起来像「多出来好几条数据」—— 所以在这里断开。 */
+      var st = firstData >= 0 ? firstData : 0;
+
       /* 出图面积 */
-      var area = 'M' + px(0) + ',' + (padT + ih);
-      gens.forEach(function (v, i) { area += ' L' + px(i) + ',' + py(v); });
-      area += ' L' + px(n - 1) + ',' + (padT + ih) + ' Z';
-      svg.appendChild(node('path', { d: area, fill: 'rgba(66,98,255,0.10)' }));
-      var line = gens.map(function (v, i) { return (i ? 'L' : 'M') + px(i) + ',' + py(v); }).join(' ');
-      svg.appendChild(node('path', { d: line, fill: 'none', stroke: '#4262FF', 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+      if (n - st >= 1) {
+        var area = 'M' + px(st) + ',' + (padT + ih);
+        for (var a = st; a < n; a++) { area += ' L' + px(a) + ',' + py(gens[a]); }
+        area += ' L' + px(n - 1) + ',' + (padT + ih) + ' Z';
+        svg.appendChild(node('path', { d: area, fill: 'rgba(66,98,255,0.10)' }));
+      }
+      var lpts = [];
+      for (var li = st; li < n; li++) { lpts.push((li === st ? 'M' : 'L') + px(li) + ',' + py(gens[li])); }
+      svg.appendChild(node('path', { d: lpts.join(' '), fill: 'none', stroke: '#4262FF', 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
 
       /* 访客虚线 */
-      var vline = vis.map(function (v, i) { return (i ? 'L' : 'M') + px(i) + ',' + py(v); }).join(' ');
-      svg.appendChild(node('path', { d: vline, fill: 'none', stroke: '#D97706', 'stroke-width': 1.6, 'stroke-dasharray': '4 4', 'stroke-linejoin': 'round' }));
+      var vpts = [];
+      for (var vi = st; vi < n; vi++) { vpts.push((vi === st ? 'M' : 'L') + px(vi) + ',' + py(vis[vi])); }
+      svg.appendChild(node('path', { d: vpts.join(' '), fill: 'none', stroke: '#D97706', 'stroke-width': 1.6, 'stroke-dasharray': '4 4', 'stroke-linejoin': 'round' }));
 
-      /* 点（稀疏数据才画，避免糊成一条） */
+      /* 只有一天有数据时，path 只有一个点，画不出线 —— 补个圆点，否则整块空白 */
+      if (n - st === 1) {
+        svg.appendChild(node('circle', { cx: px(st), cy: py(vis[st]), r: 2.6, fill: '#D97706' }));
+        if (gens[st]) {
+          svg.appendChild(node('circle', { cx: px(st), cy: py(gens[st]), r: 3, fill: '#4262FF' }));
+        }
+      }
+
+      /* 点：只在真有出图的日子画。0 值也画的话，贴底会连成一串蓝点，
+         被读成「第三条线」。 */
       if (n <= 31) {
-        gens.forEach(function (v, i) {
-          svg.appendChild(node('circle', { cx: px(i), cy: py(v), r: n > 14 ? 2.6 : 3.2, fill: '#4262FF' }));
-        });
+        for (var pi = st; pi < n; pi++) {
+          if (!gens[pi]) { continue; }
+          svg.appendChild(node('circle', { cx: px(pi), cy: py(gens[pi]), r: n > 14 ? 2.6 : 3.2, fill: '#4262FF' }));
+        }
       }
 
       /* x 轴日期：按宽度取 4~7 个刻度 */
@@ -775,10 +808,26 @@
           ? f.note
           : '统计范围内还没有访客与注册数据；等第一位真实用户进来后，这里会开始累积漏斗。');
 
-      /* 人均分布 */
-      renderDist($('bigDist'), p.distribution, '14px');
-      renderLegend($('bigLegend'), p.distribution, true);
-      var note = p.note;
+      /* 人均分布：与四步漏斗同构，一档一行（左档位 / 中条 / 右人数）。
+         条长 = 该档占「有出图用户」的比例；颜色统一用品牌蓝，和漏斗保持同一套视觉。 */
+      var distTotal = p.distribution.reduce(function (s, x) { return s + x.users; }, 0);
+      renderFunnel($('bigDist'), p.distribution.map(function (x) {
+        return {
+          label: x.label,
+          n: x.users,
+          pct: distTotal ? (x.users / distTotal * 100) : 0,
+          text: x.users ? fmtNum(x.users) + ' 人' : '—'
+        };
+      }), false);
+      var note = '';
+      if (distTotal) {
+        var topDist = p.distribution.reduce(function (a, b) { return b.users > a.users ? b : a; }, p.distribution[0]);
+        if (topDist && topDist.users) {
+          note = '人最多的是「' + topDist.label + '」：' + fmtNum(topDist.users) + ' 人，占 ' +
+            Math.round(topDist.users / distTotal * 100) + '%。';
+        }
+      }
+      note += p.note;
       if (p.avgPerSignup !== null) { note += ' 同期每个新注册用户平均 ' + p.avgPerSignup + ' 张。'; }
       if (p.byProduct && p.byProduct.length) {
         note += ' 分产品：' + p.byProduct.map(function (x) {
