@@ -363,6 +363,11 @@
       '    <button class="btn-close-modal" id="btnCloseLogin" type="button" aria-label="关闭登录">×</button>',
       '  </div>',
       '  <p class="modal-desc">登录后积分与作品全平台同步，换设备也不丢。不登录也可以先逛逛。</p>',
+      /* 福利提示放弹窗内显眼位置：底部浮动条太小、容易被忽略 */
+      '  <div class="pf-welcome-note" id="pfWelcomeNote" hidden>',
+      '    <span class="pf-welcome-main"></span>',
+      '    <span class="pf-welcome-sub">1 积分 = 免费生成 1 次</span>',
+      '  </div>',
       '',
       '  <span class="group-label">邮箱验证码登录 / 注册</span>',
       '  <label class="field-label" for="loginEmail">邮箱</label>',
@@ -1277,70 +1282,93 @@
      * 金额在注册前就确定：带 ?code=/?batch= 的链接看面值（服务端
      * /api/redeem/preview 按领取时同口径选码），什么都没带看见面礼。
      * 三处可见：
-     *   ① 游客常驻小条（底部居中，可关，sessionStorage 记住本次会话）；
-     *   ② 登录弹窗副标题；
+     *   ① 顶栏下方福利条（sticky，未登录常驻可见，可关）；
+     *   ② 登录弹窗内的福利块（比副标题更醒目）；
      *   ③ 带链接未登录时，自动弹出的登录框提示带上面值。
-     * 登录后小条自动消失（renderAuthUI 统一管）。
+     * 登录后两处自动消失（renderAuthUI 统一管）。
      * ========================================================= */
     var newUserHint = { credits: 0, source: '', loaded: false };
     var NEWUSER_DISMISS_KEY = 'platform.newUserHintDismissed';
 
-    function newUserHintText() {
-      if (!newUserHint.loaded || !(newUserHint.credits > 0)) { return ''; }
+    /* 主文案/副文案分开给：顶部条用短口径（「共 N 次免费生成」，手机端也放得下），
+       弹窗里用完整口径（「1 积分 = 免费生成 1 次」）。 */
+    function newUserHintParts() {
+      if (!newUserHint.loaded || !(newUserHint.credits > 0)) { return null; }
       var verb = newUserHint.source === 'welcome' ? '注册即送' : '注册即领';
-      return verb + ' ' + newUserHint.credits + ' 积分（1 积分 = 免费生成 1 次）';
+      return {
+        main: verb + ' ' + newUserHint.credits + ' 积分',
+        subShort: '共 ' + newUserHint.credits + ' 次免费生成',
+        subLong: '1 积分 = 免费生成 1 次'
+      };
+    }
+    function newUserHintText() {
+      var p = newUserHintParts();
+      return p ? p.main + '（' + p.subLong + '）' : '';
     }
 
+    /* 游客福利条：贴在顶栏下方（顶部、显眼），不再用底部浮动小条——
+       浮动条会挡住内容，而且用户很难一眼看到。 */
     function ensureNewUserPill() {
       if (!document.body || document.getElementById('pfNewUserHint')) { return; }
-      var pill = document.createElement('div');
-      pill.id = 'pfNewUserHint';
-      pill.className = 'pf-newuser';
-      pill.hidden = true;
-      pill.setAttribute('role', 'note');
-      var text = document.createElement('span');
-      text.className = 'pf-newuser-text';
-      var close = document.createElement('button');
-      close.type = 'button';
-      close.className = 'pf-newuser-close';
-      close.setAttribute('aria-label', '关闭新用户提示');
-      close.textContent = '×';
+      var bar = document.createElement('div');
+      bar.id = 'pfNewUserHint';
+      bar.className = 'pf-newuser-bar';
+      bar.hidden = true;
+      bar.setAttribute('role', 'note');
+      bar.innerHTML = [
+        '<div class="pf-newuser-bar-inner">',
+        '  <span class="pf-newuser-gift" aria-hidden="true">🎁</span>',
+        '  <span class="pf-newuser-text">',
+        '    <span class="pf-newuser-main"></span>',
+        '    <span class="pf-newuser-sub"></span>',
+        '  </span>',
+        '  <button class="btn primary small" id="pfNewUserCta" type="button">免费领取</button>',
+        '  <button class="pf-newuser-close" type="button" aria-label="关闭提示">×</button>',
+        '</div>'
+      ].join('\n');
+      var close = bar.querySelector('.pf-newuser-close');
       close.addEventListener('click', function (e) {
         e.stopPropagation();
         try { sessionStorage.setItem(NEWUSER_DISMISS_KEY, '1'); } catch (_) {}
-        pill.hidden = true;
+        bar.hidden = true;
       });
-      /* 点小条直接打开登录框：福利提示本来的目的就是转化 */
-      pill.addEventListener('click', function () {
+      /* 整条（含按钮）点击都打开登录框：福利提示本来的目的就是转化 */
+      bar.addEventListener('click', function () {
         if (!Store.state.user && els.loginModal) { openLogin(); }
       });
-      pill.appendChild(text);
-      pill.appendChild(close);
-      document.body.appendChild(pill);
+      /* 挂在顶栏里：顶栏是 sticky，滚到页面任何位置都看得见，且不遮挡内容 */
+      var topbar = document.querySelector('header.topbar');
+      if (topbar) { topbar.appendChild(bar); }
+      else { document.body.insertBefore(bar, document.body.firstChild); }
     }
 
     function renderNewUserHint() {
-      var text = newUserHintText();
-      /* 登录弹窗副标题：三页共用一段 HTML，动态改这里不用动每个页面 */
-      if (els.loginModal) {
-        var desc = els.loginModal.querySelector('.modal-desc');
-        if (desc && text) {
-          desc.textContent = '新用户' + text + '，积分全平台通用。不登录也可以先逛逛。';
+      var parts = newUserHintParts();
+      /* 登录弹窗内的福利块：放副标题下面，带底色，比一句话更醒目 */
+      var note = document.getElementById('pfWelcomeNote');
+      if (note) {
+        note.hidden = !parts || !!Store.state.user;
+        if (parts) {
+          note.querySelector('.pf-welcome-main').textContent = parts.main;
+          note.querySelector('.pf-welcome-sub').textContent = parts.subLong;
         }
       }
       /* 面值比自动弹窗晚到是常态（预览接口要过一个往返）：弹窗还开着、
          且仍显示兜底话时，把「领取链接里的积分」升级成具体数字 */
-      if (text && newUserHint.source !== 'welcome' && !Store.state.user &&
+      if (parts && newUserHint.source !== 'welcome' && !Store.state.user &&
           linkRedeem.prompted && els.loginModal && !els.loginModal.hidden &&
           /领取链接里的积分/.test(els.loginMsg.textContent)) {
         showLoginMsg('登录后将自动为你领取 ' + newUserHint.credits + ' 积分', false);
       }
-      var pill = document.getElementById('pfNewUserHint');
-      if (!pill) { return; }
+      var bar = document.getElementById('pfNewUserHint');
+      if (!bar) { return; }
       var dismissed = false;
       try { dismissed = !!sessionStorage.getItem(NEWUSER_DISMISS_KEY); } catch (_) {}
-      pill.hidden = !text || dismissed || !!Store.state.user;
-      if (text) { pill.querySelector('.pf-newuser-text').textContent = text; }
+      bar.hidden = !parts || dismissed || !!Store.state.user;
+      if (parts) {
+        bar.querySelector('.pf-newuser-main').textContent = parts.main;
+        bar.querySelector('.pf-newuser-sub').textContent = parts.subShort;
+      }
     }
 
     function loadNewUserHint() {
