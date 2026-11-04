@@ -48,3 +48,24 @@ async function bpCompleteAllParts() {
   if (!bpPartWanted('field')) { return; }
   if (D.field && (!D.field.labels || !D.field.ref)) { await bpEnsureField(); }
 }
+
+/* three.js（663KB 原文 / br 159KB）只被 3D 看法用：只看平面图纸的人不该为它付。
+   构建时把原本内联的 vendor 换成 window.PIXELART_THREE_URL（带内容哈希，一年 immutable），
+   第一次切 3D 才注入 <script>；加载成功后由 view-3d.js 重建 V3 实例。
+   老图纸没有这个变量，three 本来就在页面里，走不到这里。
+   另存的单文件要离线能看 3D，保存时由 js/save-file.js 把源码取回来内联。 */
+let THREE_LOADING = null;
+function loadThree() {
+  if (window.THREE && window.OrbitControls) return Promise.resolve();
+  if (THREE_LOADING) return THREE_LOADING;
+  const url = window.PIXELART_THREE_URL;
+  if (!url) return Promise.reject(new Error('no three url'));
+  THREE_LOADING = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = url; s.async = true;
+    s.onload = () => (window.THREE && window.OrbitControls ? resolve() : reject(new Error('three missing')));
+    s.onerror = () => reject(new Error('three load failed'));
+    document.head.appendChild(s);
+  }).catch((e) => { THREE_LOADING = null; throw e; });
+  return THREE_LOADING;
+}

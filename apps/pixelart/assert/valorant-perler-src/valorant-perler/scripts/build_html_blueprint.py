@@ -126,11 +126,19 @@ ASSET_URL = re.compile(r'url\("(assets/[^"]+)"\)')
 LAZY_FONT_NAMES = ("TencentSans-W3.woff2", "TencentSans-W7.woff2")
 LAZY_FONT_PREFIX = "/pixelart-fonts/"
 
+# three.js（663KB 原文 / br 159KB）只被 3D 看法用，只看平面图纸的人不该为它付。
+# 同样改成带内容哈希的外链，第一次切 3D 才加载（js/lazy-parts.js 的 loadThree）。
+LAZY_JS_PREFIX = "/pixelart-js/"
+
+
+def lazy_asset_url(path: Path, prefix: str) -> str:
+    """外置资源的 URL。带内容哈希：换了文件就换 URL，因此可以放心一年 immutable。"""
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:10]
+    return f"{prefix}{path.name}?v={digest}"
+
 
 def lazy_font_url(path: Path) -> str:
-    """字体外置 URL。带内容哈希：换了字体文件就换 URL，因此可以放心一年 immutable。"""
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:10]
-    return f"{LAZY_FONT_PREFIX}{path.name}?v={digest}"
+    return lazy_asset_url(path, LAZY_FONT_PREFIX)
 
 # 文件名里不允许出现的字符（Windows/macOS/Linux 合并取严），以及首尾的点
 UNSAFE_NAME_CHARS = re.compile(r'[/\\:*?"<>|\x00-\x1f]')
@@ -774,12 +782,14 @@ def main():
     data["subject"] = args.subject
     lazy = split_lazy_parts(data, out)
     data_js = "window.DEMO_DATA = " + json.dumps(data, ensure_ascii=False, separators=(",", ":")) + ";\n"
+    three_url = lazy_asset_url(TEMPLATE_DIR / "vendor" / "three.min.js", LAZY_JS_PREFIX)
     index = out / html_file_name(args.task_name, rendered_at)
     render_html(
         TEMPLATE_DIR / "perler_blueprint", index, args.task_name, rendered_at,
         inline={
             "DATA_JS": data_js,
-            "THREE_JS": (TEMPLATE_DIR / "vendor" / "three.min.js").read_text(encoding="utf-8"),
+            # 不再内联 three.js（663KB）：只留一句地址，第一次切 3D 才去加载
+            "THREE_JS": "window.PIXELART_THREE_URL = " + json.dumps(three_url) + ";",
             "PIXEL_ART_PNG": img_data_uri(args.pixel_art),
             "STYLE_GUIDE_JSON": "window.STYLE_GUIDE_JSON = " + json.dumps(guide, ensure_ascii=False, separators=(",", ":")) + ";",
         },

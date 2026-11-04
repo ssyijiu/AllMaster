@@ -7,7 +7,9 @@
  * 指针：浏览时左键环视、右键平移；编辑时左键归工具，板外左键 / 右键环视，中键平移，按住空格左键临时环视。
  * three 0.160 + OrbitControls 由构建脚本内联进页面；浏览器不支持 WebGL2 时 3D 按钮置灰。
  * ===================================================================== */
-const V3 = (() => {
+/* 实例化成一个函数而不是直接跑：three.js 是外置按需的（见 js/lazy-parts.js 的 loadThree），
+   翻开图纸时 window.THREE 还没有，V3 建不出来。第一次切 3D 时先 loadThree 再重建一次。 */
+function makeV3() {
   const THREE = window.THREE, OrbitControls = window.OrbitControls;
   if (!THREE || !OrbitControls) return null;
   const QS3 = new URLSearchParams(location.search);
@@ -726,12 +728,41 @@ const V3 = (() => {
     rect: () => { const b = wrap.getBoundingClientRect(); return [b.left, b.top, b.width, b.height]; },
   };
   return { enter, leave, sync, cell, resize, melt, iron, dom: () => renderer && renderer.domElement, test };
-})();
+}
+let V3 = makeV3();
+let V3_PENDING = false;   // 正在下载 three.js：挡住连点，见 setMode
 window.__v3 = V3 && V3.test;
 
 /* 平面 / 3D 切换：编辑中也能切，改动、撤销栈、未保存状态都跟着走 */
 function setMode(m) {
   if (m === state.mode) return;
+  /* 第一次切 3D：three.js 还没下载（外置按需）。先拉下来、重建 V3，再原样走一遍。
+     这期间 state.mode 不动，平面视图照常。V3_PENDING 挡住连点——否则两次回调会各建一个
+     V3 实例，第二个没 enter，模块却已经指向它，3D 直接白屏。
+     加载失败不置灰按钮：多半是断网，联网后还能再点；能下载但建不出 V3 才是真不支持。 */
+  if (m === '3d' && !V3) {
+    if (V3_PENDING) return;
+    V3_PENDING = true;
+    toast('正在加载 3D 视图…', 2000);
+    loadThree()
+      .then(() => {
+        V3_PENDING = false;
+        V3 = makeV3();
+        window.__v3 = V3 && V3.test;
+        if (!V3) {
+          const b = document.querySelector('#modeSeg [data-mode="3d"]');
+          if (b) b.disabled = true;
+          toast('当前浏览器不支持 3D 预览', 3000);
+          return;
+        }
+        setMode(m);
+      })
+      .catch(() => {
+        V3_PENDING = false;
+        toast('3D 视图加载失败，请检查网络后重试', 5000, true);
+      });
+    return;
+  }
   state.mode = m;
   document.body.classList.toggle('mode3d', m === '3d');
   if (m === '3d' && !(V3 && V3.enter())) {
@@ -763,6 +794,8 @@ function modeKnob() {
 requestAnimationFrame(() => { modeKnob(); requestAnimationFrame(() => document.querySelector('#modeSeg .modeseg-knob').classList.remove('no-anim')); });
 window.addEventListener('resize', modeKnob);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(modeKnob);
-if (!V3) document.querySelector('#modeSeg [data-mode="3d"]').disabled = true;
+/* three.js 是外置按需的：此刻 V3 为空只代表「还没下载」，不代表不支持，按钮不能灰。
+   只有 three 已经在了却仍建不出 V3（浏览器没有 WebGL2）才置灰。 */
+if (!V3 && window.THREE && window.OrbitControls) document.querySelector('#modeSeg [data-mode="3d"]').disabled = true;
 /* [VIEW-3D] 3D 看法 END ========================================================= */
 

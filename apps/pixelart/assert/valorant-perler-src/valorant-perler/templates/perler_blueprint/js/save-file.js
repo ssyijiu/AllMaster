@@ -54,11 +54,13 @@ const NO_DOWNLOAD = location.protocol === 'about:';
 const PC_SANDBOX = NO_DOWNLOAD && !matchMedia('(pointer:coarse)').matches;
 
 /* 另存用的页面源码。
-   [LAZY-PARTS] 的图纸里有两类东西翻开后才去服务端取：
+   [LAZY-PARTS] 的图纸里有三类东西翻开后才去服务端取：
    ① 海报字体（两张 woff2，CSS 里是 /pixelart-fonts/… 的 URL，构建时外置）——
       另存的文件要离线可出海报，这里换成 data URI，和以前内联的版本逐字节同源；
-   ② 搜索场（自定义规格用）打包在 DEMO_DATA.field 里，这里把补齐后的整段换进去。
-   两者都换好之后去掉「按需取」标记。老图纸没有这个标记、字体本来就在 CSS 里，
+   ② three.js（只留了一句 /pixelart-js/… 地址，第一次切 3D 才加载）——
+      另存的文件要离线能看 3D，这里把源码取回来内联回原位置；
+   ③ 搜索场（自定义规格用）打包在 DEMO_DATA.field 里，这里把补齐后的整段换进去。
+   换好之后去掉「按需取」标记。老图纸没有这个标记、字体与 three 本来就在页面里，
    直接原样返回，和以前逐字节一致。 */
 const LAZY_FONT_URL = /\/pixelart-fonts\/[A-Za-z0-9._-]+\.woff2(?:\?v=[A-Za-z0-9]+)?/g;
 
@@ -80,9 +82,10 @@ async function saveFileFontUris() {
   return map;
 }
 
-function saveFileSource(fontUris) {
+function saveFileSource(fontUris, threeSrc) {
   let out = PAGE_SRC;
   if (fontUris) out = out.replace(LAZY_FONT_URL, (u) => fontUris[u] || u);
+  if (threeSrc) out = out.replace(threeSrc.stub, () => threeSrc.code);   // 用函数式替换：源码里的 $& $1 不能被当成替换模式
   const lazy = Array.isArray(D.lazyParts) && D.lazyParts.length;
   if (!lazy || !(D.field && D.field.labels && D.field.ref)) return out;
   const data = Object.assign({}, D);
@@ -90,6 +93,20 @@ function saveFileSource(fontUris) {
   const dataJs = 'window.DEMO_DATA = ' + JSON.stringify(data) + ';';
   const replaced = out.replace(/window\.DEMO_DATA = [\s\S]*?;\r?\n/, dataJs + '\n');
   return replaced.indexOf(dataJs) === -1 ? out : replaced;   // 万一没换成功，宁可存原样也别存坏
+}
+
+/* three.js 同样是外置的（只给 3D 看）：另存的文件要离线能看 3D，就把它取回来内联回原位置。
+   取不到、或者源码里出现 </script（会提前闭合）就留着那句地址，存出来的文件联网时 3D 照常可用。 */
+async function saveFileThreeSrc() {
+  const m = /window\.PIXELART_THREE_URL = "([^"]*)";/.exec(PAGE_SRC);
+  if (!m) return null;
+  try {
+    const r = await fetch(m[1]);
+    if (!r.ok) return null;
+    const code = await r.text();
+    if (!code || code.indexOf('</script') !== -1) return null;
+    return { stub: m[0], code };
+  } catch (e) { return null; }
 }
 
 /* 点「保存」后调用：把当前本地存档写进一份新 HTML 交给玩家 */
@@ -101,11 +118,13 @@ async function saveFileExport() {
   } catch (e) {}
   /* 懒加载的块先补齐，否则存出来的文件用不了自定义规格 */
   try { await bpCompleteAllParts(); } catch (e) { toast('联网补齐搜索数据失败，这份文件里自定义规格可能用不了', 6000, true); }
-  /* 外置的海报字体也取回来内联：浏览器按 URL 长缓存，第二次保存基本不花流量 */
-  let fontUris = null;
-  try { fontUris = await saveFileFontUris(); } catch (e) {}
+  /* 外置的海报字体 + three.js 也取回来内联：浏览器按 URL 长缓存，第二次保存基本不花流量 */
+  let fontUris = null, threeSrc = null;
+  try {
+    [fontUris, threeSrc] = await Promise.all([saveFileFontUris(), saveFileThreeSrc()]);
+  } catch (e) {}
   const json = JSON.stringify({ savedAt, items }).replace(/</g, '\\u003c');   // 防止存档内容提前闭合 <script>
-  const html = saveFileSource(fontUris).replace(SAVED_TAG, () => `<script id="perlerSaved" type="application/json">${json}<\/script>`);
+  const html = saveFileSource(fontUris, threeSrc).replace(SAVED_TAG, () => `<script id="perlerSaved" type="application/json">${json}<\/script>`);
   const name = saveFileName(), file = new File([html], name, { type: 'text/html' });
   if (isCoarse()) {
     try {
