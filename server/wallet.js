@@ -9,8 +9,8 @@
  *   wallet_redeem    兑换码入账，码只能用一次
  *   wallet_pay_claim 支付到账，支付单号幂等（回调重放不会重复入账）
  *
- * 新用户见面礼：注册即得 2 积分，走内置隐形批次 WELCOME（见下）。
- * 余额不能透支到负数：转完这 2 张就得充值或兑换，否则 INSUFFICIENT_BALANCE。
+ * 新用户见面礼：注册即得 1 积分，走内置隐形批次 WELCOME（见下）。
+ * 余额不能透支到负数：转完这 1 张就得充值或兑换，否则 INSUFFICIENT_BALANCE。
  */
 
 const dbmod = require('./db');
@@ -19,10 +19,10 @@ const FREE_FLOOR = 0;
 
 /* ---- 新用户见面礼（内置隐形批次）-----------------------------------------
  * 「用兑换码/邀请链接注册」与「什么都没用就注册」在业务上是互斥的两条路：
- * 前者拿链接面值，后者拿 2 积分，拿到任一份就不再算新用户。
+ * 前者拿链接面值，后者拿 1 积分，拿到任一份就不再算新用户。
  *
  * 实现上不另造「免费额度」概念，而是复用邀请链接那套：内置一个 batch，
- * 每个新用户从池子里领一张 2 分的码。好处是三条规则天然成立、不用重复实现——
+ * 每个新用户从池子里领一张 1 分的码。好处是三条规则天然成立、不用重复实现——
  *   · 仅新用户：批次 new_user_only=1，与兑换码/邀请链接同一段判定；
  *   · 每人一张：per_user_limit=1，重复进站返回 alreadyOwned 而不是报错；
  *   · 领过即老用户：入账写一条 redeem 流水，回头点别人的邀请链接会被
@@ -31,7 +31,9 @@ const FREE_FLOOR = 0;
  * 后台批次列表里隐藏这条批次（label 带「系统」），避免误停用/误删。
  */
 const WELCOME_BATCH = 'WELCOME';
-const WELCOME_CREDITS = 2;
+/* 2026-11-04 由 2 改 1：改的只是常量，历史已发放的流水不动；
+ * 池子里没发出去的旧面值码由 ensureWelcomeBatch/ensureWelcomeCode 自愈归一。 */
+const WELCOME_CREDITS = 1;
 /* 入账 memo 同时是 /my 明细的展示文案（系统赠送没有「码」可展示） */
 const WELCOME_MEMO = '新用户见面礼';
 /* 与兑换码同一套字符集（去掉易混的 I/O/0/1）。这里复制一份而不是 require admin.js：
@@ -302,8 +304,13 @@ function welcomeCode() {
   return 'WL' + s;
 }
 
-/* 批次行按需落库：不需要版本迁移，第一个新用户来领时自动补上。 */
+/* 批次行按需落库：不需要版本迁移，第一个新用户来领时自动补上。
+ * 面值以 WELCOME_CREDITS 为准：常量改过（2→1）后老库里的批次行还留着旧面值，
+ * 这里顺手归一，否则 welcomeAvailable/newUserPreview 会按批次旧面值显示。 */
 function ensureWelcomeBatch(d) {
+  d.prepare(
+    'UPDATE redeem_batches SET credits = ? WHERE batch = ? AND credits <> ?'
+  ).run(WELCOME_CREDITS, WELCOME_BATCH, WELCOME_CREDITS);
   d.prepare(
     'INSERT OR IGNORE INTO redeem_batches ' +
     '(batch, label, landing, credits, quota, new_user_only, per_user_limit, expires_at, active, created_at) ' +
@@ -312,8 +319,12 @@ function ensureWelcomeBatch(d) {
 }
 
 /* 池子空了就补一张。不预生成名额：新用户来多少补多少，
-   免得「名额/剩余」这种面向运营的口径被一条看不见的批次搅乱。 */
+   免得「名额/剩余」这种面向运营的口径被一条看不见的批次搅乱。
+   池里没发出去的旧面值码同样归一到当前面值（已发放的流水不动）。 */
 function ensureWelcomeCode(d) {
+  d.prepare(
+    'UPDATE redeem_codes SET credits = ? WHERE batch = ? AND used_by IS NULL AND credits <> ?'
+  ).run(WELCOME_CREDITS, WELCOME_BATCH, WELCOME_CREDITS);
   const left = d.prepare(
     'SELECT COUNT(*) AS n FROM redeem_codes WHERE batch = ? AND used_by IS NULL ' +
     'AND (expires_at IS NULL OR expires_at >= ?)'
@@ -325,7 +336,7 @@ function ensureWelcomeCode(d) {
   ).run(welcomeCode(), WELCOME_CREDITS, WELCOME_BATCH, dbmod.nowMs(), null, 1, 1);
 }
 
-/* 注册即领 2 积分。幂等：重复调用返回 alreadyOwned，不重复发。
+/* 注册即领 1 积分。幂等：重复调用返回 alreadyOwned，不重复发。
  * 已有任何积分流水 → 被 new_user_only 拦下（他走的是兑换码/邀请链接那条路，
  * 或者已经开始消费了），这正是「两条路互斥」的落点。 */
 function claimWelcome(userId) {
@@ -350,7 +361,7 @@ function welcomeAvailable(userId) {
  * 金额在注册前就确定——带码/批次看面值，什么都没带看见面礼。
  * 只读、不鉴权；**不透露码的可用状态**（已用/过期的码照回面值，有效性由领取时判），
  * 查不到、批次已停用/过期、名额领完，一律回落见面礼 ——
- * 必须与「领取失败 → 兜底见面礼」的实际行为一致，不能显示 10 实际给 2。 */
+ * 必须与「领取失败 → 兜底见面礼」的实际行为一致，不能显示的面值和实际发的不一致。 */
 function newUserPreview(code, batch) {
   const c = String(code || '').trim().toUpperCase();
   const b = String(batch || '').trim().toUpperCase();
@@ -368,7 +379,7 @@ function newUserPreview(code, batch) {
 /* 这批链接现在还能领到几分：0 = 领不到（按见面礼算）。
  * 判定顺序与 redeemBatchCore 一致：批次存在 → 启用 → 未过期 → 有可用码。
  * 早先只看「有没有没用过的码」，批次停用后码还躺在池子里，于是仍显示面值 10，
- * 点进来却只能拿到见面礼 2（2026-11-03 线上反馈的 bug）。 */
+ * 点进来却只能拿到见面礼（2026-11-03 线上反馈的 bug）。 */
 function batchPreviewCredits(b) {
   const bt = dbmod.db.prepare(
     'SELECT credits, active, expires_at FROM redeem_batches WHERE batch = ?'

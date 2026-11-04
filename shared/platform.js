@@ -261,7 +261,7 @@
     '        <svg class="icon icon-16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4 L12 12 M12 4 L4 12"/></svg>',
     '      </button>',
     '    </div>',
-    '    <p class="modal-desc">积分全平台通用：1 积分 = 生成 1 次；生成失败自动退回；新用户注册即送 2 积分。</p>',
+    '    <p class="modal-desc">积分全平台通用：1 积分 = 生成 1 次；生成失败自动退回；新用户注册即送 1 积分。</p>',
     '    <p class="wallet-balance">',
     '      <span class="wb-label">当前余额</span>',
     '      <span class="wb-num"><b id="walletBalanceBig">–</b>积分</span>',
@@ -724,7 +724,7 @@
           els.walletBalanceBig.textContent = String(walletService.balance);
         }
       },
-      /* 生成前扣 1 积分；余额不足（新用户 2 积分用完）时抛 insufficient */
+      /* 生成前扣 1 积分；余额不足（新用户 1 积分用完）时抛 insufficient */
       consume: function () {
         var ref = 'gen-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
         return walletRpc('wallet_consume', { p_credits: -1, p_ref: ref }).then(function (rows) {
@@ -798,7 +798,7 @@
           throw err;
         });
       },
-      /* 新用户见面礼：注册即送 2 积分，服务端按内置批次发放（仅新用户、每人一张）。
+      /* 新用户见面礼：注册即送 1 积分，服务端按内置批次发放（仅新用户、每人一张）。
        * 形状与 redeemBatch 一致；已有流水时服务端回 CODE_NEW_USER_ONLY。 */
       claimWelcome: function () {
         return walletRpc('wallet_claim_welcome', {}).then(function (res) {
@@ -1116,7 +1116,7 @@
         var retryable = errCode === 'TOO_MANY' || !errCode;   /* 没码 = 网络/服务异常 */
         if (!retryable) { dropPending(pendingKey(claim.type)); }
         /* 链接本身已停用/过期/领完：预览接口已按见面礼给数（source=welcome），
-           紧接着会兜底发 2 积分。这时再弹一条红字「链接已停止发放」，
+           紧接着会兜底发 1 积分。这时再弹一条红字「链接已停止发放」，
            用户会以为注册失败。静默丢掉这条错误，只留见面礼到账提示。 */
         var linkDead = errCode === 'BATCH_CLOSED' || errCode === 'BATCH_EXPIRED' ||
                        errCode === 'BATCH_EXHAUSTED' || errCode === 'BATCH_INVALID';
