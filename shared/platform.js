@@ -272,12 +272,12 @@
     /* 线上支付没开通期间的唯一充值通道：二维码 + 三步说明。
        套餐卡只是标价（让人知道多少钱能买多少积分），钱从这里进来。 */
     '    <div class="manual-pay" id="manualPay">',
-    '      <img class="mp-qr" src="/shared/assets/wechat-qr.png" alt="点豆客服微信二维码" width="150" height="150" />',
+    '      <img class="mp-qr" src="/shared/assets/wechat-qr.png?v=20261104" alt="点豆客服企业微信二维码" width="168" height="168" />',
     '      <div class="mp-body">',
-    '        <p class="mp-title">微信人工充值</p>',
-    '        <p class="mp-desc">扫码加客服微信，告诉他充多少，转账后把<b>注册邮箱</b>发过去。</p>',
+    '        <p class="mp-title">企业微信人工充值</p>',
+    '        <p class="mp-desc">扫码加客服，发<b>对应金额的红包</b>，再留<b>注册邮箱</b>。</p>',
     '        <p class="mp-eta">10 分钟内到账</p>',
-    '        <p class="mp-tip">手机用户可长按二维码识别</p>',
+    '        <p class="mp-tip">暂不支持转账，请发红包 · 长按可识别</p>',
     '      </div>',
     '    </div>',
     '    <div class="login-divider"><span>或</span></div>',
@@ -328,9 +328,9 @@
     '    </div>',
     '    <p class="modal-desc">充值、退款、图纸打不开，加微信直接说，一般 10 分钟内回复。</p>',
     '    <div class="contact-qr-wrap">',
-    '      <img class="contact-qr" src="/shared/assets/wechat-qr.png" alt="点豆客服微信二维码" width="220" height="220" />',
+    '      <img class="contact-qr" src="/shared/assets/wechat-qr.png?v=20261104" alt="点豆客服企业微信二维码" width="220" height="220" />',
     '    </div>',
-    '    <p class="contact-step"><b>要充值</b>：加好友后告诉客服充多少 → 转账 → 把<b>注册邮箱</b>发过来，10 分钟内到账。</p>',
+    '    <p class="contact-step"><b>要充值</b>：加好友后发<b>对应金额的红包</b>（暂不支持转账）→ 把<b>注册邮箱</b>发过来，10 分钟内到账。</p>',
     '    <p class="contact-step">手机用户可以长按二维码识别添加。</p>',
     '  </div>',
     '</div>'
@@ -836,7 +836,7 @@
     function syncPayNote() {
       if (!els.payChannelsNote) { return; }
       els.payChannelsNote.textContent = payChannelState.xunhupay
-        ? '' : '线上支付正在开通 —— 现在请扫码加客服微信充值，10 分钟内到账。';
+        ? '' : '线上支付正在开通 —— 现在请扫码加客服企业微信，发红包充值，10 分钟内到账。';
     }
     function showWalletMsg(msg, warn) {
       els.walletMsg.textContent = msg;
@@ -956,14 +956,14 @@
     function focusManualPay() {
       var el = els.manualPay;
       if (!el) {
-        showWalletMsg('线上支付正在开通，请扫码加客服微信充值，10 分钟内到账。');
+        showWalletMsg('线上支付正在开通，请扫码加客服企业微信发红包充值，10 分钟内到账。');
         return;
       }
       try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
       catch (_) { el.scrollIntoView(); }
       el.classList.add('flash');
       setTimeout(function () { el.classList.remove('flash'); }, 1800);
-      showWalletMsg('线上支付正在开通，现在走微信人工充值，10 分钟内到账。');
+      showWalletMsg('线上支付正在开通，现在走企业微信人工充值（发红包），10 分钟内到账。');
     }
     function startPay(product) {
       if (!Store.state.user) { openLogin(); return; }

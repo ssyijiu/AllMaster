@@ -362,7 +362,9 @@
       box-shadow: 0 0 0 3px rgba(66, 98, 255, .20);
     }
     .mp-qr {
-      width: 150px; height: 150px; flex: none;
+      /* 168 不是随手取的：企业微信名片码模块多（57×57+），150px 时单模块只剩 2.6px，
+         OpenCV 已解不出，手机扫也吃力。168px 是实测能稳定解的临界点。 */
+      width: 168px; height: 168px; flex: none;
       border-radius: var(--radius-md);
       background: #fff;
       display: block;
