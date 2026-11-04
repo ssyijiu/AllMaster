@@ -309,9 +309,19 @@ function scrubPaths(s) {
 const UPSTREAM_RE = /连不上|连接|Connection|Timeout|timed out|超时|HTTP 5\d\d|50[234]|rate.?limit|限流|未完成|upstream|服务未返回|取图|额度/i;
 
 /* 给玩家看的是一句结论，真因放在括号里（运维能一眼定性，玩家也不会只看到技术术语） */
+/* 对外隐藏上游供应商信息：上游返回的 msg 可能带「登录掌瓦后可继续使用」等字样，
+   服务商名（掌瓦/腾讯/val-perler.qq.com）一律不允许出现在用户可见文案里。
+   只影响展示层——完整原文仍由 saveFailureLog 写进任务目录的失败日志，排查不受影响。 */
+function scrubVendor(s) {
+  return s
+    .replace(/，?登录掌瓦[^，。"'},\n]*/g, '')      /* 「登录掌瓦后可继续使用」整句删除 */
+    .replace(/掌瓦|腾讯云?/g, '上游')               /* 兜底：残余的供应商称谓 */
+    .replace(/val-perler\.qq\.com/g, '上游服务');   /* 域名兜底（异常栈里可能出现） */
+}
+
 function wrapReason(reason) {
   const head = UPSTREAM_RE.test(reason) ? '出图服务暂时不可用，请稍后重试' : '生成失败，请重试';
-  return head + '（' + reason + '）';
+  return head + '（' + scrubVendor(reason) + '）';
 }
 
 function explainFailure(code, signal, timedOut, stderrTail, stdoutTail) {
