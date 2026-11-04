@@ -387,6 +387,87 @@ function findOutputHtml(workDir) {
 
 const MIME_RE = /^data:(image\/(png|jpeg|jpg|webp));base64,([A-Za-z0-9+/=]+)$/;
 
+/* ---------- 图纸单文件的下发：压缩 + ETag + 压缩结果缓存 ---------- *
+ * 一张图纸是 3–9MB 的自包含单文件（逐格投票数据、25 套色板、脚本、图片全内联），
+ * 而内容对一个任务号是固定的（改图会新建任务）。所以有两笔白送的钱可以省：
+ *   ① 不压缩：文本部分能压掉一半以上；
+ *   ② 原来是 no-store：同一张图纸点第二遍还是整份重下。
+ * 这里按 Accept-Encoding 选 br/gzip，用内容哈希当 ETag，命中直接回 304；
+ * 压缩结果按「哈希 + 编码」缓存，省掉每次打开重压（9MB 的 br 约 0.1–0.5s）。
+ *
+ * 为什么不干脆 immutable 一年：下发时还会注入任务变量（PIXELART_TASK_ID 等），
+ * 以后注入内容要是变了，长缓存会让老副本读不到新变量。max-age=1h + ETag 复核
+ * 既能让「点开→后退→再点开」零请求，也不会把旧版本钉死一年。
+ * 缓存上限 96MB（约十几张图纸的压缩结果），超了按写入顺序淘汰最旧的。
+ */
+const HTML_CACHE = new Map();
+const HTML_CACHE_LIMIT = 96 * 1024 * 1024;
+let htmlCacheBytes = 0;
+
+/* q=0 表示客户端明确不接受，不能只看关键词 */
+function acceptsEncoding(header, name) {
+  const m = new RegExp('(?:^|,)\\s*' + name + '\\s*(?:;\\s*q=([0-9.]+))?', 'i').exec(String(header || ''));
+  if (!m) { return false; }
+  return m[1] === undefined || parseFloat(m[1]) > 0;
+}
+
+function pickEncoding(header) {
+  if (acceptsEncoding(header, 'br')) { return 'br'; }
+  if (acceptsEncoding(header, 'gzip')) { return 'gzip'; }
+  return '';
+}
+
+function encodeHtml(body, enc) {
+  if (enc === 'br') {
+    return zlib.brotliCompressSync(body, {
+      params: {
+        [zlib.constants.BROTLI_PARAM_QUALITY]: 5,
+        [zlib.constants.BROTLI_PARAM_SIZE_HINT]: body.length
+      }
+    });
+  }
+  if (enc === 'gzip') { return zlib.gzipSync(body, { level: 6 }); }
+  return body;
+}
+
+function etagMatches(header, etag) {
+  if (!header) { return false; }
+  const want = etag.replace(/^W\//, '');
+  return String(header).split(',').some((v) => v.trim().replace(/^W\//, '') === want);
+}
+
+function sendBlueprintHtml(req, res, body) {
+  const digest = crypto.createHash('sha1').update(body).digest('hex').slice(0, 20);
+  const etag = '"' + digest + '"';
+  const enc = pickEncoding(req.headers['accept-encoding']);
+  const headers = {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'private, max-age=3600',
+    'ETag': etag,
+    'Vary': 'Accept-Encoding'
+  };
+  if (etagMatches(req.headers['if-none-match'], etag)) {
+    res.writeHead(304, headers);
+    return res.end();
+  }
+  const key = digest + ':' + (enc || 'raw');
+  let payload = HTML_CACHE.get(key);
+  if (!payload) {
+    payload = encodeHtml(body, enc);
+    HTML_CACHE.set(key, payload);
+    htmlCacheBytes += payload.length;
+    while (htmlCacheBytes > HTML_CACHE_LIMIT && HTML_CACHE.size > 1) {
+      const oldest = HTML_CACHE.keys().next().value;
+      htmlCacheBytes -= HTML_CACHE.get(oldest).length;
+      HTML_CACHE.delete(oldest);
+    }
+  }
+  headers['Content-Length'] = String(payload.length);
+  if (enc) { headers['Content-Encoding'] = enc; }
+  res.writeHead(200, headers);
+  return res.end(payload);
+}
+
 /* ---------- 引擎工厂：每个实例独立任务表 / 任务目录 / 生图后端 ---------- */
 
 function createEngine(options) {
@@ -884,12 +965,9 @@ function createEngine(options) {
     } catch (err) {
       return sendJson(res, 410, { error: { message: '图纸文件已清理' } });
     }
-    res.writeHead(200, {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Content-Length': body.length,
-      'Cache-Control': 'no-store'
-    });
-    return res.end(body);
+    /* 一个任务号的图纸内容是不变的：压缩 + ETag 复核，第二次打开直接 304。
+       图纸本身仍是「单文件」，保存/转发/离线打开的行为一点没变。 */
+    return sendBlueprintHtml(req, res, body);
   }
 
   /* POST /regen { id } → { taskId }：对已完成任务做「一键重转」。

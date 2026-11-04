@@ -159,6 +159,70 @@ def img_data_uri(path: Path) -> str:
 SUBSTAGE = "↳"      # 进度行前缀：本脚本内部的子阶段；整段由外层管线用 `[阶段名] cmd` 宣告
 
 
+# ---------- 内联图瘦身：页面里的 PNG/JPEG data URI 换成 WebP ----------
+# 图纸是自包含单文件，原图按 PNG 内联时一张 1024px 就要 1.3–1.7MB（占整份文件的 1/3），
+# 换成 WebP 后只剩一两成。只换「够大」的图：画风拇指图（260px 约 23KB）和 48px 图标
+# 本来就几 KB，重压一次只会掉画质、省不了多少。字体是 font/woff2，正则不碰。
+INLINE_IMG = re.compile(r'data:image/(?:png|jpeg|jpg);base64,([A-Za-z0-9+/=]+)')
+WEBP_MIN_BYTES = 60_000     # 小于这个体积的内联图不动
+WEBP_MIN_GAIN = 0.9         # 至少小 10% 才替换，避免个别图反变大
+# 颜色数不超过这个数，按「色板图」处理：用无损 WebP。拼豆的像素底稿就是这种——
+# 每种颜色必须原样落格，有损压缩的色偏就是「画错色号」；而无损 WebP 对色块图通常只有
+# PNG 的 1/5，比有损还小（实测 1024² 六色块：PNG 15KB → 无损 3KB，q90 有损反而 30KB）。
+WEBP_LOSSLESS_MAX_COLORS = 2048
+
+
+def _to_webp(raw: bytes, quality: int) -> bytes | None:
+    try:
+        with Image.open(io.BytesIO(raw)) as im:
+            im.load()
+            alpha = im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info)
+            target = im.convert("RGBA" if alpha else "RGB")
+            buf = io.BytesIO()
+            # 色板图走无损（像素完全一致），照片类走有损；method=4 与 6 体积差 1%，耗时差一个量级
+            if target.getcolors(WEBP_LOSSLESS_MAX_COLORS) is not None:
+                target.save(buf, "WEBP", lossless=True, quality=100, method=4)
+            else:
+                target.save(buf, "WEBP", quality=quality, alpha_quality=100, method=4)
+            return buf.getvalue()
+    except Exception:
+        return None
+
+
+def shrink_inline_images(html: str, quality: int = 90) -> tuple[str, dict]:
+    """把内联的 PNG/JPEG 换成 WebP，返回 (新 HTML, 统计)。
+
+    同一张图可能在页面里出现多次（多处引用同一个 data URI），按 base64 串记忆化，
+    既省重复编码，也保证同一张图在页面各处仍共用同一份数据。
+    """
+    stats = {"n": 0, "before": 0, "after": 0, "kept": 0}
+    memo: dict[str, str] = {}
+
+    def sub(m: re.Match) -> str:
+        b64 = m.group(1)
+        hit = memo.get(b64)
+        if hit is not None:
+            return hit
+        out = m.group(0)
+        try:
+            raw = base64.b64decode(b64)
+        except Exception:
+            raw = b""
+        if len(raw) >= WEBP_MIN_BYTES:
+            webp = _to_webp(raw, quality)
+            if webp is not None and len(webp) < len(raw) * WEBP_MIN_GAIN:
+                out = "data:image/webp;base64," + base64.b64encode(webp).decode("ascii")
+                stats["n"] += 1
+                stats["before"] += len(raw)
+                stats["after"] += len(webp)
+            else:
+                stats["kept"] += 1
+        memo[b64] = out
+        return out
+
+    return INLINE_IMG.sub(sub, html), stats
+
+
 def stage(name: str) -> float:
     """宣告一个子阶段：打印 `[↳ 名]` 供预览页分段时间，返回本时刻供调用方算本段耗时。"""
     now = time.perf_counter()
@@ -508,7 +572,49 @@ def pick_levels(candidates, base_n, ratios):
     return [picked[n] for n in sorted(picked)]
 
 
+def webpify_files(paths: list[Path], dry_run: bool = False) -> int:
+    """把已出好的图纸 HTML 就地瘦身（内联 PNG → WebP）。幂等：第二次跑找不到可换的图。
+
+    老图纸已经发出去了，重出成本高（要重跑生图），但下发体积仍然拖慢打开速度，
+    所以留一个离线批量改造的入口：只改内联图片这一段，数据、脚本、文件名一律不动。
+    """
+    total_before = total_after = changed = 0
+    for p in paths:
+        if not p.is_file():
+            print(f"跳过（不存在）：{p}")
+            continue
+        before = p.stat().st_size
+        html = p.read_text(encoding="utf-8", errors="replace")
+        new, st = shrink_inline_images(html)
+        after = len(new.encode("utf-8")) if st["n"] else before
+        total_before += before
+        total_after += after
+        if st["n"]:
+            changed += 1
+            if not dry_run:
+                p.write_text(new, encoding="utf-8")
+            print(f"{'[预演] ' if dry_run else ''}{before / 1048576:5.1f}MB → {after / 1048576:5.1f}MB  "
+                  f"{st['n']} 张  {p.name}")
+        else:
+            print(f"无需改动  {before / 1048576:5.1f}MB  {p.name}")
+    if changed:
+        print(f"\n共 {changed} 个文件：{total_before / 1048576:.1f}MB → {total_after / 1048576:.1f}MB"
+              f"（省 {(total_before - total_after) / 1048576:.1f}MB）{'  [预演，未写盘]' if dry_run else ''}")
+    else:
+        print("\n没有需要改造的文件")
+    return 0
+
+
 def main():
+    # 批量瘦身模式：不走生图参数校验，独立入口
+    if "--webpify" in sys.argv:
+        i = sys.argv.index("--webpify")
+        targets = [Path(a) for a in sys.argv[i + 1:] if not a.startswith("-")]
+        if not targets:
+            print("用法：build_html_blueprint.py --webpify <图纸.html> [更多文件...] [--dry-run]")
+            return 2
+        return webpify_files(targets, dry_run="--dry-run" in sys.argv)
+
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--process-dir", type=Path, required=True, help="alignment_search 输出目录（含 {size}_k{N}/metrics.json）")
     ap.add_argument("--source", type=Path, action="append", help="原始输入图，可重复传入；文生图等没有原图时不传，页面不出现「原图」页签")
@@ -631,6 +737,12 @@ def main():
             "STYLE_GUIDE_JSON": "window.STYLE_GUIDE_JSON = " + json.dumps(guide, ensure_ascii=False, separators=(",", ":")) + ";",
         },
     )
+    # 内联图转 WebP：整份文件的大头在这里（原图按 PNG 内联时一张就 1MB+）
+    html, shrunk = shrink_inline_images(index.read_text(encoding="utf-8"))
+    if shrunk["n"]:
+        index.write_text(html, encoding="utf-8")
+        print(f"  内联图 WebP：{shrunk['n']} 张，{shrunk['before'] / 1048576:.1f}MB → "
+              f"{shrunk['after'] / 1048576:.1f}MB")
     print(f"✓ HTML 图纸: {index}（单文件，可直接转发） ({len(data_specs)} 规格, 色板 {len(palettes)} 套 / "
           f"{sum(len(p['colors']) for p in palettes)} 色, {index.stat().st_size / 1024 / 1024:.1f}MB)")
 

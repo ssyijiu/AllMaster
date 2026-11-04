@@ -38,18 +38,37 @@ if (NO_DOWNLOAD) {
   pixelDlBtn.onclick = () => {
     const img = document.querySelector('#view-pixel .frame img');
     if (!img || !img.src) { toast('没有可导出的转换图', 4000, true); return; }
+    const fileName = `${BE_TAG ? BE_TAG + '_' : ''}转换图${SEG_TAG}${TASK_TAG ? '_' + TASK_TAG : ''}.png`;
+    const saveHref = (href) => {
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = fileName;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 4000);
+      toast('转换图已保存');
+    };
     try {
       const parts = img.src.split(',');
       const mime = (parts[0].match(/data:([^;]+)/) || [0, 'image/png'])[1];
-      const bin = atob(parts[1]);
+      /* 页面里的内联图现在多半是 WebP（体积只有 PNG 的一两成），但文件名一直以 .png 收尾。
+         直接落盘会得到「后缀 png、内容 webp」的坏文件（打印店/看图软件都不认），所以非 PNG
+         先过一遍画布存回 PNG——toDataURL 是同步的，不会破坏上面那条 Safari 手势约束。 */
+      if (mime === 'image/png') {
+        const bin = atob(parts[1]);
+        const u8 = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+        saveHref(URL.createObjectURL(new Blob([u8], { type: mime })));
+        return;
+      }
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth || img.width;
+      c.height = img.naturalHeight || img.height;
+      c.getContext('2d').drawImage(img, 0, 0);
+      const png = c.toDataURL('image/png');
+      const bin = atob(png.slice(png.indexOf(',') + 1));
       const u8 = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([u8], { type: mime }));
-      a.download = `${BE_TAG ? BE_TAG + '_' : ''}转换图${SEG_TAG}${TASK_TAG ? '_' + TASK_TAG : ''}.png`;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-      toast('转换图已保存');
+      saveHref(URL.createObjectURL(new Blob([u8], { type: 'image/png' })));
     } catch (e) { toast('导出失败，可长按图片直接保存', 4000, true); }
   };
 };
