@@ -437,12 +437,27 @@ function etagMatches(header, etag) {
 }
 
 function sendBlueprintHtml(req, res, body) {
+  /* max-age=1h：注入内容（任务号/画风/备注）以后要是变了，长缓存会让老副本读不到新值 */
+  return sendCompressed(req, res, body, { type: 'text/html; charset=utf-8', maxAge: 3600 });
+}
+
+/* 图纸附属数据（比如自定义规格用的搜索场）：内容对任务号固定、永不变，可以放心长缓存 */
+function sendPartJson(req, res, body) {
+  return sendCompressed(req, res, body, { type: 'application/json; charset=utf-8', maxAge: 31536000, immutable: true });
+}
+
+/* 统一的「压缩 + ETag 复核」下发：选 br/gzip、按内容哈希回 304、压缩结果进共享缓存 */
+function sendCompressed(req, res, body, opts) {
+  const o = opts || {};
   const digest = crypto.createHash('sha1').update(body).digest('hex').slice(0, 20);
   const etag = '"' + digest + '"';
   const enc = pickEncoding(req.headers['accept-encoding']);
+  const cache = o.maxAge
+    ? (o.immutable ? 'private, max-age=' + o.maxAge + ', immutable' : 'private, max-age=' + o.maxAge)
+    : 'no-store';
   const headers = {
-    'Content-Type': 'text/html; charset=utf-8',
-    'Cache-Control': 'private, max-age=3600',
+    'Content-Type': o.type || 'application/octet-stream',
+    'Cache-Control': cache,
     'ETag': etag,
     'Vary': 'Accept-Encoding'
   };
@@ -575,6 +590,18 @@ function createEngine(options) {
       /* 图纸：读一次原文，既算大小也压进归档 */
       const raw = fs.readFileSync(t.htmlPath);
       fs.writeFileSync(path.join(dir, 'drawing.html.gz'), zlib.gzipSync(raw, { level: 9 }));
+      /* 按需取的大块数据（parts/）跟着图纸一起进归档：任务目录 72h 后会被清，
+         但玩家几个月后回来填一个自定义边长，这块还得在。 */
+      try {
+        const partDir = path.join(t.workDir, 'output', 'parts');
+        for (const f of fs.readdirSync(partDir)) {
+          if (!f.endsWith('.json')) { continue; }
+          const outDir = path.join(dir, 'parts');
+          fs.mkdirSync(outDir, { recursive: true });
+          fs.writeFileSync(path.join(outDir, f + '.gz'),
+            zlib.gzipSync(fs.readFileSync(path.join(partDir, f)), { level: 9 }));
+        }
+      } catch (_) { /* 没有 parts/ 就是老图纸，忽略 */ }
 
       const styleLabel = (findStyle(t.styleId) || {}).label || '';
       const meta = {
@@ -919,10 +946,15 @@ function createEngine(options) {
     /* 注入到 <script> 里：把 < 转义掉，防止备注里出现 </script> 提前闭合标签 */
     const jsStr = (v) => JSON.stringify(String(v == null ? '' : v)).replace(/</g, '\\u003c');
     const SEG_PATCH = "${window.PIXELART_SEG || ''}";   // 旧图纸补丁用（画风_备注片段）
+    /* 页面要按任务号回来取「按需取」的大块数据（[LAZY-PARTS] 搜索场），得知道自己该打哪个前缀：
+       /api/pixelart（自研）、/api/pixelart-vp（腾讯）；/api/pixelart2 在路由里已改写，取到的也是 vp。 */
+    const apiBaseM = /^(\/api\/[A-Za-z0-9_-]+)\/task\/html/.exec(req.url || '');
+    const API_BASE = apiBaseM ? apiBaseM[1] : '/api/pixelart';
     let body;
     try {
       let html = source;
-      const inject = '<script>window.PIXELART_TASK_ID=' + jsStr(id) +
+      const inject = '<script>window.PIXELART_API_BASE=' + jsStr(API_BASE) +
+        ';window.PIXELART_TASK_ID=' + jsStr(id) +
         ';window.PIXELART_BACKEND=' + jsStr(BACKEND_TAG) +
         ';window.PIXELART_STYLE=' + jsStr(styleLabel) +
         ';window.PIXELART_NOTE=' + jsStr(t.notes || '') +
@@ -968,6 +1000,31 @@ function createEngine(options) {
     /* 一个任务号的图纸内容是不变的：压缩 + ETag 复核，第二次打开直接 304。
        图纸本身仍是「单文件」，保存/转发/离线打开的行为一点没变。 */
     return sendBlueprintHtml(req, res, body);
+  }
+
+  /* GET /task/part?id=&k= → 图纸里按需取的大块数据（目前只有 field：自定义规格用的搜索场）。
+     为什么单独发：这一块是逐像素标签 + 评估参照图，一两 MB，翻图纸时用不到，
+     只有玩家真的去填「自定义边长」才需要。老图纸没有 parts/ 目录，直接 404，
+     页面见 404 就退回「自定义规格不可用」的提示（老图纸里数据本来是全内联的，走不到这里）。 */
+  function handleTaskPart(req, res, fullUrl, sendJson) {
+    const id = String(fullUrl.searchParams.get('id') || '');
+    const key = String(fullUrl.searchParams.get('k') || '');
+    if (!/^[a-z][a-z0-9-]{0,23}$/.test(key)) {
+      return sendJson(res, 400, { error: { code: 'BAD_PART', message: '参数不对' } });
+    }
+    const t = resolveTask(id);
+    if (!t) { return sendJson(res, 404, { error: { code: 'NO_TASK', message: '任务不存在' } }); }
+    let raw = null;
+    if (t.workDir) {
+      try { raw = fs.readFileSync(path.join(t.workDir, 'output', 'parts', key + '.json')); } catch (_) { raw = null; }
+    }
+    if (raw == null) {
+      try { raw = zlib.gunzipSync(fs.readFileSync(path.join(archiveRoot, id, 'parts', key + '.json.gz'))); } catch (_) { raw = null; }
+    }
+    if (raw == null) {
+      return sendJson(res, 404, { error: { code: 'NO_PART', message: '这块数据不在（老图纸或已清理）' } });
+    }
+    return sendPartJson(req, res, raw);
   }
 
   /* POST /regen { id } → { taskId }：对已完成任务做「一键重转」。
@@ -1096,7 +1153,7 @@ function createEngine(options) {
 
   return {
     backend, taskRoot, archiveRoot,
-    handleGenerate, handleTaskStatus, handleTaskStream, handleTaskHtml,
+    handleGenerate, handleTaskStatus, handleTaskStream, handleTaskHtml, handleTaskPart,
     handleTaskCover, handleTaskMeta, handleStyles, handleRegen,
     /* 手动归档（补录历史作品 / 运维脚本用）：返回归档后的 meta，失败返回 null */
     archiveTask: (id) => { archiveWork(id); return readArchivedMeta(archiveRoot, id); }

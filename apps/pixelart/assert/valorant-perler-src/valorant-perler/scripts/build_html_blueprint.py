@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import io
 import csv
 import json
@@ -115,6 +116,21 @@ DOMESTIC = [("COCO", "COCO"), ("漫漫", "MANMAN"), ("盼盼", "PANPAN"), ("咪�
 INCLUDE = re.compile(r"^/\* @include (\S+) \*/$", re.M)
 ASSET_SRC = re.compile(r'src="(assets/[^"]+)"')
 ASSET_URL = re.compile(r'url\("(assets/[^"]+)"\)')
+
+# ---------- 海报字体外置 ----------
+# TencentSans 两款字重（300 / 700，二进制约 197KB）只被海报 canvas 用，页面 DOM 一处都没用。
+# 内联进 CSS 等于让每个访客、每张图纸都为「海报」这一次点击付掉 200KB。改成普通 URL 之后，
+# 浏览器的字体懒加载天然接管：不画海报就不下载（poster.js 的 document.fonts.load 才触发）。
+# 唯一的代价是「另存单文件」要自给自足，这一步由页面自己把这两款字取回来内联（js/save-file.js）。
+# ZCOOL 那款是顶栏标题字，翻开就要显示，继续原样内联。
+LAZY_FONT_NAMES = ("TencentSans-W3.woff2", "TencentSans-W7.woff2")
+LAZY_FONT_PREFIX = "/pixelart-fonts/"
+
+
+def lazy_font_url(path: Path) -> str:
+    """字体外置 URL。带内容哈希：换了字体文件就换 URL，因此可以放心一年 immutable。"""
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:10]
+    return f"{LAZY_FONT_PREFIX}{path.name}?v={digest}"
 
 # 文件名里不允许出现的字符（Windows/macOS/Linux 合并取严），以及首尾的点
 UNSAFE_NAME_CHARS = re.compile(r'[/\\:*?"<>|\x00-\x1f]')
@@ -240,7 +256,15 @@ def assemble_template(template: Path) -> str:
     html = INCLUDE.sub(inline, (template / "index.html").read_text(encoding="utf-8"))
     # 模板自带的小图（如编辑工具图标）以 src="assets/…"、字体以 CSS url("assets/…") 引用，内联成 data URI，保证单文件转发后不裂图
     html = ASSET_SRC.sub(lambda m: f'src="{img_data_uri(template / m.group(1))}"', html)
-    return ASSET_URL.sub(lambda m: f'url("{img_data_uri(template / m.group(1))}")', html)
+
+    def url_uri(m):
+        path = template / m.group(1)
+        # 海报字体不外置不行：它一个字重的体积抵得上整页 CSS，却只服务于「导出海报」
+        if path.suffix.lower() == ".woff2" and path.name in LAZY_FONT_NAMES:
+            return f'url("{lazy_font_url(path)}")'
+        return f'url("{img_data_uri(path)}")'
+
+    return ASSET_URL.sub(url_uri, html)
 
 
 def render_html(template: Path, output: Path, task_name: str, rendered_at: str,
@@ -605,6 +629,28 @@ def webpify_files(paths: list[Path], dry_run: bool = False) -> int:
     return 0
 
 
+# ---------- 按需取的大块数据（搜索场） ----------
+# 一张图纸 6MB 里，自定义规格要用的搜索场（逐像素细簇标签 1MB + 评估参照图 0.6MB）占两成多，
+# 但绝大多数玩家不会去填自定义边长：翻开就下载是白花流量。构建时把这两块拆到 parts/ 下，
+# 页面点「生成」时才按任务号取一次（服务端按任务号做长缓存，第二次打开直接命中）。
+# 没有 parts/ 的老图纸（以及本地保存的单文件）里这两块仍然内联，页面按 field.labels 在不在决定要不要取。
+LAZY_PART_FIELD = "field"
+
+
+def split_lazy_parts(data: dict, out: Path) -> list[str]:
+    """把搜索场里的大块搬出去，返回搬走了哪些 key（空 = 没搬，页面就全内联用）。"""
+    field = data.get("field") or {}
+    big = {k: field.pop(k) for k in ("labels", "ref") if field.get(k)}
+    if not big:
+        return []
+    parts = out / "parts"
+    parts.mkdir(parents=True, exist_ok=True)
+    (parts / f"{LAZY_PART_FIELD}.json").write_text(
+        json.dumps(big, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    data["lazyParts"] = [LAZY_PART_FIELD]
+    return [LAZY_PART_FIELD]
+
+
 def main():
     # 批量瘦身模式：不走生图参数校验，独立入口
     if "--webpify" in sys.argv:
@@ -726,6 +772,7 @@ def main():
     if args.art_style is not None:
         data["artStyle"] = args.art_style
     data["subject"] = args.subject
+    lazy = split_lazy_parts(data, out)
     data_js = "window.DEMO_DATA = " + json.dumps(data, ensure_ascii=False, separators=(",", ":")) + ";\n"
     index = out / html_file_name(args.task_name, rendered_at)
     render_html(
@@ -745,6 +792,9 @@ def main():
               f"{shrunk['after'] / 1048576:.1f}MB")
     print(f"✓ HTML 图纸: {index}（单文件，可直接转发） ({len(data_specs)} 规格, 色板 {len(palettes)} 套 / "
           f"{sum(len(p['colors']) for p in palettes)} 色, {index.stat().st_size / 1024 / 1024:.1f}MB)")
+    if lazy:
+        part_bytes = sum((out / "parts" / f"{k}.json").stat().st_size for k in lazy)
+        print(f"  按需取（不进首屏）: {', '.join(lazy)} {part_bytes / 1024 / 1024:.1f}MB —— 点「自定义规格 · 生成」时才下载")
 
 
 if __name__ == "__main__":

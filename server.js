@@ -653,6 +653,7 @@ async function handleAdminSyncKey(req, res) {
    promptLLM（写槽位的视觉 chat 模型，null=模板兜底） */
 const PIXELART_CONFIG_FILE = path.join(ROOT, '.pixelart-config.json');
 const PERLER_DIR = path.join(ROOT, 'apps/pixelart/assert/valorant-perler-src/valorant-perler');
+const PERLER_FONT_DIR = path.join(PERLER_DIR, 'templates', 'perler_blueprint', 'assets', 'fonts');
 
 /* 拼豆生成引擎（双后端并存，2026-10-28）：
    - 主实例（/ 与 /apps/pixelart/）：apinebula 生图后端
@@ -833,6 +834,40 @@ function gzipFile(fp, stat) {
         resolve(gz);
       });
     });
+  });
+}
+
+/* 图纸海报字体：直出模板目录里的 woff2。
+   为什么不走 serveStatic：字体在 assert/ 下，而 assert/ 整体 403（源码不下发），
+   所以这里单独开一条「只认文件名」的白名单路由，不许带路径分隔符。
+   为什么不内联：TencentSans 两款字重约 197KB，只被「导出海报」的 canvas 用到，
+   页面 DOM 一处都没用；内联进 CSS 等于每个访客、每张图纸都替海报付这 200KB。
+   改成 URL 后由浏览器的字体懒加载接管：不画海报就不下载。
+   ?v=<内容哈希> 由构建脚本写进 CSS，改字体即换 URL，因此可以一年 immutable。 */
+function servePixelartFont(req, res) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('405 Method Not Allowed');
+  }
+  const url = new URL(req.url, 'http://localhost');
+  const name = path.basename(decodeURIComponent(url.pathname));
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.woff2$/.test(name)) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('404 Not Found');
+  }
+  const filePath = path.join(PERLER_FONT_DIR, name);
+  fs.stat(filePath, (err, stat) => {
+    if (err || !stat || !stat.isFile()) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('404 Not Found');
+    }
+    res.writeHead(200, {
+      'Content-Type': 'font/woff2',
+      'Content-Length': stat.size,
+      'Cache-Control': url.searchParams.has('v') ? 'public, max-age=31536000, immutable' : 'public, max-age=86400'
+    });
+    if (req.method === 'HEAD') { return res.end(); }
+    fs.createReadStream(filePath).pipe(res);
   });
 }
 
@@ -1350,6 +1385,10 @@ const server = http.createServer((req, res) => {
        地址栏保持 /，拼豆页资产均为绝对路径（/apps/pixelart/*、/shared/*）不受影响。 */
     return servePixelartPage(req, res, {});
   }
+  if (pathOnly.indexOf('/pixelart-fonts/') === 0) {
+    /* 图纸海报字体（TencentSans 两款）：只认文件名，见 servePixelartFont */
+    return servePixelartFont(req, res);
+  }
   if (req.method === 'GET' && (pathOnly === '/my' || pathOnly === '/my/')) {
     /* 我的作品（平台层共享页）：作品 + 积分明细，跨产品统一入口 */
     req.url = '/shared/my.html' + (fullUrl.search || '');
@@ -1436,6 +1475,10 @@ const server = http.createServer((req, res) => {
   if (pathOnly === '/api/pixelart/task/html') {
     return pixelartMain.handleTaskHtml(req, res, fullUrl, sendJson);
   }
+  if (pathOnly === '/api/pixelart/task/part') {
+    if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
+    return pixelartMain.handleTaskPart(req, res, fullUrl, sendJson);
+  }
   if (pathOnly === '/api/pixelart/task/cover') {
     if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
     return pixelartMain.handleTaskCover(req, res, fullUrl);
@@ -1494,6 +1537,10 @@ const server = http.createServer((req, res) => {
   }
   if (pathOnly === '/api/pixelart-vp/task/html') {
     return pixelartVp.handleTaskHtml(req, res, fullUrl, sendJson);
+  }
+  if (pathOnly === '/api/pixelart-vp/task/part') {
+    if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
+    return pixelartVp.handleTaskPart(req, res, fullUrl, sendJson);
   }
   if (pathOnly === '/api/pixelart-vp/task/cover') {
     if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }

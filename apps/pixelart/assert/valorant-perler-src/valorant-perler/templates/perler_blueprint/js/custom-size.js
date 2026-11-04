@@ -31,9 +31,17 @@ async function csInflate(b64) {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-/* 一次性准备：解码标签与参照图，预算边缘权重与分块（与 Evaluator.__init__ 一致） */
+/* 一次性准备：解码标签与参照图，预算边缘权重与分块（与 Evaluator.__init__ 一致）。
+   搜索场可能还没取（[LAZY-PARTS]：这份数据一两 MB，翻开图纸时不下载），第一次真用到才补。 */
 async function csPrepare() {
   if (CS.prep) return CS.prep;
+  try {
+    await bpEnsureField();
+  } catch (e) {
+    const err = new Error('lazy field');
+    err.code = 'LAZY_FIELD';
+    throw err;
+  }
   const F = CS_FIELD, [x0, y0, x1, y1] = F.bbox, cw = x1 - x0, ch = y1 - y0;
   const fine = await csInflate(F.labels), raw = await csInflate(F.ref);
   const search = new Uint8Array(fine.length);
@@ -265,7 +273,11 @@ async function csPump() {
       else { renderSizes(); if (!job.quiet) toast(`自定义 ${job.n}×${job.n} 已生成，点击卡片查看`, 2600); }
     } catch (e) {
       CS.running = null; csPersist(); renderSizes();
-      toast(`${job.n}×${job.n} 生成失败，请调整边长后重试`, 4000);
+      if (e && e.code === 'LAZY_FIELD') {
+        toast('自定义规格要先用一次搜索场数据（约 1MB），没取到——检查网络后重新点「生成」', 6000, true);
+      } else {
+        toast(`${job.n}×${job.n} 生成失败，请调整边长后重试`, 4000);
+      }
       console.error(e);
     }
   }

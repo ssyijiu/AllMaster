@@ -80,13 +80,20 @@ const srcImg = new Image();
 const HAS_SOURCE = !!(D.images && D.images.length);
 if (HAS_SOURCE) srcImg.src = D.images[0];
 [srcImg].forEach(im => im && im.addEventListener('load', () => { if (isOpen()) refresh(); }));
-/* 腾讯体随包内联，Canvas 要等字体就位再画，否则导出 PNG 会落到回退字体。
+/* 腾讯体不随页面内联了：两款字重约 197KB，只有这里（海报）用到，翻开图纸时不该让所有人付。
+ * 构建时把 CSS 里的 src 换成 /pixelart-fonts/…（见 build_html_blueprint.py 的 LAZY_FONT_NAMES），
+ * 由浏览器的字体懒加载按需下载 —— 所以加载必须由「打开抽屉」触发，不能在模块加载时就问，
+ * 那样等于一开页就下载。Canvas 要等字体就位再画，否则导出 PNG 会落到回退字体；
  * 加载失败也重绘一次：底栏那句此时改由设备字体渲染，不能留一张按加载中状态画的图。 */
-if (document.fonts && document.fonts.load) {
-  Promise.all(['300 14px TencentSans', '700 32px TencentSans'].map(f => document.fonts.load(f)))
+let FONT_GATE = null;
+function loadPosterFonts() {
+  if (FONT_GATE) return FONT_GATE;
+  if (!(document.fonts && document.fonts.load)) { FACE_READY = false; return (FONT_GATE = Promise.resolve()); }
+  FONT_GATE = Promise.all(['300 14px TencentSans', '700 32px TencentSans'].map(f => document.fonts.load(f)))
     .then(() => { FACE_READY = document.fonts.check('700 12px TencentSans'); })
     .catch(() => { FACE_READY = false; })
     .then(() => { if (isOpen()) refresh(); });
+  return FONT_GATE;
 }
 const ready = im => im && im.complete && im.naturalWidth > 0;
 
@@ -883,10 +890,13 @@ function showSaveSheet(blob, size, tip) {
     fr.readAsDataURL(blob);
   });
 }
-$('psDl').addEventListener('click', () => {
+$('psDl').addEventListener('click', async () => {
   const btn = $('psDl');
   btn.classList.add('busy'); dlLbl.textContent = '生成中…';
   const done = () => { btn.classList.remove('busy'); dlLbl.textContent = DL_LABEL; };
+  /* 字体是外置按需下载的（见 loadPosterFonts）：抽屉刚打开就点下载时可能还在路上，
+     不等它就把整张海报画成回退字体。等字体落定再画，最多等 3 秒 —— 弱网也不至于卡住按钮。 */
+  try { await Promise.race([loadPosterFonts(), new Promise(r => setTimeout(r, 3000))]); } catch (e) {}
   setTimeout(() => {
     const off = document.createElement('canvas');
     const pdf = FMT === 'pdf', sc = pdf ? pdfScale() : pngScale();
@@ -920,6 +930,7 @@ function openPoster() {
   }
   view.z = 1; view.tx = view.ty = 0;
   setOpen(true);
+  loadPosterFonts();   // 只在这一刻才去下载腾讯体（外置，见上）
   requestAnimationFrame(() => { refresh(); applyView(); });
 }
 /* 存不了文件的内嵌页（WorkBuddy 产物区）里导出必然落不了盘，不开抽屉，直接引导去默认浏览器 */
