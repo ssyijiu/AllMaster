@@ -431,3 +431,26 @@
       .btn.big { height: 44px; }
       .done-actions .btn { flex: 1 1 100%; }
     }
+
+    /* ===== 生图通道提示点（左下角） =====
+       腾讯=灰蓝，自研=琥珀。7px 圆点、半透明、无文字：只给知道的人看，
+       不抢版面也不参与布局（position: fixed，不进文档流，窄屏不会撑宽）。 */
+    .ch-dot {
+      position: fixed;
+      left: 12px;
+      bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #8aa1bb;              /* 默认腾讯；data-ch="self" 时由 JS 换成琥珀 */
+      opacity: .45;
+      z-index: 45;                      /* 低于弹窗(50)、高于内容 */
+      cursor: default;
+      transition: opacity .2s ease, transform .2s ease;
+    }
+    .ch-dot:hover { opacity: .95; transform: scale(1.25); }
+    .ch-dot[data-ch="self"] { box-shadow: 0 0 0 2px rgba(217, 149, 60, .22); }
+    @media (prefers-reduced-motion: reduce) {
+      .ch-dot { transition: none; }
+      .ch-dot:hover { transform: none; }
+    }

@@ -9,6 +9,59 @@
 /* API base：主页默认 /api/pixelart；经典版页面由服务端注入 window.PIXELART_API_BASE 切到 /api/pixelart-vp */
 var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) || '/api/pixelart';
 
+/* ---------- 生图通道提示点（左下角 7px 圆点） ----------
+ * 腾讯 = 灰蓝，自研 = 琥珀。刻意不写字、不参与布局：它是给「知道的人」看的运维标记，
+ * 不是给用户读的说明（2026-11-04 定：所有人可见但不显眼）。
+ * 固定通道的页面（/apps/pixelart、/apps/pixelart2）以页面实际用的 base 为准，
+ * 不看服务端状态 —— 它们的通道永不切换。 */
+var CHANNEL_DOT = {
+  vp: { color: '#8aa1bb', label: '腾讯 VP' },
+  self: { color: '#d9953c', label: '自研' }
+};
+var channelDotEl = null;
+
+function channelOfPage() {
+  if (window.PIXELART_CHANNEL_FIXED) {
+    return /pixelart-vp|pixelart2/.test(PIXELART_API) ? 'vp' : 'self';
+  }
+  return window.PIXELART_CHANNEL_ACTIVE === 'self' ? 'self' : 'vp';
+}
+
+function paintChannelDot(which) {
+  var el = channelDotEl;
+  if (!el) { return; }
+  var info = CHANNEL_DOT[which] || CHANNEL_DOT.vp;
+  var text = '生图通道：' + info.label + (window.PIXELART_CHANNEL_FIXED ? '（固定）' : '');
+  el.setAttribute('data-ch', which);
+  el.style.background = info.color;
+  el.setAttribute('title', text);
+  el.setAttribute('aria-label', text);
+}
+
+function mountChannelDot() {
+  if (channelDotEl || !document.body) { return; }
+  var el = document.createElement('span');
+  el.className = 'ch-dot';
+  el.setAttribute('role', 'img');
+  document.body.appendChild(el);
+  channelDotEl = el;
+  paintChannelDot(channelOfPage());
+}
+
+/* 非固定通道的页面：我们开着页面的时候服务端可能已经切走了（自动切换）。
+ * 切回标签页时问一次，别让圆点说谎。固定通道不问，它不会变。 */
+function refreshChannelDot() {
+  if (!channelDotEl || window.PIXELART_CHANNEL_FIXED) { return; }
+  fetch('/api/channel', { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d || !d.active) { return; }
+      window.PIXELART_CHANNEL_ACTIVE = d.active;
+      paintChannelDot(d.active);
+    })
+    .catch(function () { /* 网络抖动就不动它，保持原样 */ });
+}
+
   var Platform = window.Platform;
   if (!Platform || typeof Platform.setup !== 'function') {
     /* 平台层未加载（如 CDN 被拦截）时给出可见提示，不做任何后续初始化 */
@@ -493,6 +546,9 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
         Store.channelFallback = true;
         PIXELART_API = err.base || '/api/pixelart';
         window.PIXELART_API_BASE = PIXELART_API;
+        /* 圆点跟着换色：这一页从这一刻起确实走的是自研了 */
+        window.PIXELART_CHANNEL_ACTIVE = 'self';
+        paintChannelDot('self');
         return generateFlow();
       }
       if (err && err.insufficient) {
@@ -750,6 +806,10 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     bindGenerate();
     loadStyles();
     restoreRecent();
+    mountChannelDot();
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) { refreshChannelDot(); }
+    });
   }
 
   function cloudBootstrap() {

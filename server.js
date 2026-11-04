@@ -1262,6 +1262,9 @@ function servePixelartPage(req, res, opts) {
   const base = o.base || channel.pageBase();
   let inject = '<script>window.PIXELART_API_BASE="' + base + '";</script>';
   if (o.fixed) { inject += '<script>window.PIXELART_CHANNEL_FIXED=1;</script>'; }
+  /* 页面左下角那个小圆点用（腾讯=灰蓝 / 自研=琥珀）。只给通道标识，不带供应商细节；
+     固定通道的页面不看这个值，按自己实际用的 base 显示（它们永不切换）。 */
+  inject += '<script>window.PIXELART_CHANNEL_ACTIVE="' + channel.getState().active + '";</script>';
   html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + inject) : inject + html;
   const body = Buffer.from(html, 'utf8');
   res.writeHead(200, {
@@ -1419,6 +1422,12 @@ const server = http.createServer((req, res) => {
   if (pathOnly === '/api/pixelart/styles') {
     if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
     return pixelartMain.handleStyles(res, sendJson);
+  }
+  /* 前端左下角通道圆点的刷新用（回到标签页时问一次）。
+     只回一个通道代号，不回切换原因/时间/证据 —— 那些只在后台和 CLI 里。 */
+  if (pathOnly === '/api/channel') {
+    if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
+    return sendJson(res, 200, { active: channel.getState().active });
   }
   /* ---- 经典版（val-perler 后端）：/pixelart 页面的 API，与主版一一对应、互不共享任务 ---- */
   if (pathOnly === '/api/pixelart-vp/env-check') {
