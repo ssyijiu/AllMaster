@@ -218,6 +218,11 @@ function refreshChannelDot() {
     var reader = new FileReader();
     reader.onload = function () {
       downscale(String(reader.result), function (dataUrl) {
+        if (!dataUrl) {
+          errEl.textContent = '这张图打不开，请换一张，或先截图再上传';
+          errEl.hidden = false;
+          return;
+        }
         Store.imgDataUrl = dataUrl;
         $('previewImg').src = dataUrl;
         $('fileName').textContent = file.name || '未命名图片';
@@ -244,20 +249,44 @@ function refreshChannelDot() {
     return (bytes / 1024 / 1024).toFixed(1) + ' MB';
   }
 
+  /* 长边压到 1024（链路底稿就是 1024，原图更大只是白传）；PNG 保留透明背景。
+   *
+   * 2026-11-04：这里以前「原图 ≤1024 就直接原样上传、解码失败也原样上传」，
+   * 而客户端只校验文件 ≤12MB、服务端校验的是 base64 后的 body ≤12MB（膨胀 4/3），
+   * 于是 9MB 以上的图会被服务端拒成 400。现在一律重编码；PNG 压不下来（照片类）
+   * 就退回 JPEG；实在还是太大就报错，不把一张注定被拒的图发出去。
+   * 返回 null 表示这张图处理不了（前端提示换图，不再提交）。 */
   function downscale(dataUrl, cb) {
     var img = new Image();
     img.onload = function () {
       var long = Math.max(img.width, img.height);
-      if (long <= 1024) { cb(dataUrl); return; }
-      var ratio = 1024 / long;
-      var canvas = document.createElement('canvas');
-      canvas.width = Math.round(img.width * ratio);
-      canvas.height = Math.round(img.height * ratio);
-      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-      try { cb(canvas.toDataURL('image/png')); }
-      catch (_) { cb(dataUrl); }
+      var ratio = long > 1024 ? 1024 / long : 1;
+      var w = Math.max(1, Math.round(img.width * ratio));
+      var h = Math.max(1, Math.round(img.height * ratio));
+      var cv = document.createElement('canvas');
+      cv.width = w;
+      cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0, w, h);
+      var out = null;
+      try { out = cv.toDataURL('image/png'); } catch (_) { out = null; }
+      if (!out || out.length > 6 * 1024 * 1024) {
+        /* 照片类内容压不成小 PNG：垫白底再转 JPEG（不然透明区会变黑） */
+        try {
+          var flat = document.createElement('canvas');
+          flat.width = w;
+          flat.height = h;
+          var ctx = flat.getContext('2d');
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(cv, 0, 0);
+          out = flat.toDataURL('image/jpeg', 0.9);
+        } catch (_) { /* 保持 PNG 结果 */ }
+      }
+      if (!out || out.length > 11 * 1024 * 1024) { cb(null); return; }
+      cb(out);
     };
-    img.onerror = function () { cb(dataUrl); };
+    /* 解码失败（极端尺寸 / 特殊编码）以前是原样上传 → 服务端必拒且白扣一单，现在直接拦下 */
+    img.onerror = function () { cb(null); };
     img.src = dataUrl;
   }
 
@@ -563,7 +592,13 @@ function refreshChannelDot() {
         auth.openLogin();
         return;
       }
-      /* 其余提交期失败（参数/落盘等）：服务端已在扣费后自动退款，无需前端再退 */
+      /* 其余的提交期失败（参数 / 落盘）服务端已在扣费后自动退款 */
+      /* 网络层面断掉（上传中被切网、页面被切走）：fetch 抛的是英文 TypeError，
+         直接甩给用户看不懂，这里换成中文；这类请求服务端不会出图，也不会扣钱 */
+      if (err && (err.name === 'TypeError' || /failed to fetch|networkerror|load failed|network request failed/i.test(err.message || ''))) {
+        studioMsg('上传中断了，请检查网络后重试', true);
+        return;
+      }
       studioMsg((err && err.message) || '生成失败，请稍后重试', true);
     });
   }

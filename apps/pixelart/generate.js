@@ -663,6 +663,16 @@ function createEngine(options) {
     return t;
   }
 
+  /* 提交期失败的统一出口：除了回给前端，还要把「被拒原因」挂到 res 上。
+   * 为什么需要：2026-11-04 有 10 单只记了 submit_400，事后无法判断是用户传了坏图、
+   * 还是手机上划走导致上传被掐断 —— 只能靠猜。现在 server.js 会把它写进订单 meta
+   * 并打一行日志（含订单号），下次出现直接能查。 */
+  function failSubmit(res, sendJson, status, code, message) {
+    const text = String(message || '').slice(0, 200);
+    res.pixelartFail = { status: status, code: code, message: text };
+    return sendJson(res, status, { error: { code: code, message: text } });
+  }
+
   /* POST /generate { imageBase64, subject, styleId, notes } → { taskId } */
   async function handleGenerate(req, res, sendJson) {
     let body;
@@ -676,16 +686,25 @@ function createEngine(options) {
       }
       body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
     } catch (err) {
-      return sendJson(res, 400, { error: { message: (err && err.message) || '请求解析失败' } });
+      const msg = (err && err.message) || '请求解析失败';
+      /* 手机上划走 / 切网络 / 刷新页面会让请求中途断掉：它不是用户的参数问题，
+         也不该算进「出图失败率」。单独一个码，便于和真正的坏图区分。 */
+      /* 先判「太大」：超限是我们主动停止读取，这时 req 的 aborted 也会变 true，
+         若先判 aborted 会把「图太大」误记成「上传中断」。 */
+      const tooLarge = /过大/.test(msg);
+      const aborted = !tooLarge && !!(req.aborted || (err && err.code === 'ECONNRESET')
+        || /aborted|ECONNRESET|premature close/i.test(msg));
+      const code = tooLarge ? 'BODY_TOO_LARGE' : (aborted ? 'REQUEST_ABORTED' : 'BAD_BODY');
+      return failSubmit(res, sendJson, 400, code, aborted ? '请求被中断（上传未完成）' : msg);
     }
 
     const m = MIME_RE.exec(String(body.imageBase64 || ''));
-    if (!m) { return sendJson(res, 400, { error: { message: '缺少图片或格式不支持（png/jpeg/webp）' } }); }
+    if (!m) { return failSubmit(res, sendJson, 400, 'BAD_IMAGE', '缺少图片或格式不支持（png/jpeg/webp）'); }
     /* 主体类型不再由前端选项卡决定：LLM 读图判定（subjectDetect），失败兜底按 character；
        body.subject 保留为旧客户端兼容入参，仅作 LLM 判读失败时的回落 */
     const subjectFallback = body.subject === 'prop' ? 'prop' : 'character';
     const styleId = String(body.styleId || 'original');
-    if (!findStyle(styleId)) { return sendJson(res, 400, { error: { message: '未知画风：' + styleId } }); }
+    if (!findStyle(styleId)) { return failSubmit(res, sendJson, 400, 'BAD_STYLE', '未知画风：' + styleId); }
 
     pruneTasks();
     const id = crypto.randomBytes(8).toString('hex');
@@ -695,7 +714,7 @@ function createEngine(options) {
       fs.mkdirSync(imgDir, { recursive: true });
       fs.writeFileSync(path.join(imgDir, '原图.png'), Buffer.from(m[3], 'base64'));
     } catch (err) {
-      return sendJson(res, 500, { error: { message: '落盘失败：' + String(err.message || err).slice(0, 120) } });
+      return failSubmit(res, sendJson, 500, 'STORE_FAILED', '落盘失败：' + String(err.message || err).slice(0, 120));
     }
     tasks.set(id, {
       status: 'running', workDir, startedAt: Date.now(), styleId, subject: subjectFallback,

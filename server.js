@@ -1095,8 +1095,33 @@ async function handlePixelartGenerate(req, res, engine) {
   } finally {
     if (statusCode >= 400) {
       taskOrderCtx.delete(order.orderId);
-      await orderService.fail(order.orderId, token, 'submit_' + statusCode, order.txnId, order.tracked);
+      const f = res.pixelartFail || null;
+      /* 上传被掐断（划走页面 / 切网络 / 刷新）不是用户的参数问题，也不该算进出图失败率：
+         单独记 submit_aborted。真正的坏图/坏参数仍是 submit_400，原因写进 meta.fail。 */
+      const reason = (f && f.code === 'REQUEST_ABORTED') ? 'submit_aborted' : ('submit_' + statusCode);
+      if (f) {
+        console.warn('[pixelart] 提交被拒 ' + order.orderId + ' HTTP ' + statusCode
+          + ' ' + f.code + '：' + f.message);
+      }
+      await orderService.fail(order.orderId, token, reason, order.txnId, order.tracked);
+      if (f) { annotateOrderFail(order.orderId, f); }
     }
+  }
+}
+
+/* 把「为什么被拒」补进订单 meta（orders.meta 是建单时写的 {backend}，这里合并一个 fail 字段）。
+   只为事后排查：不改状态、不动钱。 */
+function annotateOrderFail(orderId, detail) {
+  try {
+    const row = dbmod.db.prepare('SELECT meta FROM orders WHERE id = ?').get(orderId);
+    if (!row) { return; }
+    let meta = {};
+    try { meta = JSON.parse(row.meta || '{}') || {}; } catch (_) { meta = {}; }
+    meta.fail = { status: detail.status, code: detail.code, message: detail.message };
+    dbmod.db.prepare('UPDATE orders SET meta = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify(meta), dbmod.nowMs(), orderId);
+  } catch (e) {
+    console.warn('[pixelart] 失败原因落库失败：' + ((e && e.message) || e));
   }
 }
 
