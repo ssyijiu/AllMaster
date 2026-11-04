@@ -331,7 +331,7 @@
     '      <img class="contact-qr" src="/shared/assets/wechat-qr.png" alt="点豆客服微信二维码" width="220" height="220" />',
     '    </div>',
     '    <p class="contact-step"><b>要充值</b>：加好友后告诉客服充多少 → 转账 → 把<b>注册邮箱</b>发过来，10 分钟内到账。</p>',
-    '    <p class="contact-step">手机用户可以长按二维码识别；也可以发邮件到 <a href="mailto:lxmyijiu@163.com">lxmyijiu@163.com</a>。</p>',
+    '    <p class="contact-step">手机用户可以长按二维码识别添加。</p>',
     '  </div>',
     '</div>'
   ].join('\n');
@@ -371,33 +371,33 @@
   document.addEventListener('DOMContentLoaded', function () { Platform.mountContactModal(); });
 
   /* =========================================================
-   * 页脚客服入口：三页统一注入
+   * 顶栏客服入口：三页统一注入（首屏可见，无需滚动）
    * ---------------------------------------------------------
-   * 登录弹窗当年就是三页各抄一份，改一处漏两处；这个入口不再重复那个错误。
-   * 幂等：用 data-contact-ready 标记，重复调用不会加第二个按钮。
-   * 没有 .footer 的页面（/my）要自带一个 footer，否则这里静默跳过。
+   * 2026-11-04 从页脚挪到顶栏：页脚最后一行要滚动才能看到，
+   * 用户要求客服入口不滚动就可见。放 .topbar-actions 最前面，
+   * 登录/未登录都显示。幂等：用 data-contact-ready 标记。
    * ========================================================= */
-  Platform.mountFooterContact = function () {
-    var footers = document.querySelectorAll('.footer');
-    Array.prototype.forEach.call(footers, function (f) {
-      if (f.getAttribute('data-contact-ready')) { return; }
-      f.setAttribute('data-contact-ready', '1');
+  Platform.mountTopbarContact = function () {
+    var bars = document.querySelectorAll('.topbar-actions');
+    Array.prototype.forEach.call(bars, function (bar) {
+      if (bar.getAttribute('data-contact-ready')) { return; }
+      bar.setAttribute('data-contact-ready', '1');
       var btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'footer-contact';
-      btn.textContent = '联系客服';
+      btn.className = 'btn btn-contact';
+      btn.id = 'btnContact';
+      btn.innerHTML =
+        '<svg class="icon icon-16" viewBox="0 0 16 16" aria-hidden="true" fill="none">' +
+        '<path d="M8 2.2c-3.3 0-6 2.2-6 5 0 1.6.9 3 2.3 3.9L3.7 14l3-1.5c.4.1.9.1 1.3.1 3.3 0 6-2.2 6-5s-2.7-5.4-6-5.4z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>' +
+        '<span>客服</span>';
+      btn.title = '充值、退款、问题反馈，加微信联系客服';
       btn.addEventListener('click', function () { Platform.openContact(); });
-      var mail = document.createElement('a');
-      mail.className = 'footer-mail';
-      mail.href = 'mailto:lxmyijiu@163.com';
-      mail.textContent = 'lxmyijiu@163.com';
-      f.appendChild(btn);
-      f.appendChild(mail);
+      bar.insertBefore(btn, bar.firstChild);
     });
     return true;
   };
-  Platform.mountFooterContact();
-  document.addEventListener('DOMContentLoaded', Platform.mountFooterContact);
+  Platform.mountTopbarContact();
+  document.addEventListener('DOMContentLoaded', Platform.mountTopbarContact);
 
   /* =========================================================
    * 轻量 toast：全平台共用的「一次性结果」提示

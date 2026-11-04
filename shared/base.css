@@ -403,27 +403,42 @@
     .contact-step a { color: var(--teal-600); text-decoration: none; }
     .contact-step a:hover { text-decoration: underline; }
 
-    /* 页脚客服入口（平台层注入，三页共用） */
-    .footer-contact {
-      margin-top: var(--space-3);
-      display: inline-flex; align-items: center;
-      font-size: var(--text-sm); font-weight: var(--weight-emphasis);
+    /* 顶栏客服入口（平台层注入，三页共用，首屏可见） */
+    .topbar-actions .btn-contact {
+      height: 34px; padding: 0 12px; gap: 5px;
+      border-radius: var(--radius-full);
+      font-size: var(--text-sm);
+      white-space: nowrap;
       color: var(--teal-700);
       background: var(--teal-50);
-      border: 1px solid var(--teal-100);
-      border-radius: var(--radius-full);
-      padding: 7px 16px;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: background-color var(--motion-fast) var(--ease-standard);
+      border-color: var(--teal-100);
     }
-    .footer-contact:hover { background: var(--teal-100); }
-    .footer-mail {
-      margin-left: var(--space-3);
-      font-size: var(--text-sm); color: var(--meta);
-      text-decoration: none;
+    .topbar-actions .btn-contact:hover { background: var(--teal-100); }
+    /* 窄屏：顶栏要同时塞下「客服/登录(我的)/积分」，320–430px 会被撑出横向溢出
+       （2026-11-04 回归抓到：登录态 414px 时 doc=513，整页会被手机缩放到 ~80%）。
+       收法：客服只留图标、按钮内边距收紧、品牌英文让位（中文「点豆」+ Logo 仍可识别）。 */
+    @media (max-width: 480px) {
+      .topbar-actions { gap: 6px; }
+      .topbar-actions .btn { padding: 0 9px; font-size: 13px; }
+      .topbar-actions .btn-contact { padding: 0 9px; gap: 0; }
+      .topbar-actions .btn-contact span { display: none; }
+      .brand-en { display: none; }
     }
-    .footer-mail:hover { color: var(--muted); text-decoration: underline; }
+    /* 375/360（iPhone SE、多数安卓）：再紧一档，实测差 3–25px */
+    @media (max-width: 400px) {
+      .topbar-actions { gap: 3px; }
+      .topbar-actions .btn { padding: 0 4px; font-size: 12px; }
+      .topbar-actions .btn-contact { padding: 0 4px; }
+      .topbar-inner { padding-left: 10px; padding-right: 10px; }
+    }
+    /* 320（iPhone SE 1 代等）：四颗按钮放不下，品牌只留 Logo，优先保住功能入口 */
+    @media (max-width: 340px) {
+      .brand > span:not(.brand-logo) { display: none; }
+      .topbar-inner { padding-left: 10px; padding-right: 10px; }
+      .topbar-actions { gap: 3px; }
+      .topbar-actions .btn { padding: 0 4px; }
+      .topbar-actions .btn-contact { padding: 0 4px; }
+    }
 
     /* 窄屏：横排会把说明挤成窄柱，改上下堆叠 */
     @media (max-width: 560px) {
@@ -446,6 +461,8 @@
        Section S7: 登录与云同步（全部走既有 Token）
        ============================================================ */
     .topbar-actions { display: flex; align-items: center; gap: var(--space-2); flex: none; }
+    /* 品牌文字不许换行：窄屏顶栏被按钮挤压时「点豆」会一个字一行（2026-11-04 375px 实测） */
+    .brand { white-space: nowrap; }
     /* 「我的」入口用 <a> 承担按钮外观（与积分按钮同款），链接不该有下划线 */
     .topbar-actions a.btn { text-decoration: none; }
     /* 顶栏 pill：「我的」入口与「积分」钱包同一套视觉——浅黄底、无边框、粗字重。
