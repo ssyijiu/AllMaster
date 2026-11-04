@@ -439,17 +439,18 @@
       position: fixed;
       left: 12px;
       bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-      width: 7px;
-      height: 7px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
       background: #8aa1bb;              /* 默认腾讯；data-ch="self" 时由 JS 换成琥珀 */
-      opacity: .45;
+      opacity: .55;                      /* 1x 屏幕上「一眼能找到、但不会注意」的档位 */
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, .85);
       z-index: 45;                      /* 低于弹窗(50)、高于内容 */
       cursor: default;
       transition: opacity .2s ease, transform .2s ease;
     }
     .ch-dot:hover { opacity: .95; transform: scale(1.25); }
-    .ch-dot[data-ch="self"] { box-shadow: 0 0 0 2px rgba(217, 149, 60, .22); }
+    .ch-dot[data-ch="self"] { box-shadow: 0 0 0 1px rgba(255, 255, 255, .85), 0 0 0 3px rgba(217, 149, 60, .18); }
     @media (prefers-reduced-motion: reduce) {
       .ch-dot { transition: none; }
       .ch-dot:hover { transform: none; }
