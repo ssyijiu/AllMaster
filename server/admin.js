@@ -24,6 +24,7 @@ const dbmod = require('./db');
 const auth = require('./auth');
 const wallet = require('./wallet');
 const stats = require('./stats');
+const channel = require('./channel');
 
 const ROOT = path.join(__dirname, '..');
 /* 与 server.js 用同一份路径规则：环境变量可覆盖，测试才能指向临时目录，
@@ -809,6 +810,31 @@ function randomCode(len) {
   return out;
 }
 
+/* ---------- 生图通道（腾讯 VP / 自研） ----------
+ * 自动切换只往自研走（腾讯额度耗尽时），**回切永远由人决定**：
+ * 后台这个按钮和 `admin-cli channel vp` 是同一个动作的两个入口。
+ * 判定口径不在这里 —— 全在 server/channel.js 头部注释里，改规则只改那一处。 */
+function handleChannelGet(req, res) {
+  const user = requireAdmin(req, res);
+  if (!user) { return; }
+  return sendJson(res, 200, { data: channel.summary(30), error: null });
+}
+
+async function handleChannelSet(req, res) {
+  const user = requireAdmin(req, res);
+  if (!user) { return; }
+  const body = await readJson(req);
+  const target = String((body && body.target) || '');
+  if (target !== 'vp' && target !== 'self') {
+    return sendJson(res, 400, { error: { code: 'BAD_TARGET', message: '只能切到 vp（腾讯）或 self（自研）' } });
+  }
+  channel.setActive(target, {
+    reason: '后台手动切换（' + (user.email || '-') + '）',
+    by: 'manual'
+  });
+  return sendJson(res, 200, { data: channel.summary(30), error: null });
+}
+
 /**
  * 只接管下列路径；其余 /api/admin/* 交回 server.js
  * （/api/admin/sync-key 与 /api/admin/orders/health 仍走 accessKey，属于机器调用）
@@ -829,6 +855,7 @@ const ROUTES = {
   '/api/admin/products/save': { POST: handleProductSave },
   '/api/admin/products/delete': { POST: handleProductDelete },
   '/api/admin/products/switch': { POST: handleProductSwitch },
+  '/api/admin/channel': { GET: handleChannelGet, POST: handleChannelSet },
   '/api/admin/users': { GET: handleUsers },
   '/api/admin/stats': { GET: handleStats }
 };

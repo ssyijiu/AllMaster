@@ -297,8 +297,10 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
     }
   }
 
-  function openTaskHtml(taskId) {
-    window.open(PIXELART_API + '/task/html?id=' + encodeURIComponent(taskId), '_blank');
+  /* 老条目（本次改动前存的）没有 api 字段，回落当前 base —— 它们在切换前生成，
+     当时 base 恰好就是 vp，绝大多数情况下仍然点得开。 */
+  function openTaskHtml(taskId, api) {
+    window.open((api || PIXELART_API) + '/task/html?id=' + encodeURIComponent(taskId), '_blank');
   }
 
   function showDone(taskId) {
@@ -348,7 +350,9 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
   }
 
   function addRecent(taskId) {
-    var entry = { id: taskId, thumb: null, style: styleLabel(), time: Date.now() };
+    /* api：记下这单是在哪个通道生成的。任务 id 只在自己的引擎实例里有效，
+       通道切过之后用当前 base 去点会 404 —— 存下来才能一直点得开。 */
+    var entry = { id: taskId, api: PIXELART_API, thumb: null, style: styleLabel(), time: Date.now() };
     Store.recent.unshift(entry);
     if (Store.recent.length > RECENT_MAX) { Store.recent.length = RECENT_MAX; }
     renderRecent();
@@ -412,7 +416,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
         img.src = r.thumb;
         img.alt = '最近生成的图纸缩略图';
         btn.appendChild(img);
-        btn.addEventListener('click', function () { openTaskHtml(r.id); });
+        btn.addEventListener('click', function () { openTaskHtml(r.id, r.api); });
         strip.appendChild(btn);
       })(visible[i]);
     }
@@ -465,6 +469,7 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
           var e = new Error(info.message || '提交失败，请稍后重试');
           e.status = res.status;
           e.code = info.code || '';
+          e.base = info.base || '';
           if (e.code === 'INSUFFICIENT_BALANCE') { e.insufficient = true; }
           if (e.code === 'AUTH_REQUIRED') { e.authRequired = true; }
           throw e;
@@ -480,6 +485,16 @@ var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) |
       updateSteps();
     }).catch(function (err) {
       setGenerating(false);
+      /* 通道已被服务端自动切到备用（腾讯额度耗尽）：这一单在建单扣费之前就被挡了，
+         没有产生任何流水。这里静默换到服务端给的 base 重提一次，用户看到的只是
+         「正在提交任务…」多转几秒 —— 不提示、不解释。
+         只重试一次；固定通道的页面（/apps/pixelart2）不参与，那边的契约是永不切换。 */
+      if (err && err.code === 'CHANNEL_SWITCHED' && !window.PIXELART_CHANNEL_FIXED && !Store.channelFallback) {
+        Store.channelFallback = true;
+        PIXELART_API = err.base || '/api/pixelart';
+        window.PIXELART_API_BASE = PIXELART_API;
+        return generateFlow();
+      }
       if (err && err.insufficient) {
         studioMsg(err.message, true);
         auth.openWallet();

@@ -402,8 +402,10 @@ function createEngine(options) {
   const tasks = new Map();
 
   /* 通知结算方并等它回话（最长 6 秒）：失败要「先退款、再对外报失败」，
-   * 前端看到 failed 时余额已经回来了，文案才敢直说「已退回」。 */
-  function notifyFinish(id, status, orderId) {
+   * 前端看到 failed 时余额已经回来了，文案才敢直说「已退回」。
+   * info（2026-11-04）：{ backend, ok, message } —— 服务层据此判断上游是否额度耗尽、
+   * 要不要把整站切到备用通道。引擎自己不做这个决定（它只知道这一单）。 */
+  function notifyFinish(id, status, orderId, info) {
     if (!onTaskFinish) { return Promise.resolve(null); }
     return new Promise((resolve) => {
       let done = false;
@@ -411,7 +413,7 @@ function createEngine(options) {
       const timer = setTimeout(() => finish(null), 6000);
       if (timer.unref) { timer.unref(); }
       Promise.resolve()
-        .then(() => onTaskFinish(id, status, orderId || ''))
+        .then(() => onTaskFinish(id, status, orderId || '', info || {}))
         .then((v) => { clearTimeout(timer); finish(v); })
         .catch(() => { clearTimeout(timer); finish(null); });
     });
@@ -452,7 +454,9 @@ function createEngine(options) {
     /* 排查期不截断真因（前端要看到完整错误）；2000 字仅防异常超长 */
     t.error = String(message || '生成失败').slice(0, 2000).trim();
     saveFailureLog(t, t.error, detail);
-    const settle = await notifyFinish(id, 'failed', t.orderId);
+    const settle = await notifyFinish(id, 'failed', t.orderId, {
+      backend: backend, ok: false, message: t.error
+    });
     t.refunded = !!(settle && settle.refunded);
     t.status = 'failed';
   }
@@ -553,7 +557,7 @@ function createEngine(options) {
       t.status = 'done';
       t.htmlPath = html;
       try { archiveWork(id); } catch (_) {}
-      notifyFinish(id, 'done', t.orderId);
+      notifyFinish(id, 'done', t.orderId, { backend: backend, ok: true, message: '' });
       return;
     }
     const detail = { code, signal, timedOut, stderr: stderrTail, stdout: stdoutTail };

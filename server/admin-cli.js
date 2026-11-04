@@ -57,6 +57,7 @@ function help() {
     '  node server/admin-cli.js balance <邮箱>',
     '  node server/admin-cli.js config [show|check]',
     '  node server/admin-cli.js config import <config.json>',
+    '  node server/admin-cli.js channel [vp|self]',
     '',
     '数据目录：' + dbmod.DATA_DIR,
     '库文件：' + dbmod.DB_FILE
@@ -265,6 +266,31 @@ function cmdHealth() {
   if (stale > 0) { console.log('\n⚠ 有超窗未结算的单，用户下次登录会自动补退；也可手动 node server/admin-cli.js orders 查看'); }
 }
 
+/* 生图通道：不带参数看状态，带 vp/self 手动切换。
+   自动切换只往自研走，**回切永远由人决定**（和后台「生图通道」按钮同一动作）。 */
+function cmdChannel() {
+  const channel = require('./channel');
+  const target = argv[1];
+  if (target === 'vp' || target === 'self') {
+    const r = channel.setActive(target, { reason: '命令行手动切换', by: 'cli' });
+    console.log(r.changed ? '已切换到 ' + channel.LABEL[target] : '本来就是 ' + channel.LABEL[target] + '，未改动');
+  } else if (target && target !== 'status') {
+    return console.log('用法：node server/admin-cli.js channel [vp|self]');
+  }
+  const s = channel.summary(15);
+  console.log('\n生图通道');
+  console.log('  当前：' + s.activeLabel + '（' + s.base + '）');
+  if (s.since) { console.log('  切换时间：' + fmtTime(s.since) + '  操作者：' + (s.by || '-')); }
+  if (s.reason) { console.log('  原因：' + s.reason); }
+  console.log('  自动切换规则：连续 ' + s.rule.needHits + ' 单 ' + s.rule.codes.join('/')
+    + '，窗口 ' + s.rule.windowMin + ' 分钟，期间零成功');
+  console.log('\n最近事件：');
+  if (!s.events.length) { console.log('  （无）'); }
+  s.events.forEach((e) => console.log('  ' + fmtTime(e.ts) + '  ' + (e.channel === 'vp' ? '腾讯' : '自研')
+    + '  ' + (e.ok ? '成功' : '失败') + (e.error_code ? '  ' + e.error_code : '')
+    + (e.quota_pool ? '/' + e.quota_pool : '') + (e.order_id ? '  ' + e.order_id : '')));
+}
+
 function cmdUsers() {
   const d = dbmod.db;
   const users = d.prepare('SELECT COUNT(*) AS c FROM users').get().c;
@@ -396,6 +422,7 @@ try {
   else if (cmd === 'users') { cmdUsers(); }
   else if (cmd === 'balance') { cmdBalance(); }
   else if (cmd === 'config') { cmdConfig(); }
+  else if (cmd === 'channel') { cmdChannel(); }
   else { help(); }
 } catch (e) {
   console.error('错误：' + ((e && e.message) || e));

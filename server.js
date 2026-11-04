@@ -59,6 +59,42 @@ const localCloud = require('./server/local-cloud').createLocalCloud({
 });
 const localApi = require('./server/api');
 const localAdmin = require('./server/admin');
+const dbmod = require('./server/db');
+/* 生图通道（腾讯 VP / 自研）的运行时开关与自动切换判定：
+   判定规则、事件表、meta 存哪里都在 server/channel.js 一处。 */
+const channel = require('./server/channel');
+/* 自动切换是系统里唯一一个「机器替人做决定」的地方，必须让人第一时间知道。
+   发一封邮件给管理员白名单；邮件失败只告警，不回滚切换（切都切了，别来回抖）。 */
+channel.setNotify(function (ev) {
+  try {
+    const to = localAdmin.configuredAdminEmails();
+    if (!to.length) { return; }
+    const mail = require('./server/mail');
+    const st = ev.state || {};
+    const at = new Date(st.since || Date.now()).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    const hits = ((st.evidence && st.evidence.hits) || [])
+      .map((h) => '  - ' + new Date(h.at).toISOString().slice(11, 19) + '  ' + h.code
+        + (h.pool ? '（' + h.pool + '）' : '') + '  单号 ' + (h.order || '-'))
+      .join('\n');
+    const subject = '[点豆] 生图通道已切到' + channel.LABEL[st.active];
+    const text = [
+      '时间：' + at,
+      '切换：' + channel.LABEL[ev.from] + ' → ' + channel.LABEL[ev.to],
+      '触发：' + (st.reason || '-'),
+      '依据（最近 ' + ((st.evidence && st.evidence.need) || '-') + ' 单，窗口 '
+        + ((st.evidence && st.evidence.windowMin) || '-') + ' 分钟）：',
+      hits || '  -',
+      '',
+      '回切：后台「生图通道」，或 node server/admin-cli.js channel '
+        + (st.active === 'self' ? 'vp' : 'self')
+    ].join('\n');
+    Promise.resolve(mail.send(to.join(','), subject, text)).catch((e) => {
+      console.warn('[channel] 切换通知邮件失败：' + ((e && e.message) || e));
+    });
+  } catch (e) {
+    console.warn('[channel] 切换通知异常：' + ((e && e.message) || e));
+  }
+});
 /* 管理后台专用路径：会话 + 管理员邮箱白名单（不走 x-access-key）。
    只列确切路径，其余 /api/admin/*（sync-key、orders/health）仍由下面的既有路由处理。 */
 const ADMIN_PATHS = [
@@ -67,6 +103,7 @@ const ADMIN_PATHS = [
   '/api/admin/redeem', '/api/admin/redeem/list',
   '/api/admin/invite', '/api/admin/invite/list', '/api/admin/invite/update',
   '/api/admin/products', '/api/admin/products/save', '/api/admin/products/delete', '/api/admin/products/switch',
+  '/api/admin/channel',
   '/api/admin/users', '/api/admin/stats'
 ];
 
@@ -622,8 +659,33 @@ const PERLER_DIR = path.join(ROOT, 'apps/pixelart/assert/valorant-perler-src/val
    - 经典实例（/pixelart）：val-perler.qq.com 经典后端，独立任务目录 .pixelart-tasks-vp */
 const pixelartGen = require('./apps/pixelart/generate');
 /* 任务结束 → 生成单结算（成功扣费定格 / 失败自动退款）。
- * 放在这里而不是引擎里：引擎不知道钱怎么算，也不该知道。 */
-const onPixelartTaskFinish = (taskId, status, orderId) => {
+ * 放在这里而不是引擎里：引擎不知道钱怎么算，也不该知道。
+ * 同时把「这一单为什么失败」交给通道模块：腾讯额度耗尽要能自动切到自研，
+ * 而用户自己的 400（图片/参数）绝不能触发切换 —— 判定细节见 server/channel.js。 */
+const onPixelartTaskFinish = (taskId, status, orderId, info) => {
+  try {
+    const detail = info || {};
+    const parsed = channel.parseUpstreamError(detail.message);
+    let userId = '';
+    if (orderId) {
+      try {
+        const row = dbmod.db.prepare('SELECT user_id FROM orders WHERE id = ?').get(orderId);
+        if (row) { userId = row.user_id; }
+      } catch (_) { /* 查不到用户不影响判定：anon 池规则不看用户 */ }
+    }
+    channel.record({
+      backend: detail.backend || '',
+      ok: !!detail.ok,
+      errorCode: parsed.errorCode,
+      quotaPool: parsed.quotaPool,
+      httpStatus: parsed.httpStatus,
+      userId: userId,
+      orderId: orderId,
+      message: detail.message
+    });
+  } catch (e) {
+    console.warn('[channel] 记录任务结果失败：' + ((e && e.message) || e));
+  }
   if (!orderId) { return null; }   /* 重转等不扣费的任务没有单号 */
   return settleTaskOrder(orderId, status);
 };
@@ -1179,9 +1241,50 @@ function proxyCloud(req, res) {
   req.pipe(up);
 }
 
+/* ---------- 拼豆页面的通道注入（2026-11-04） ----------
+ * 同一份 index.html 服务四个入口，差异只在「生图请求打到哪个 API 前缀」：
+ *   /                       默认腾讯（VP），腾讯额度耗尽时自动切自研
+ *   /pixelart               同上（历史入口，语义与 / 完全一致）
+ *   /apps/pixelart          永远自研，任何时候都不切
+ *   /apps/pixelart2         永远腾讯（/api/pixelart2 → 同一 VP 引擎），任何时候都不切
+ *
+ * 注入而不是改文件：页面 no-store，切换通道只需改一行状态，不用发版、不用重启。
+ * 固定通道的页面额外注入 FIXED 标记，前端据此**不做**降级重试（否则 pixelart2 会被
+ * 「503 → 自动换 base」带到自研去，违背「永远腾讯」）。
+ */
+function servePixelartPage(req, res, opts) {
+  const o = opts || {};
+  let html;
+  try { html = fs.readFileSync(path.join(ROOT, 'apps/pixelart/index.html'), 'utf8'); } catch (_) {
+    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('pixelart page missing');
+  }
+  const base = o.base || channel.pageBase();
+  let inject = '<script>window.PIXELART_API_BASE="' + base + '";</script>';
+  if (o.fixed) { inject += '<script>window.PIXELART_CHANNEL_FIXED=1;</script>'; }
+  html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + inject) : inject + html;
+  const body = Buffer.from(html, 'utf8');
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': body.length,
+    'Cache-Control': 'no-store'
+  });
+  return res.end(body);
+}
+
 const server = http.createServer((req, res) => {
-  const pathOnly = req.url ? req.url.split('?')[0] : '';
+  let pathOnly = req.url ? req.url.split('?')[0] : '';
   const fullUrl = new URL(req.url || '/', 'http://localhost');
+
+  /* 固定腾讯通道（/apps/pixelart2）的 API：内部改写成 /api/pixelart-vp/*，
+     复用同一个 VP 引擎实例（任务目录共享，/my 里的作品照常能打开）。
+     打上 req.pixelartFixed 标记，下面的「已切换」拦截会放行它。 */
+  if (pathOnly.indexOf('/api/pixelart2/') === 0) {
+    req.pixelartFixed = 'vp';
+    const rest = pathOnly.slice('/api/pixelart2/'.length);
+    req.url = '/api/pixelart-vp/' + rest + (fullUrl.search || '');
+    pathOnly = '/api/pixelart-vp/' + rest;
+  }
 
   /* 管理后台：会话身份 + 管理员邮箱白名单（见 server/admin.js） */
   if (ADMIN_PATHS.indexOf(pathOnly) !== -1) {
@@ -1215,10 +1318,9 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET' && (pathOnly === '/' || pathOnly === '/index.html')) {
     /* 站点根 → 拼豆大师（dotbeads.com 根目录即拼豆首页）。
-       内部重写而非 302：地址栏保持 /，拼豆页资产均为绝对路径（/apps/pixelart/*、/shared/*）不受影响。
-       头像制作大师仍在 /apps/avatar/。 */
-    req.url = '/apps/pixelart/index.html' + (fullUrl.search || '');
-    return serveStatic(req, res);
+       通道走动态注入：默认腾讯 VP，故障自动切自研（见 servePixelartPage）。
+       地址栏保持 /，拼豆页资产均为绝对路径（/apps/pixelart/*、/shared/*）不受影响。 */
+    return servePixelartPage(req, res, {});
   }
   if (req.method === 'GET' && (pathOnly === '/my' || pathOnly === '/my/')) {
     /* 我的作品（平台层共享页）：作品 + 积分明细，跨产品统一入口 */
@@ -1237,23 +1339,17 @@ const server = http.createServer((req, res) => {
     return serveStatic(req, res);
   }
   if (req.method === 'GET' && (pathOnly === '/pixelart' || pathOnly === '/pixelart/')) {
-    /* 拼豆大师·经典版（/pixelart）：与主页完全同一套页面与功能，唯一差异是生图后端
-       （val-perler.qq.com 经典模型）。页面复用 apps/pixelart/index.html，在此注入
-       API base，让 app.js 全部请求打到 /api/pixelart-vp/*（第二引擎实例）。 */
-    let html;
-    try { html = fs.readFileSync(path.join(ROOT, 'apps/pixelart/index.html'), 'utf8'); } catch (_) {
-      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-      return res.end('pixelart page missing');
-    }
-    const inject = '<script>window.PIXELART_API_BASE="/api/pixelart-vp";</script>';
-    html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + inject) : inject + html;
-    const body = Buffer.from(html, 'utf8');
-    res.writeHead(200, {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Content-Length': body.length,
-      'Cache-Control': 'no-store'
-    });
-    return res.end(body);
+    /* 拼豆大师·经典版（/pixelart）：与 / 完全同一套页面，通道也一致（默认腾讯、故障自动切）。 */
+    return servePixelartPage(req, res, {});
+  }
+  if (req.method === 'GET' && (pathOnly === '/apps/pixelart' || pathOnly === '/apps/pixelart/')) {
+    /* 固定自研通道：不受自动切换影响，任何时候都打 /api/pixelart。
+       显式注入而不是靠「没注入 = 默认自研」，避免将来改动默认值把它带走。 */
+    return servePixelartPage(req, res, { base: '/api/pixelart', fixed: true });
+  }
+  if (req.method === 'GET' && (pathOnly === '/apps/pixelart2' || pathOnly === '/apps/pixelart2/')) {
+    /* 固定腾讯通道：页面永不切换；API 走 /api/pixelart2/*（内部映射到 VP 引擎）。 */
+    return servePixelartPage(req, res, { base: '/api/pixelart2', fixed: true });
   }
   if (pathOnly === '/api/ai') {
     if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
@@ -1331,10 +1427,28 @@ const server = http.createServer((req, res) => {
   }
   if (pathOnly === '/api/pixelart-vp/generate') {
     if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
+    /* 通道已切到自研：在建单扣费之前就挡住（不留流水），并告诉前端换到哪个 base。
+       固定通道（/apps/pixelart2 与 /apps/pixelart）不受影响：它们的契约就是永不切换。 */
+    if (!req.pixelartFixed && channel.getState().active === 'self') {
+      return sendJson(res, 503, {
+        error: {
+          code: 'CHANNEL_SWITCHED',
+          message: '出图服务正在重新连接，请稍候重试',
+          base: channel.BASE.self
+        }
+      });
+    }
     return handlePixelartGenerate(req, res, pixelartVp);
   }
   if (pathOnly === '/api/pixelart-vp/regen') {
     if (req.method !== 'POST') { return sendJson(res, 405, { error: { message: '仅支持 POST' } }); }
+    /* 重转要在原通道的任务目录里找底稿，切过去以后必然找不到 —— 直接说清楚，
+       不要白跑一遍 python。前端不做自动重试（跨引擎的 taskId 本来就不通用）。 */
+    if (!req.pixelartFixed && channel.getState().active === 'self') {
+      return sendJson(res, 409, {
+        error: { code: 'CHANNEL_SWITCHED', message: '原图纸已归档，请重新生成一张' }
+      });
+    }
     return pixelartVp.handleRegen(req, res, sendJson);
   }
   if (pathOnly === '/api/pixelart-vp/task') {

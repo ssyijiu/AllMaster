@@ -182,7 +182,11 @@
    * 云端只存一行几百字节的元数据（users/<uid>/pixelart/<ts>-<taskId>.json）；
    * 封面和图纸都是大文件，留在服务器长期归档，这里用同源接口取（无需签名、长缓存）。 */
   function pixelartApiBase(v) {
-    return v === '/api/pixelart-vp' ? '/api/pixelart-vp' : '/api/pixelart';
+    /* 作品行里存的是生成时的通道前缀，必须原样尊重 —— 任务 id 只在自己的引擎实例里有效。
+       /api/pixelart2 是「固定腾讯」入口（2026-11-04 新增），它的任务同样落在 vp 实例，
+       但前缀不同；漏掉它会让这批作品在「我的」里指向自研通道，点开就是 404。 */
+    if (v === '/api/pixelart-vp' || v === '/api/pixelart2') { return v; }
+    return '/api/pixelart';
   }
 
   function blobText(blob) {

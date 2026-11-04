@@ -186,6 +186,24 @@
       </div>
 
       <div class="panel">
+        <h2 class="panel-title">生图通道</h2>
+        <p class="panel-desc">腾讯 VP 是默认通道。连续 2 单被上游自己判定为「额度耗尽」、且期间没有任何一单成功，系统会自动切到自研（失败单照常退积分，用户端不提示）。切换只影响 <b>/</b> 与 <b>/pixelart</b>；<b>/apps/pixelart</b> 固定自研、<b>/apps/pixelart2</b> 固定腾讯，两者永不参与切换。自动切换只往自研走，<b>回切只能手动</b>。</p>
+        <div class="entry-card">
+          <div class="entry-head">
+            <h4 id="channelNow">—</h4>
+            <span class="entry-sub" id="channelSince"></span>
+          </div>
+          <p class="hint" id="channelReason"></p>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+            <button class="btn primary small" id="btnChannelVp" type="button">切到腾讯（VP）</button>
+            <button class="btn secondary small" id="btnChannelSelf" type="button">切到自研</button>
+          </div>
+          <p class="hint" id="channelMsg"></p>
+        </div>
+        <div id="channelEvents" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="panel">
         <h2 class="panel-title">风格列表</h2>
         <p class="panel-desc">每种风格 = 名称 + 封面图（可上传）+ 提示词（可留空）+ 绑定的服务商。提示词留空时，前台会把用户填写的「补充描述」作为提示词发送给 AI。</p>
         <div id="styleList"></div>
@@ -682,6 +700,7 @@
       loadRedeemList();
       loadInviteList();
       loadProducts();
+      loadChannel();
     }
 
     /* ---------- 渲染：生成选项（头像页参考图入口） ---------- */
@@ -692,6 +711,70 @@
       $('optRefPromptState').textContent = String(s.refPrompt || '').trim()
         ? '当前：使用自定义说明'
         : '当前：使用内置默认说明（只借画风，不借人脸）';
+    }
+
+    /* ---------- 渲染：生图通道（腾讯 / 自研） ----------
+       判定规则在 server/channel.js，这里只负责展示与手动回切。
+       自动切换只往自研走，回切是人做的决定 —— 所以两个按钮都常驻。 */
+    function fmtTs(ms) {
+      if (!ms) { return '—'; }
+      var d = new Date(ms);
+      var p = function (n) { return (n < 10 ? '0' : '') + n; };
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' '
+        + p(d.getHours()) + ':' + p(d.getMinutes());
+    }
+
+    function channelByLabel(by) {
+      if (by === 'auto') { return '自动'; }
+      if (by === 'cli') { return '命令行'; }
+      if (by === 'manual') { return '手动'; }
+      return by || '-';
+    }
+
+    function renderChannel(d) {
+      if (!d) { return; }
+      $('channelNow').textContent = '当前：' + d.activeLabel;
+      $('channelSince').textContent = d.since
+        ? ('切换于 ' + fmtTs(d.since) + '（' + channelByLabel(d.by) + '）')
+        : '初始状态';
+      $('channelReason').textContent = d.reason ? ('原因：' + d.reason) : '';
+      $('btnChannelVp').disabled = d.active === 'vp';
+      $('btnChannelSelf').disabled = d.active === 'self';
+      var rows = (d.events || []).slice(0, 12);
+      if (!rows.length) {
+        $('channelEvents').innerHTML = '<p class="hint">还没有事件记录。</p>';
+        return;
+      }
+      /* 成功事件也列出来：判定要求「连续 2 单额度错误 + 期间零成功」，
+         看到成功的绿点才能确认通道当时是活的 */
+      $('channelEvents').innerHTML = '<p class="hint" style="margin-bottom:6px;">最近事件（成功也算：判定要求期间零成功）</p>'
+        + rows.map(function (e) {
+          var extra = e.error_code
+            ? (' · ' + esc(e.error_code) + (e.quota_pool ? '/' + esc(e.quota_pool) : ''))
+            : '';
+          return '<div class="hint" style="font-family:var(--font-mono);font-size:var(--text-sm);">'
+            + fmtTs(e.ts) + '  ' + (e.channel === 'vp' ? '腾讯' : '自研') + '  '
+            + (e.ok ? '成功' : '失败') + extra + '</div>';
+        }).join('');
+    }
+
+    function loadChannel() {
+      return adminApi('GET', '/api/admin/channel').then(function (res) {
+        renderChannel(res && res.data);
+      }).catch(function (e) {
+        $('channelNow').textContent = '通道状态读取失败';
+        $('channelMsg').textContent = (e && e.message) || '';
+      });
+    }
+
+    function setChannel(target) {
+      $('channelMsg').textContent = '切换中…';
+      adminApi('POST', '/api/admin/channel', { target: target }).then(function (res) {
+        $('channelMsg').textContent = '已切换。新打开的页面立即生效，已打开的页面下一次生成会自动跟上。';
+        renderChannel(res && res.data);
+      }).catch(function (e) {
+        $('channelMsg').textContent = (e && e.message) || '切换失败';
+      });
     }
 
     /* ---------- 渲染：服务商 ---------- */
@@ -909,6 +992,9 @@
     }
 
     /* ---------- 保存 ---------- */
+    $('btnChannelVp').addEventListener('click', function () { setChannel('vp'); });
+    $('btnChannelSelf').addEventListener('click', function () { setChannel('self'); });
+
     $('btnSaveAll').addEventListener('click', function () {
       if (!cfg) { return; }
       var ids = {};

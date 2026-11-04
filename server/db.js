@@ -94,6 +94,23 @@ CREATE TABLE IF NOT EXISTS orders (
 CREATE INDEX IF NOT EXISTS idx_orders_user   ON orders(user_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status, created_at);
 
+/* 生图通道事件流（2026-11-04）：每单成功/失败各一行，自动切换判定与后台复盘共用。
+   只留 7 天（channel.js 内定期清）——这是运维数据，不是业务账本。 */
+CREATE TABLE IF NOT EXISTS upstream_errors (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts          INTEGER NOT NULL,
+  channel     TEXT NOT NULL,         -- vp|self
+  backend     TEXT,                  -- valperler|apinebula
+  ok          INTEGER NOT NULL DEFAULT 0,
+  error_code  TEXT,
+  quota_pool  TEXT,
+  http_status INTEGER,
+  user_id     TEXT,
+  order_id    TEXT,
+  message     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_upstream_channel ON upstream_errors(channel, ts DESC);
+
 CREATE TABLE IF NOT EXISTS redeem_codes (
   code          TEXT PRIMARY KEY,
   credits       INTEGER NOT NULL,
