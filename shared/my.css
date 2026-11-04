@@ -245,3 +245,13 @@ body {
   .page { padding: 24px 14px 64px; }
   .works-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
 }
+
+/* 页脚：本页原来没有 footer，平台层的「联系客服」入口按 .footer 注入，
+   缺了它 /my 就没有客服入口（拼豆与头像页的 .footer 在各自产品 CSS 里） */
+.footer {
+  margin-top: 40px;
+  text-align: center;
+  font-size: var(--text-sm, 13px);
+  color: var(--meta, #8e91a0);
+}
+.footer p { margin: 0; line-height: 1.7; }

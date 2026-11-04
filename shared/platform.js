@@ -269,6 +269,17 @@
     '    <span class="group-label">充值套餐</span>',
     '    <div class="product-grid" id="productGrid"></div>',
     '    <p class="hint" id="payChannelsNote"></p>',
+    /* 线上支付没开通期间的唯一充值通道：二维码 + 三步说明。
+       套餐卡只是标价（让人知道多少钱能买多少积分），钱从这里进来。 */
+    '    <div class="manual-pay" id="manualPay">',
+    '      <img class="mp-qr" src="/shared/assets/wechat-qr.png" alt="点豆客服微信二维码" width="150" height="150" />',
+    '      <div class="mp-body">',
+    '        <p class="mp-title">微信人工充值</p>',
+    '        <p class="mp-desc">扫码加客服微信，告诉他充多少，转账后把<b>注册邮箱</b>发过去。</p>',
+    '        <p class="mp-eta">10 分钟内到账</p>',
+    '        <p class="mp-tip">手机用户可长按二维码识别</p>',
+    '      </div>',
+    '    </div>',
     '    <div class="login-divider"><span>或</span></div>',
     '    <span class="group-label">兑换码兑换</span>',
     '    <div class="phone-row">',
@@ -295,6 +306,98 @@
   if (!Platform.mountWalletModal()) {
     document.addEventListener('DOMContentLoaded', function () { Platform.mountWalletModal(); });
   }
+
+  /* =========================================================
+   * 客服弹窗：不依赖登录态
+   * ---------------------------------------------------------
+   * 页脚的「联系客服」必须对未登录的人也开——支付渠道审核要看站点
+   * 有没有可用的联系方式，登录墙会把审核员和第一次来的访客一起挡在外面。
+   * 所以不复用钱包弹窗（openWallet 第一行就是 openLogin）。
+   *
+   * 二维码是「加好友」名片码，不是收款码：先加人再收钱，否则收到一笔
+   * 钱却不知道是谁付的。收款码客服在会话里单独发。
+   * ========================================================= */
+  var CONTACT_MODAL_HTML = [
+    '<div class="modal-mask" id="contactModal" hidden>',
+    '  <div class="modal modal-contact" role="dialog" aria-modal="true" aria-labelledby="contactTitle">',
+    '    <div class="modal-head">',
+    '      <h3 id="contactTitle">联系客服</h3>',
+    '      <button class="btn-close-modal" id="btnCloseContact" type="button" aria-label="关闭客服弹窗">',
+    '        <svg class="icon icon-16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4 L12 12 M12 4 L4 12"/></svg>',
+    '      </button>',
+    '    </div>',
+    '    <p class="modal-desc">充值、退款、图纸打不开，加微信直接说，一般 10 分钟内回复。</p>',
+    '    <div class="contact-qr-wrap">',
+    '      <img class="contact-qr" src="/shared/assets/wechat-qr.png" alt="点豆客服微信二维码" width="220" height="220" />',
+    '    </div>',
+    '    <p class="contact-step"><b>要充值</b>：加好友后告诉客服充多少 → 转账 → 把<b>注册邮箱</b>发过来，10 分钟内到账。</p>',
+    '    <p class="contact-step">手机用户可以长按二维码识别；也可以发邮件到 <a href="mailto:lxmyijiu@163.com">lxmyijiu@163.com</a>。</p>',
+    '  </div>',
+    '</div>'
+  ].join('\n');
+
+  Platform.mountContactModal = function () {
+    if (!document.body) { return false; }
+    var old = document.getElementById('contactModal');
+    if (old && old.parentNode) { old.parentNode.removeChild(old); }
+    var host = document.createElement('div');
+    host.innerHTML = CONTACT_MODAL_HTML;
+    var node = host.firstElementChild;
+    if (!node) { return false; }
+    document.body.appendChild(node);
+    /* 点遮罩关闭；点内容不关（和登录弹窗一致） */
+    node.addEventListener('click', function (e) {
+      if (e.target === node) { Platform.closeContact(); }
+    });
+    var btn = node.querySelector('#btnCloseContact');
+    if (btn) { btn.addEventListener('click', Platform.closeContact); }
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !node.hidden) { Platform.closeContact(); }
+    });
+    return true;
+  };
+  Platform.openContact = function () {
+    var m = document.getElementById('contactModal');
+    if (!m) { return; }
+    m.hidden = false;
+    var btn = m.querySelector('#btnCloseContact');
+    if (btn && btn.focus) { btn.focus(); }
+  };
+  Platform.closeContact = function () {
+    var m = document.getElementById('contactModal');
+    if (m) { m.hidden = true; }
+  };
+  Platform.mountContactModal();
+  document.addEventListener('DOMContentLoaded', function () { Platform.mountContactModal(); });
+
+  /* =========================================================
+   * 页脚客服入口：三页统一注入
+   * ---------------------------------------------------------
+   * 登录弹窗当年就是三页各抄一份，改一处漏两处；这个入口不再重复那个错误。
+   * 幂等：用 data-contact-ready 标记，重复调用不会加第二个按钮。
+   * 没有 .footer 的页面（/my）要自带一个 footer，否则这里静默跳过。
+   * ========================================================= */
+  Platform.mountFooterContact = function () {
+    var footers = document.querySelectorAll('.footer');
+    Array.prototype.forEach.call(footers, function (f) {
+      if (f.getAttribute('data-contact-ready')) { return; }
+      f.setAttribute('data-contact-ready', '1');
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'footer-contact';
+      btn.textContent = '联系客服';
+      btn.addEventListener('click', function () { Platform.openContact(); });
+      var mail = document.createElement('a');
+      mail.className = 'footer-mail';
+      mail.href = 'mailto:lxmyijiu@163.com';
+      mail.textContent = 'lxmyijiu@163.com';
+      f.appendChild(btn);
+      f.appendChild(mail);
+    });
+    return true;
+  };
+  Platform.mountFooterContact();
+  document.addEventListener('DOMContentLoaded', Platform.mountFooterContact);
 
   /* =========================================================
    * 轻量 toast：全平台共用的「一次性结果」提示
@@ -465,7 +568,7 @@
     /* 钱包弹窗的节点由平台层生成，页面不必再逐个列出它们的 id；
        页面漏了（或以后新增节点）就在这里补齐，避免「点开是空弹窗」。 */
     ['walletModal', 'btnCloseWallet', 'walletBalanceBig', 'productGrid',
-     'payChannelsNote', 'redeemCode', 'btnRedeem', 'walletMsg', 'walletMore'
+     'payChannelsNote', 'manualPay', 'redeemCode', 'btnRedeem', 'walletMsg', 'walletMore'
     ].forEach(function (id) {
       if (!els[id]) { els[id] = document.getElementById(id); }
     });
@@ -728,6 +831,13 @@
 
     /* ---------- 钱包弹窗 ---------- */
     var payChannelState = { xunhupay: false };
+    /* 充值提示只有一个来源。渠道状态是异步拉的，套餐区又可能因为未登录 /
+       云端不可用而提前返回——两处都得拿到同一句文案，所以抽成函数。 */
+    function syncPayNote() {
+      if (!els.payChannelsNote) { return; }
+      els.payChannelsNote.textContent = payChannelState.xunhupay
+        ? '' : '线上支付正在开通 —— 现在请扫码加客服微信充值，10 分钟内到账。';
+    }
     function showWalletMsg(msg, warn) {
       els.walletMsg.textContent = msg;
       els.walletMsg.classList.toggle('warn', !!warn);
@@ -744,6 +854,9 @@
       els.btnWallet.focus();
     }
     function loadWalletProducts() {
+      /* 提示先落：未登录 / 云端不可用会在这里提前 return，
+         否则用户看到空的套餐区却不知道还能怎么充 */
+      syncPayNote();
       var cloud = cloudService.getClient();
       if (!cloud || !cloud.database || !cloud.database.from) { return; }
       cloud.database.from('app_products').select('*').eq('active', true).order('sort').then(function (res) {
@@ -769,17 +882,20 @@
           var btn = document.createElement('button');
           btn.type = 'button';
           btn.className = 'btn primary small';
-          btn.textContent = '购买';
-          btn.addEventListener('click', function () { startPay(p); });
+          /* 支付没开通时按钮不能装作能付：点了直接把人送到下面的二维码。
+             标签按渲染时的渠道状态写，点击时再判一次——loadPayChannels 是异步的，
+             万一它比套餐晚回来，功能仍然对，只是标签可能差一个词。 */
+          btn.textContent = payChannelState.xunhupay ? '购买' : '微信充值';
+          btn.addEventListener('click', function () {
+            if (payChannelState.xunhupay) { startPay(p); } else { focusManualPay(); }
+          });
           card.appendChild(btn);
           els.productGrid.appendChild(card);
         });
-        els.payChannelsNote.textContent = payChannelState.xunhupay
-          ? '' : '线上支付即将开通，当前请使用兑换码兑换。';
+        syncPayNote();
       }).catch(function () {
         els.productGrid.innerHTML = '<p class="hint">套餐加载失败，请稍后重试</p>';
-      });
-    }
+      });    }
     /* 积分明细：读自己的账本流水（RLS 限制只能看本人，只读）
      * 渲染只此一份：弹窗里的明细已去掉（底部改成去 /my 的入口），
      * /my 的「积分明细」tab 复用这里，避免两处各写一套条目结构。 */
@@ -835,12 +951,23 @@
         container.appendChild(item);
       });
     }
-    function startPay(product) {
-      if (!Store.state.user) { openLogin(); return; }
-      if (!payChannelState.xunhupay) {
-        showWalletMsg('线上支付尚未开通，请使用兑换码兑换。', true);
+    /* 人工充值定位：套餐卡点了不该只回一句「还没开通」就算完，
+       得把人送到真正能付钱的地方（下面的二维码），并给一句明确的下一步。 */
+    function focusManualPay() {
+      var el = els.manualPay;
+      if (!el) {
+        showWalletMsg('线上支付正在开通，请扫码加客服微信充值，10 分钟内到账。');
         return;
       }
+      try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+      catch (_) { el.scrollIntoView(); }
+      el.classList.add('flash');
+      setTimeout(function () { el.classList.remove('flash'); }, 1800);
+      showWalletMsg('线上支付正在开通，现在走微信人工充值，10 分钟内到账。');
+    }
+    function startPay(product) {
+      if (!Store.state.user) { openLogin(); return; }
+      if (!payChannelState.xunhupay) { focusManualPay(); return; }
       fetch('/api/pay/order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1087,6 +1214,8 @@
     function loadPayChannels() {
       fetch('/api/pay/config').then(function (r) { return r.json(); }).then(function (data) {
         if (data && data.channels) { payChannelState.xunhupay = !!data.channels.xunhupay; }
+        /* 渠道状态回来得比套餐晚时，提示要跟着改口 */
+        syncPayNote();
       }).catch(function () {});
     }
 
