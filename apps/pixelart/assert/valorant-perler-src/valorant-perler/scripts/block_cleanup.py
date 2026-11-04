@@ -351,8 +351,66 @@ def remove_placeholder_bg(a: np.ndarray) -> tuple[np.ndarray, bool]:
 
     frac = float(removed.sum()) / float(opaque.sum())
     if frac < 0.01 or frac > 0.97:
-        return a, False
+        # 主逻辑把整片同色背景+主体一并吞掉（如白猫 vs 白格），被安全闸退回：
+        # 尝试「主体锚点隔离」兜底（见下），仍失败则不动。
+        return _remove_placeholder_bg_anchor(a, rgb, opaque, h, w, palette)
     if removed[h // 2, w // 2]:         # 中心被抠：多半把主体也啃了
+        return _remove_placeholder_bg_anchor(a, rgb, opaque, h, w, palette)
+    out = a.copy()
+    out[..., 3][removed] = 0
+    return out, True
+
+
+def _remove_placeholder_bg_anchor(a, rgb, opaque, h, w, palette) -> tuple[np.ndarray, bool]:
+    """占位背景清除兜底（主逻辑因「主体与背景同色」整体被吞时调用）。
+
+    主逻辑靠「颜色 flood」区分背景与主体；当主体与背景同色（如 02 白猫 vs 白/灰棋盘格、
+    05 灰猫浅毛 vs 白格）时，flood 从边界穿进主体、把整图当背景吞掉，被安全闸（frac>0.97）
+    退回。本兜底改用「主体特征色锚点」：背景色族之外、且落在画面内部的像素（猫的棕/粉等
+    异色特征）是可靠的主体种子；从这些种子沿「非背景灰格」像素生长出主体连通块，再把它从
+    背景 flood 结果里扣掉——背景灰格作为墙挡住 flood 穿入主体，从而保住主体。
+
+    仍受安全闸约束（frac 越界 / 中心被抠则放弃）。已知局限同主逻辑：主体与背景完全同色、
+    且没有任何异色特征可当锚点（或细白毛贴在灰格上）时，仍会损失这部分主体。
+    """
+    lum = rgb.mean(2)
+    d = np.abs(rgb[:, :, None, :] - palette[None, None, :, :]).sum(3).min(2)
+    bg_seed = (d < PLACEHOLDER_TOL) & opaque
+    margin = int(min(h, w) * 0.08)
+    interior = np.zeros((h, w), bool)
+    interior[margin:h - margin, margin:w - margin] = True
+    subj_anchor = interior & ~bg_seed & opaque
+    if subj_anchor.sum() < 50:          # 没有可靠的异色特征可当锚点：放弃
+        return a, False
+    # 背景灰格（匹配色族且偏暗）作墙：阻断「沿浅色 flood」穿入主体
+    bg_gray = (d < PLACEHOLDER_TOL) & (lum < 220) & opaque
+    cat_pass = opaque & ~bg_gray
+    lab, n = nd_label(cat_pass, structure=np.ones((3, 3), int))
+    touching = set(np.unique(lab[subj_anchor]))
+    touching.discard(0)
+    if not touching:
+        return a, False
+    cat_region = np.isin(lab, list(touching)) & opaque
+    # 修泄漏：贴四边、且基本是背景色、不含锚点的连通块 → 当背景泄漏剔除
+    labc, nc = nd_label(cat_region, structure=np.ones((3, 3), int))
+    bt = set(np.unique(np.concatenate([labc[0, :], labc[-1, :], labc[:, 0], labc[:, -1]])))
+    bt.discard(0)
+    for k in bt:
+        comp = labc == k
+        if (comp & bg_seed).mean() > 0.6 and (comp & subj_anchor).sum() == 0:
+            cat_region = cat_region & ~comp
+    # 背景 flood from border through bg_seed
+    lab2, n2 = nd_label(bg_seed, structure=np.ones((3, 3), int))
+    bt2 = set(np.unique(np.concatenate([lab2[0, :], lab2[-1, :], lab2[:, 0], lab2[:, -1]])))
+    bt2.discard(0)
+    if not bt2:
+        return a, False
+    bg_removed = np.isin(lab2, list(bt2)) & opaque
+    removed = bg_removed & ~cat_region
+    frac = float(removed.sum()) / float(opaque.sum())
+    if frac < 0.01 or frac > 0.97:
+        return a, False
+    if removed[h // 2, w // 2]:
         return a, False
     out = a.copy()
     out[..., 3][removed] = 0
