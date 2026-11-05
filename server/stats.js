@@ -5,6 +5,8 @@
  * ① 7 日转化率（打开页面 → 首次出图）：反映登录、上传环节的摩擦力
  * ② 人均生成张数：反映图纸质量（好就会多转几张试试）
  * ③ 7 日内二次回访率：决定这是「一次性玩具」还是「工具」
+ * ④ 出图失败率：服务侧健康度。上传中断不算出图失败，单独标出；
+ *    没扣到钱的单（积分不足）既不是成功也不是失败，不进分子分母。
  *
  * 口径统一按**东八区自然日**切（与后台其它报表一致），不是 UTC。
  *
@@ -346,6 +348,7 @@ function funnelMeta(range, product, ex) {
       label: '新访客 7 日转化',
       visitors: newVisitors,
       judged: judged,
+      matured: matured,
       pending: pending,
       signups: signups,
       firstGen: firstGenUsers,
@@ -353,7 +356,8 @@ function funnelMeta(range, product, ex) {
       rate: pct(converted, judged),
       steps: steps,
       note: '7 日转化率：分母是窗口内首次出现的匿名访客，分子是其中首访后 7 日内（含当天）完成首次出图的。' +
-        '出图即刻计入；只有「不满 7 天且还没出图」的人才进观察中、暂不进分母。'
+        '出图即刻计入；只有「不满 7 天且还没出图」的人才进观察中、暂不进分母。' +
+        '分母里一个「确认流失」的样本都没有时（matured = 0），比率只反映已转化的人，页面显示「观察中」而不给数。'
     };
   }
   return {
@@ -361,6 +365,7 @@ function funnelMeta(range, product, ex) {
     label: '新注册 → 首次出图',
     visitors: 0,
     judged: 0,
+    matured: 0,
     pending: 0,
     signups: signups,
     firstGen: firstGenUsers,
@@ -494,6 +499,106 @@ function retentionMeta(range, product, ex) {
   };
 }
 
+/* ---------------- 指标 ④ 出图失败率 ---------------- */
+
+/* 失败码 → 人话。口径只在这一处，页面与 CLI 都从这里取。 */
+const REASON_LABEL = {
+  submit_aborted: '上传中断',
+  submit_400: '提交被拒',
+  submit_413: '图太大',
+  task_failed: '出图失败',
+  upstream_524: '上游超时',
+  client_gone: '页面已关',
+  proxy_error: '代理异常'
+};
+function reasonLabel(reason) {
+  if (REASON_LABEL[reason]) { return REASON_LABEL[reason]; }
+  if (reason === 'charge_failed:INSUFFICIENT_BALANCE') { return '积分不足'; }
+  const up = /^upstream_(\d+)$/.exec(reason);
+  if (up) { return '上游 ' + up[1]; }
+  return reason;
+}
+
+/* 提交被拒的细分码（server.js 写进 orders.meta.fail.code）。
+   2026-11-04 之前的老单只有 submit_400、没有细分码 —— 页面如实标「未记录」，不猜。 */
+const SUBMIT_CODE_LABEL = {
+  BODY_TOO_LARGE: '图片太大（>12MB）',
+  REQUEST_ABORTED: '上传中断',
+  BAD_IMAGE: '图片格式不支持',
+  BAD_BODY: '请求体损坏',
+  BAD_STYLE: '未知画风',
+  STORE_FAILED: '落盘失败'
+};
+
+/* 失败率只数「已结算单」：成功 + 失败。三类单不进分母 ——
+ *   pending      还没结果，算分母会随刷新跳动；
+ *   积分不足     单都没扣成，用户根本没开始生成；
+ *   上传中断     计入失败（用户确实没拿到图），但同时单独标出，另给「有效失败率」。 */
+function failureMeta(range, product, ex) {
+  const ni = notIn('user_id', ex || []);
+  const sql = "SELECT status, COALESCE(fail_reason, '') AS reason, " +
+    "COALESCE(json_extract(meta, '$.fail.code'), '') AS code, COUNT(*) AS n " +
+    'FROM orders WHERE ' + dayExpr('created_at') + ' >= ? AND ' + dayExpr('created_at') + ' <= ?' +
+    (product ? ' AND product = ?' : '') + ni.sql + ' GROUP BY status, reason, code';
+  const params = (product ? [range.from, range.to, product] : [range.from, range.to]).concat(ni.params);
+
+  let ok = 0;
+  let fail = 0;
+  let aborted = 0;
+  let unpaid = 0;
+  let pendingN = 0;
+  let submitTotal = 0;   /* submit_400 总数（老口径「提交被拒」） */
+  let submitCoded = 0;   /* 其中记了细分码的（2026-11-04 之后的下单流程） */
+  const byReason = new Map();
+  const byCode = new Map();
+
+  allRows(sql, params).forEach(function (r) {
+    const n = r.n;
+    if (r.status === 'succeeded') { ok += n; return; }
+    if (r.status !== 'failed') { pendingN += n; return; }
+    const reason = r.reason || '(未记录)';
+    if (reason.indexOf('charge_failed') === 0) { unpaid += n; return; }
+    fail += n;
+    if (reason === 'submit_aborted') { aborted += n; }
+    const key = reasonLabel(reason);
+    byReason.set(key, (byReason.get(key) || 0) + n);
+    /* 细分只取 submit_400：submit_aborted 本身就是「上传中断」这一类，
+       再混进「提交被拒明细」里会让同一批单被数两遍、说法也对不上 */
+    if (reason === 'submit_400') {
+      submitTotal += n;
+      if (r.code) {
+        submitCoded += n;
+        const ck = SUBMIT_CODE_LABEL[r.code] || r.code;
+        byCode.set(ck, (byCode.get(ck) || 0) + n);
+      }
+    }
+  });
+
+  const settled = ok + fail;
+  function rank(m) {
+    return Array.from(m.entries())
+      .map(function (e) { return { label: e[0], n: e[1] }; })
+      .sort(function (a, b) { return b.n - a.n; });
+  }
+
+  return {
+    settled: settled,
+    succeeded: ok,
+    failed: fail,
+    aborted: aborted,
+    unpaid: unpaid,
+    pending: pendingN,
+    rate: pct(fail, settled),
+    validRate: pct(fail - aborted, settled - aborted),
+    submit: { total: submitTotal, coded: submitCoded },
+    reasons: rank(byReason),
+    codes: rank(byCode),
+    note: '出图失败率 = 失败单 ÷ 已结算单（成功 + 失败）。上传中断（手机划走、切网络）如实计入，' +
+      '同时给出「有效失败率」—— 剔掉这部分，只看到底是不是服务没出图。' +
+      '积分不足的单没扣到钱，两边都不进。'
+  };
+}
+
 /* ---------------- 趋势 ---------------- */
 
 function trendMeta(range, product, ex) {
@@ -558,6 +663,7 @@ function overview(opts) {
   const funnel = funnelMeta(range, product, ex);
   const perUser = perUserMeta(range, product, ex);
   const retention = retentionMeta(range, product, ex);
+  const failure = failureMeta(range, product, ex);
   const trend = trendMeta(range, product, ex);
 
   /* 页脚的量也按统计起点算、也剔掉内部账号，免得「累计 193 单」这种历史数字混进来 */
@@ -581,6 +687,7 @@ function overview(opts) {
     funnel: funnel,
     perUser: perUser,
     retention: retention,
+    failure: failure,
     trend: trend,
     tracking: {
       since: range.since,

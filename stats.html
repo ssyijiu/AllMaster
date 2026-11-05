@@ -59,7 +59,7 @@
     .hint.ok { color: var(--success); }
 
     /* ---------- 指标卡 ---------- */
-    .kpi-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
     .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow); padding: 20px 20px 18px; display: flex; flex-direction: column; min-width: 0; }
     .kpi-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
     .kpi-no { width: 22px; height: 22px; flex: none; border-radius: 7px; background: var(--brand-50); color: var(--brand-600); font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
@@ -139,8 +139,14 @@
     }
     .since-note b { color: var(--ink-700); font-weight: 510; }
 
-    /* 指标口径说明：三栏卡片，窄屏一栏 */
-    .spec { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    /* 失败原因细分：卡片放不下表格，压成两行小字。
+       注意别给里面的片段加 nowrap —— 多段连排会撑破窄屏（整页宽度超视口）。 */
+    #k4reasons .fn-row { grid-template-columns: 58px minmax(0,1fr) 40px; }
+    .fail-codes { margin-top: 10px; font-size: 11.5px; line-height: 1.6; color: var(--meta); overflow-wrap: anywhere; }
+    .fail-codes b { font-weight: 510; color: var(--ink-500); }
+
+    /* 指标口径说明：两栏（四项刚好 2×2），窄屏一栏 */
+    .spec { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
     .spec-item { background: var(--ink-50); border: 1px solid var(--ink-100); border-radius: var(--radius); padding: 15px 16px 16px; min-width: 0; }
     .spec-item h4 { font-size: 13.5px; font-weight: 590; color: var(--fg); margin-bottom: 8px; }
     .spec-lead { font-size: 12.5px; color: var(--ink-500); line-height: 1.65; margin-bottom: 10px; }
@@ -215,7 +221,7 @@
 
     <div id="board" hidden>
       <p class="since-note" id="sinceNote"></p>
-      <!-- 三个核心指标 -->
+      <!-- 四个核心指标 -->
       <section class="kpi-grid">
         <article class="kpi">
           <div class="kpi-head">
@@ -260,6 +266,23 @@
           <div class="kpi-value" id="k3">—</div>
           <div class="kpi-sub" id="k3sub"></div>
           <div class="kpi-foot"><span class="tag" id="k3tag"></span></div>
+        </article>
+
+        <article class="kpi">
+          <div class="kpi-head">
+            <div>
+              <div class="kpi-title">④ 出图失败率</div>
+              <div class="kpi-why">已结算单里失败占多少；上传中断单独标出</div>
+            </div>
+            <span class="kpi-no">4</span>
+          </div>
+          <div class="kpi-value" id="k4">—</div>
+          <div class="kpi-sub" id="k4sub"></div>
+          <div class="kpi-foot">
+            <div class="funnel" id="k4reasons"></div>
+            <div class="fail-codes" id="k4codes"></div>
+            <div style="margin-top:10px;"><span class="tag" id="k4tag"></span></div>
+          </div>
         </article>
       </section>
 
@@ -387,6 +410,21 @@
               <dd>该队列里，在第 <b>D+1 ~ D+7 天</b>任意一天再次活跃的人。首活跃当天再打开不算。</dd>
               <dt>满 7 天</dt>
               <dd>今天新来的人今天不可能回访，混进来会把率稀释成「看起来很低」。不满 7 天的显示「观察中」、率显示 —。</dd>
+            </dl>
+          </article>
+
+          <article class="spec-item">
+            <h4>④ 出图失败率</h4>
+            <p class="spec-lead">服务侧到底稳不稳。手机划走导致的上传中断会混进来，所以同时给一个剔掉它的「有效失败率」。</p>
+            <dl>
+              <dt>分母</dt>
+              <dd>窗口内<b>已结算</b>的生成单：成功 + 失败。还在跑的 pending、<b>积分不足没扣成钱</b>的单都不进。</dd>
+              <dt>分子</dt>
+              <dd>失败单。用户关页、上游超时、出图服务报错都算 —— 用户确实没拿到图。</dd>
+              <dt>上传中断</dt>
+              <dd>手机上划走、切网络让请求半路断掉。它<b>计入失败率</b>（用户没拿到图），但同时单独数出来；卡片右下角标签给的是<b>剔除它之后</b>的有效值。</dd>
+              <dt>细分码</dt>
+              <dd>提交被拒会细分到「图片太大 / 上传中断 / 格式不支持 / 请求体损坏」。<b>2026-11-04 之前</b>的单只记到「提交被拒」，没有细分，不反推。</dd>
             </dl>
           </article>
         </div>
@@ -526,12 +564,16 @@
       var f = d.funnel, p = d.perUser, r = d.retention;
 
       /* ① 转化率 */
+      var k1Observing = f.basis === 'visitor' && (!f.judged || !f.matured);
       if (f.basis === 'visitor') {
-        if (!f.judged) {
+        /* judged = 已转化 + 确认流失。只有转化、一个「满 7 天还没出图」的样本都没有时
+           （matured = 0），比率必然是 100% —— 那不是成绩，是还没到能判的那天。 */
+        if (k1Observing) {
           setKpiNA($('k1'), '观察中');
-          $('k1sub').textContent = fmtNum(f.pending) + ' 位新访客还没出图，等观察满 7 天再判';
+          $('k1sub').textContent = '已出图 ' + fmtNum(f.converted) + ' 人 · 观察中 ' + fmtNum(f.pending) +
+            ' 人（未出图），等第一批满 7 天才算得出比率';
           $('k1tag').className = 'tag warn';
-          $('k1tag').textContent = '7 天后可见';
+          $('k1tag').textContent = '样本还没到期';
         } else {
           setKpi($('k1'), fmtPct(f.rate));
           $('k1sub').textContent = '可判定 ' + fmtNum(f.judged) + ' 人 → 首图 ' + fmtNum(f.converted) +
@@ -550,10 +592,12 @@
         $('k1tag').className = 'tag warn';
         $('k1tag').textContent = '等待真实流量';
       }
-      renderFunnel($('k1funnel'), [
-        { label: f.basis === 'visitor' ? '可判定' : '注册', n: f.basis === 'visitor' ? f.judged : f.signups },
-        { label: '首图', n: f.converted }
-      ], true);
+      renderFunnel($('k1funnel'), k1Observing
+        ? [{ label: '新访客', n: f.visitors }, { label: '首图', n: f.converted }]
+        : [
+          { label: f.basis === 'visitor' ? '可判定' : '注册', n: f.basis === 'visitor' ? f.judged : f.signups },
+          { label: '首图', n: f.converted }
+        ], true);
 
       /* ② 人均张数 */
       if (p.users > 0) {
@@ -577,6 +621,52 @@
         $('k3sub').textContent = r.pending ? fmtNum(r.pending) + ' 位新用户还没满 7 天' : '还没有满 7 天的队列';
         $('k3tag').className = 'tag warn';
         $('k3tag').textContent = '7 天后可见';
+      }
+
+      /* ④ 失败率：主数=全部失败（含上传中断），tag 给剔除中断后的有效值 */
+      var fl = d.failure;
+      if (!fl || !fl.settled) {
+        setKpiNA($('k4'), '暂无数据');
+        $('k4sub').textContent = '本窗口还没有已结算的生成单';
+        $('k4tag').className = 'tag';
+        $('k4tag').textContent = '等待真实流量';
+        $('k4reasons').innerHTML = '';
+        $('k4codes').innerHTML = '';
+      } else {
+        setKpi($('k4'), fmtPct(fl.rate));
+        $('k4sub').textContent = '成功 ' + fmtNum(fl.succeeded) + ' · 失败 ' + fmtNum(fl.failed) +
+          ' / 共 ' + fmtNum(fl.settled) + ' 单' +
+          (fl.aborted ? '（含上传中断 ' + fmtNum(fl.aborted) + '）' : '');
+
+        renderFunnel($('k4reasons'), fl.reasons.slice(0, 3).map(function (x) {
+          return { label: x.label, n: x.n };
+        }), true);
+
+        /* 提交被拒的细分码：只在有记录时展开；早期单没记细分就直说，不猜 */
+        var codeEl = $('k4codes');
+        codeEl.innerHTML = '';
+        var sm = fl.submit || { total: 0, coded: 0 };
+        if (fl.codes.length) {
+          var head = document.createElement('b');
+          head.textContent = '提交被拒明细：';
+          codeEl.appendChild(head);
+          fl.codes.forEach(function (c, i) {
+            var s = document.createElement('span');
+            s.className = 'fc';
+            s.textContent = (i ? ' · ' : '') + c.label + ' ×' + c.n;
+            codeEl.appendChild(s);
+          });
+          if (sm.coded < sm.total) {
+            codeEl.appendChild(document.createTextNode('（另有 ' + (sm.total - sm.coded) + ' 单未记录）'));
+          }
+        } else if (sm.total) {
+          codeEl.textContent = '提交被拒 ' + sm.total + ' 单都在 11-04 之前，旧版本没记细分原因';
+        }
+
+        $('k4tag').className = 'tag ' + (fl.validRate !== null && fl.validRate <= 8 ? 'up' : 'warn');
+        $('k4tag').textContent = fl.aborted
+          ? '剔除中断后 ' + fmtPct(fl.validRate)
+          : (fl.validRate !== null && fl.validRate <= 8 ? '服务稳定' : '需要排查');
       }
     }
 
