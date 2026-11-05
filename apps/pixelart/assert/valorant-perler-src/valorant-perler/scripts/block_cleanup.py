@@ -117,6 +117,7 @@ GRID_CELL = 3
 # 从边缘把占位背景抠掉。
 PLACEHOLDER_TOL = 60   # 占位背景主色容差（模型出的占位背景常带轻微噪点）
 PLACEHOLDER_VAR_TOL = 120   # 内嵌主体块还原的局部方差上限（低于此判为平滑主体，非高频背景）
+PLACEHOLDER_INTERIOR_MIN = 3000  # 兜底里「不贴边的内部同色块」被当作主体的最小面积（低于此判为背景破洞）
 
 # —— 诊断埋点（默认全关，环境变量开启）——
 # PERLER_CLEANUP_JSON=<path>   写完整诊断 JSON（链路侧据此决定是否留 RAW）
@@ -370,8 +371,13 @@ def _remove_placeholder_bg_anchor(a, rgb, opaque, h, w, palette) -> tuple[np.nda
     异色特征）是可靠的主体种子；从这些种子沿「非背景灰格」像素生长出主体连通块，再把它从
     背景 flood 结果里扣掉——背景灰格作为墙挡住 flood 穿入主体，从而保住主体。
 
-    仍受安全闸约束（frac 越界 / 中心被抠则放弃）。已知局限同主逻辑：主体与背景完全同色、
-    且没有任何异色特征可当锚点（或细白毛贴在灰格上）时，仍会损失这部分主体。
+    补充：被灰格隔断、与锚点断开的「内部同色主体块」（如白猫胸口白毛被灰格棋盘隔成孤岛）
+    也一并保留——背景是贴着外框的环，任何不贴画框的内部同色块只可能是主体，仅当面积过小
+    （可能是主体内的背景破洞）才不保留。
+
+    仍受安全闸约束（frac 越界 / 中心被抠则放弃）。已知局限：主体与背景完全同色、且没有任何
+    异色特征可当锚点、又贴着画框（细白毛贴在灰格上、被边界 flood 直接吞掉）时，仍会损失这
+    部分主体——这类需在生图提示词层给主体加深色轮廓从根本解决，清洗层无法凭空还原。
     """
     lum = rgb.mean(2)
     d = np.abs(rgb[:, :, None, :] - palette[None, None, :, :]).sum(3).min(2)
@@ -390,7 +396,16 @@ def _remove_placeholder_bg_anchor(a, rgb, opaque, h, w, palette) -> tuple[np.nda
     touching.discard(0)
     if not touching:
         return a, False
-    cat_region = np.isin(lab, list(touching)) & opaque
+    # 同时保留「不贴画框的内部块」：占位背景是贴着外框的环，任何不贴边的内部同色块
+    # 只可能是主体（如白猫被灰格隔断、与锚点断开的胸口白毛）。小块多半是主体内部的
+    # 背景破洞，只在足够大时才保留，避免把主体内的背景小白点误留。
+    sizes = np.bincount(lab.ravel())
+    border_comp = set(np.unique(np.concatenate([lab[0, :], lab[-1, :], lab[:, 0], lab[:, -1]])))
+    border_comp.discard(0)
+    interior_keep = {i for i in range(1, n + 1)
+                     if i not in border_comp and sizes[i] >= PLACEHOLDER_INTERIOR_MIN}
+    keep = touching | interior_keep
+    cat_region = np.isin(lab, list(keep)) & opaque
     # 修泄漏：贴四边、且基本是背景色、不含锚点的连通块 → 当背景泄漏剔除
     labc, nc = nd_label(cat_region, structure=np.ones((3, 3), int))
     bt = set(np.unique(np.concatenate([labc[0, :], labc[-1, :], labc[:, 0], labc[:, -1]])))
