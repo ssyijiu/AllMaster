@@ -61,7 +61,9 @@
     txnNext: $('txnNext'),
     lightbox: $('lightbox'),
     lightboxImg: $('lightboxImg'),
-    btnCloseLightbox: $('btnCloseLightbox')
+    btnCloseLightbox: $('btnCloseLightbox'),
+    accountLine: $('accountLine'),
+    accountEmail: $('accountEmail')
   };
 
   var Store = { state: { user: null, works: [], filter: 'all', loading: false, error: '', pruned: 0 } };
@@ -88,6 +90,7 @@
       renderWorks();
       renderWorksNote();
       renderTxnsEmpty();
+      renderAccountLine();
     }
   });
 
@@ -622,7 +625,19 @@
   }
 
   /* ---------- 启动 ---------- */
-  function loadAll() { loadWorks(); if (!els.panelTxns.hidden) { loadTxns(); } }
+  /* 页头的「注册账号」行：显示**完整**邮箱。本人看自己的号，打码反而认不出是哪个
+     （多账号 / 邮箱别名场景很常见）。值只读 Store.state.user —— 它由平台层
+     applySession 统一维护，登录、换号、退出都会走 loadAll，不用自己再订 auth 事件。
+     未登录时整行隐藏。 */
+  function renderAccountLine() {
+    if (!els.accountLine) { return; }
+    var user = Store.state.user;
+    var email = user && user.email ? String(user.email) : '';
+    els.accountLine.hidden = !email;
+    if (els.accountEmail) { els.accountEmail.textContent = email; }
+  }
+
+  function loadAll() { renderAccountLine(); loadWorks(); if (!els.panelTxns.hidden) { loadTxns(); } }
 
   function boot() {
     els.tabWorks.addEventListener('click', function () { switchTab('works'); });

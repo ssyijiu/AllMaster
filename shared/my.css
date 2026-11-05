@@ -72,6 +72,21 @@ body {
 }
 .page-head .hint { margin: 0 0 24px; }
 
+/* 账号行：登录后显示注册邮箱（本人看自己的邮箱，不打码）。
+   长邮箱在窄屏要能断行，否则会把 .page-head 撑宽 —— 见 memory 里「移动端横向溢出」那条。 */
+.page-head .account-line {
+  margin: 0 0 10px;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.page-head .account-line b {
+  color: var(--fg);
+  font-weight: var(--weight-emphasis);
+  font-family: var(--font-mono);
+}
+
 /* ---------- 标签页 ---------- */
 .tabs {
   display: flex;
