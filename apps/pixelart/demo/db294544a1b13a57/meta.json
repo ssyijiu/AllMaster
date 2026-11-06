@@ -9,7 +9,9 @@
   "title": "贴纸拼豆图纸",
   "createdAt": 1793627060708,
   "regenFrom": null,
-  "htmlBytes": 4374709,
+  "htmlBytes": 3006770,
   "boards": 5,
-  "demoFixed": true
+  "demoFixed": true,
+  "rebuiltAt": "2026-11-06",
+  "rebuild": "current-template"
 }

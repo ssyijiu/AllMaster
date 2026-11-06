@@ -9,7 +9,9 @@
   "title": "柔彩手绘拼豆图纸",
   "createdAt": 1793627650018,
   "regenFrom": null,
-  "htmlBytes": 4565692,
+  "htmlBytes": 3168289,
   "boards": 5,
-  "demoFixed": true
+  "demoFixed": true,
+  "rebuiltAt": "2026-11-06",
+  "rebuild": "current-template"
 }

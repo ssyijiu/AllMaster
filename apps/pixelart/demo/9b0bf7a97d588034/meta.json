@@ -9,7 +9,9 @@
   "title": "Q版拼豆图纸",
   "createdAt": 1793626635560,
   "regenFrom": null,
-  "htmlBytes": 4413031,
+  "htmlBytes": 3063004,
   "boards": 5,
-  "demoFixed": true
+  "demoFixed": true,
+  "rebuiltAt": "2026-11-06",
+  "rebuild": "current-template"
 }

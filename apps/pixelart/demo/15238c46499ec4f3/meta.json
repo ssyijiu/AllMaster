@@ -9,7 +9,9 @@
   "title": "卡通拼豆图纸",
   "createdAt": 1793626843045,
   "regenFrom": null,
-  "htmlBytes": 4409239,
+  "htmlBytes": 3038704,
   "boards": 5,
-  "demoFixed": true
+  "demoFixed": true,
+  "rebuiltAt": "2026-11-06",
+  "rebuild": "current-template"
 }

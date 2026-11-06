@@ -9,7 +9,9 @@
   "title": "还原拼豆图纸",
   "createdAt": 1793626151839,
   "regenFrom": null,
-  "htmlBytes": 4262689,
+  "htmlBytes": 2944806,
   "boards": 5,
-  "demoFixed": true
+  "demoFixed": true,
+  "rebuiltAt": "2026-11-06",
+  "rebuild": "current-template"
 }
