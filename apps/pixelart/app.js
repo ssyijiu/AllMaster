@@ -156,7 +156,7 @@ function refreshChannelDot() {
   var SKELETON_HTML = new Array(6).join('<span class="style-skel"></span>');
 
   /* 画风说明行：选中谁就显示谁的 tip（点选可见，移动端不依赖悬停）；无 tip 回落全局文案。
-     有示例图纸（demo 任务 ID）时在说明后跟「打开拼豆图纸」链接，指向该画风的样例图纸页。 */
+     有示例图纸（demo 任务 ID）时在说明后跟「查看示例图纸」链接，指向该画风的样例图纸页。 */
   function updateStyleHint() {
     var hintEl = $('styleHint');
     if (!hintEl) { return; }
@@ -168,7 +168,7 @@ function refreshChannelDot() {
       var html = '「' + cur.label + '」' + cur.tip;
       if (cur.demo) {
         html += ' <a class="style-demo-link" href="/api/pixelart-vp/task/html?id=' + encodeURIComponent(cur.demo)
-          + '" target="_blank" rel="noopener">打开拼豆图纸</a>';
+          + '" target="_blank" rel="noopener">查看示例图纸</a>';
       }
       hintEl.innerHTML = html;
     } else {

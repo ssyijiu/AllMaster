@@ -72,6 +72,31 @@ const ARCHIVE_COVER_PX = 640;
    云端作品行由 /my 按同一规则物理清理，服务器归档在这里按目录 mtime 兜底。 */
 const ARCHIVE_TTL_DAYS = (parseFloat(process.env.PIXELART_ARCHIVE_TTL_DAYS) || 90);
 
+/* ---------- 画风示例图纸（永久可用） ----------
+ * style_guide.json 的 demo 字段指向 5 个固定任务 ID，前端在画风说明后给「查看示例图纸」链接。
+ * 但它们在线上原本只是普通任务：任务目录 72h 清、归档 90 天清、总量超 2GB 也按 mtime 清，
+ * 迟早 404。示例链接是产品门面（新用户点开就在判断要不要用），必须一直在，
+ * 所以生成后把瘦身版固化进代码仓库 apps/pixelart/demo/<taskId>/：
+ *   drawing.html.gz  图纸（内联图已转 WebP：8MB → 4.2MB，gz 后 1.9MB）
+ *   cover.jpg        封面
+ *   meta.json        元数据（画风/主体/备注，下发图纸要注入导出文件名）
+ * 随代码发布上线，与任务清理、归档 GC 完全无关；换机/重装也能恢复。 */
+const DEMO_ROOT = path.join(ROOT, 'apps', 'pixelart', 'demo');
+function demoFilePath(id, name) {
+  if (!/^[0-9a-f]{16}$/.test(id)) { return ''; }
+  return path.join(DEMO_ROOT, id, name);
+}
+function readDemoHtml(id) {
+  const file = demoFilePath(id, 'drawing.html.gz');
+  if (!file) { return null; }
+  try { return zlib.gunzipSync(fs.readFileSync(file)).toString('utf8'); } catch (_) { return null; }
+}
+function readDemoMeta(id) {
+  const file = demoFilePath(id, 'meta.json');
+  if (!file) { return null; }
+  try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch (_) { return null; }
+}
+
 function dirSize(dir) {
   let total = 0;
   let items = [];
@@ -751,6 +776,24 @@ function createEngine(options) {
     if (t) { return t; }
     if (!id || !/^[0-9a-f]{16}$/.test(id)) { return null; }
     const workDir = path.join(taskRoot, id);
+    /* 示例图纸固化在代码仓库里，先认它：任务目录和归档都会被清理，示例链接必须永远可用。
+       只读 meta.json（几百字节）判断存在，不在这里解压 2MB 图纸。 */
+    const demoMeta = readDemoMeta(id);
+    if (demoMeta) {
+      t = {
+        status: 'done',
+        htmlPath: '',
+        workDir,
+        startedAt: 0,
+        recovered: true,
+        demo: true,
+        styleId: demoMeta.styleId || '',
+        subject: demoMeta.subject === 'prop' ? 'prop' : 'character',
+        notes: demoMeta.notes || ''
+      };
+      tasks.set(id, t);
+      return t;
+    }
     const html = findOutputHtml(workDir);
     const meta = readArchivedMeta(archiveRoot, id);
     const archived = html ? false : !!readArchivedHtml(archiveRoot, id);
@@ -926,9 +969,10 @@ function createEngine(options) {
     if (!t || t.status !== 'done') {
       return sendJson(res, 404, { error: { message: '任务未完成或不存在' } });
     }
-    /* 原文：优先任务目录（还带着 .wip 现场），其次归档（gzip） */
-    let source = null;
-    if (t.htmlPath) {
+    /* 原文：示例图纸（仓库固化）→ 任务目录（还带着 .wip 现场）→ 归档（gzip）。
+       示例优先：它永远不会被清理，且同一 id 在归档里被删掉后仍要能打开。 */
+    let source = readDemoHtml(id);
+    if (source == null && t.htmlPath) {
       try { source = fs.readFileSync(t.htmlPath, 'utf8'); } catch (_) { source = null; }
     }
     if (source == null) { source = readArchivedHtml(archiveRoot, id); }
@@ -1022,6 +1066,13 @@ function createEngine(options) {
       try { raw = zlib.gunzipSync(fs.readFileSync(path.join(archiveRoot, id, 'parts', key + '.json.gz'))); } catch (_) { raw = null; }
     }
     if (raw == null) {
+      /* 示例图纸如果哪天也拆了按需部件，走仓库里的那份 */
+      const demoPart = demoFilePath(id, path.join('parts', key + '.json.gz'));
+      if (demoPart) {
+        try { raw = zlib.gunzipSync(fs.readFileSync(demoPart)); } catch (_) { raw = null; }
+      }
+    }
+    if (raw == null) {
       return sendJson(res, 404, { error: { code: 'NO_PART', message: '这块数据不在（老图纸或已清理）' } });
     }
     return sendPartJson(req, res, raw);
@@ -1081,7 +1132,9 @@ function createEngine(options) {
       res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
       return res.end(JSON.stringify({ error: { message: '缺少任务 id' } }));
     }
+    const demoCover = demoFilePath(id, 'cover.jpg');
     const candidates = [
+      ...(demoCover ? [demoCover] : []),
       path.join(archiveRoot, id, 'cover.jpg'),
       path.join(archiveRoot, id, 'cover.png'),
       path.join(taskRoot, id, '.wip', '转换图', '转换图.png')
@@ -1107,7 +1160,7 @@ function createEngine(options) {
     if (!/^[0-9a-f]{16}$/.test(id)) {
       return sendJson(res, 400, { error: { message: '缺少任务 id' } });
     }
-    const meta = readArchivedMeta(archiveRoot, id);
+    const meta = readDemoMeta(id) || readArchivedMeta(archiveRoot, id);
     if (meta) { return sendJson(res, 200, meta); }
     const t = tasks.get(id);
     if (t && t.status === 'done') {
@@ -1146,7 +1199,7 @@ function createEngine(options) {
       const ver = thumbVersion(s.id);
       const thumb = ver ? ('/apps/pixelart/assets/style-picker/' + encodeURIComponent(s.id) + '.webp?v=' + ver) : null;
       return { id: s.id, label: s.label, tip: s.tip || '', scope: s.scope || 'all', thumb: thumb,
-        demo: s.demo || '' };  /* 示例图纸任务 ID：前端拼 /api/pixelart-vp/task/html?id= 做「打开拼豆图纸」链接 */
+        demo: s.demo || '' };  /* 示例图纸任务 ID：前端拼 /api/pixelart-vp/task/html?id= 做「查看示例图纸」链接 */
     });
     return sendJson(res, 200, { styles: styles, hint: guide.hint || '' });
   }
