@@ -1,7 +1,9 @@
 /* 拼豆大师：生成链路（产品层模块，server.js 挂载路由）
  *
  * 流程：POST /api/pixelart/generate（上传图 + 画风 + 备注）
- *   → 落盘工作目录 → 组装提示词四槽位（LLM 优先，未配置时模板兜底）
+ *   → 落盘工作目录 → 组装提示词四槽位（LLM 优先，未配置时模板兜底；
+ *     body.promptOverride 可整段指定槽位 JSON 跳过 LLM —— 仅 PROMPT_DEBUG_EMAILS 白名单生效，
+ *     算法 dev 对照实验用，见 parsePromptOverride）
  *   → 后台 spawn val_perler.py generate（生图 → 切格 → 单文件图纸 HTML）
  *   → 立即返回 taskId；GET /api/pixelart/task?id= 轮询；完成后 GET /api/pixelart/task/html?id= 取图纸
  *
@@ -228,6 +230,29 @@ function shrinkImage(pngPath, cb) {
   execFile(pythonExe(), ['-c', script, pngPath], { timeout: 20000 }, (err, stdout) => {
     cb(err ? null : String(stdout).trim() || null);
   });
+}
+
+/* ---------- 指定提示词重跑（2026-11-07，算法 dev 对照实验） ---------- */
+
+/* body.promptOverride 的解析：四槽位 JSON 文本（与 prompt.json 同格式，可带 subject_type）。
+   闸门在 server.js（PROMPT_DEBUG_EMAILS 白名单，未设 = 功能不存在）；这里只管格式。
+   设计原则：白名单内解析失败必须报错（400），绝不静默回落 LLM/模板 ——
+   实验场景里静默回落会把「提示词」这个变量悄悄放回去，污染对照数据。 */
+const PROMPT_OVERRIDE_KEYS = ['game_knowledge', 'subject_description', 'image_analysis', 'composition'];
+const PROMPT_OVERRIDE_MAX = 8 * 1024;
+function parsePromptOverride(raw) {
+  if (String(raw).length > PROMPT_OVERRIDE_MAX) { return { error: 'promptOverride 过大（上限 8KB）' }; }
+  let obj;
+  try { obj = JSON.parse(String(raw)); } catch (_) { return { error: 'promptOverride 不是合法 JSON' }; }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) { return { error: 'promptOverride 必须是 JSON 对象' }; }
+  const out = {};
+  for (const k of PROMPT_OVERRIDE_KEYS) {
+    const v = obj[k];
+    if (typeof v !== 'string' || !v.trim()) { return { error: 'promptOverride 缺少或非文本字段：' + k }; }
+    out[k] = v.trim();
+  }
+  if (obj.subject_type === 'prop') { out.subject_type = 'prop'; }   /* 只认 prop，与 llmSlots 同规则 */
+  return { slots: out };
 }
 
 /* 单次 LLM 请求：返回 { slots } 成功 / { retryable } 可安全重试 / {} 终态失败。
@@ -857,6 +882,17 @@ function createEngine(options) {
     const styleId = String(body.styleId || 'original');
     if (!findStyle(styleId)) { return failSubmit(res, sendJson, 400, 'BAD_STYLE', '未知画风：' + styleId); }
 
+    /* 指定提示词：仅白名单用户生效（req.promptDebugAllowed 由 server.js 在计费包装里打标）；
+       非白名单静默忽略该参数，走正常 LLM 流程，对普通用户零感知 */
+    let promptOverride = null;
+    if (body.promptOverride !== undefined && body.promptOverride !== null && String(body.promptOverride).trim() !== '') {
+      if (req.promptDebugAllowed) {
+        const v = parsePromptOverride(body.promptOverride);
+        if (v.error) { return failSubmit(res, sendJson, 400, 'BAD_PROMPT_OVERRIDE', v.error); }
+        promptOverride = v.slots;
+      }
+    }
+
     pruneTasks();
     const id = crypto.randomBytes(8).toString('hex');
     const workDir = path.join(taskRoot, id);
@@ -881,32 +917,39 @@ function createEngine(options) {
        LLM 含重试最长约 3 分钟，若阻塞 HTTP 响应会被平台网关 502；前端靠轮询任务状态推进。 */
     const imagePath = path.join(imgDir, '原图.png');
     sendJson(res, 200, { taskId: id });
+    /* 槽位消费的统一出口：指定提示词 / LLM 结果 / 模板兜底三条路都落到这里 */
+    const launch = (slots) => {
+      /* 主体判读：LLM/override 结果优先，失败回落 body.subject/character */
+      const subject = (slots && slots.subject_type) || subjectFallback;
+      let finalStyleId = styleId;
+      if (subject === 'prop' && findStyle(finalStyleId).scope === 'character') {
+        /* 道具图选了人物限定画风：沿用旧版道具模式行为，自动回落「还原」 */
+        finalStyleId = 'original';
+      }
+      const record = tasks.get(id);
+      if (record) { record.subject = subject; record.styleId = finalStyleId; }
+      /* 槽位剥掉 subject_type 后即用；无槽位回落模板 */
+      const promptSlots = slots
+        ? (({ subject_type, ...texts }) => texts)(slots)
+        : templateSlots(subject, findStyle(finalStyleId).label, body.notes);
+      try {
+        const promptPath = path.join(workDir, 'prompt.json');
+        fs.writeFileSync(promptPath, JSON.stringify(promptSlots, null, 2));
+        startTask(id, workDir, imagePath, promptPath, subject, finalStyleId);
+      } catch (err) {
+        /* 走统一失败出口：否则生成单停在 pending，用户要等补退才拿回积分 */
+        failTask(id, '启动失败：' + String(err.message || err).slice(0, 200));
+      }
+    };
+    if (promptOverride) {
+      /* 指定提示词：整段跳过压图与 LLM，直接作为 prompt.json 进入链路（省一次 LLM 调用与采样漂移） */
+      launch(promptOverride);
+      return;
+    }
     shrinkImage(imagePath, (smallDataUrl) => {
       const llmInput = smallDataUrl || body.imageBase64;
       llmSlots(llmInput, null, body.notes)   /* subject 传 null：让 LLM 读图判主体 */
-        .then((slots) => {
-          /* 主体判读：LLM 结果优先，失败回落 body.subject/character */
-          const subject = (slots && slots.subject_type) || subjectFallback;
-          let finalStyleId = styleId;
-          if (subject === 'prop' && findStyle(finalStyleId).scope === 'character') {
-            /* 道具图选了人物限定画风：沿用旧版道具模式行为，自动回落「还原」 */
-            finalStyleId = 'original';
-          }
-          const record = tasks.get(id);
-          if (record) { record.subject = subject; record.styleId = finalStyleId; }
-          /* LLM 结果剥掉 subject_type 后即用；无 LLM 结果回落模板槽位 */
-          const promptSlots = slots
-            ? (({ subject_type, ...texts }) => texts)(slots)
-            : templateSlots(subject, findStyle(finalStyleId).label, body.notes);
-          try {
-            const promptPath = path.join(workDir, 'prompt.json');
-            fs.writeFileSync(promptPath, JSON.stringify(promptSlots, null, 2));
-            startTask(id, workDir, imagePath, promptPath, subject, finalStyleId);
-          } catch (err) {
-            /* 走统一失败出口：否则生成单停在 pending，用户要等补退才拿回积分 */
-            failTask(id, '启动失败：' + String(err.message || err).slice(0, 200));
-          }
-        });
+        .then(launch);
     });
   }
 
@@ -1180,6 +1223,8 @@ function createEngine(options) {
   /* GET /task/prompt?id= → 当次生成发给上游的完整提示词原文。
      python 侧组装后落盘在 .wip/提示词/提示词.md（含槽位配置/来源的同目录）；
      还没跑到组装步骤就回落节点侧的槽位配置 prompt.json。
+     ?format=json：直接返回节点侧的槽位配置 prompt.json（四槽位原文），
+     是 /generate 带 promptOverride 重跑时应该回填的精确内容。
      这是核心 IP：闸门在 server.js（PROMPT_DEBUG_EMAILS 白名单，未设=整端点关闭），
      这里只管取文件。任务目录 72h GC，过期任务的提示词不可恢复（归档里没有）。 */
   function handleTaskPrompt(req, res, fullUrl, sendJson) {
@@ -1190,10 +1235,12 @@ function createEngine(options) {
     /* 不走 resolveTask：它只认「已完成」的任务，运行中/失败中的任务会被误判 404。
        id 已被正则限制为 16 位 hex，直接拼路径没有穿越风险。 */
     const workDir = path.join(taskRoot, id);
-    const candidates = [
-      path.join(workDir, '.wip', '提示词', '提示词.md'),
-      path.join(workDir, 'prompt.json')
-    ];
+    const candidates = fullUrl.searchParams.get('format') === 'json'
+      ? [path.join(workDir, 'prompt.json')]
+      : [
+        path.join(workDir, '.wip', '提示词', '提示词.md'),
+        path.join(workDir, 'prompt.json')
+      ];
     for (const fp of candidates) {
       let text = '';
       try { text = fs.readFileSync(fp, 'utf8'); } catch (_) { text = ''; }
@@ -1241,5 +1288,5 @@ function createEngine(options) {
   };
 }
 
-/* explainFailure / wbIdFromRequest 单独导出：纯函数，给用例直接测 */
-module.exports = { createEngine, loadStyleGuide, explainFailure, wbIdFromRequest };
+/* explainFailure / wbIdFromRequest / parsePromptOverride 单独导出：纯函数，给用例直接测 */
+module.exports = { createEngine, loadStyleGuide, explainFailure, wbIdFromRequest, parsePromptOverride };

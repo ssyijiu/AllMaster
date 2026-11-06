@@ -711,12 +711,20 @@ function pixelartPython() {
    提示词是核心 IP：环境变量 PROMPT_DEBUG_EMAILS（逗号分隔邮箱）显式放行；
    未设置 = 端点整体关闭；未登录 / 白名单外一律 404（与任务不存在的响应一致，
    不向普通用户泄露这个口子的存在）。 */
-function pixelartPromptGate(req, res, fullUrl, engine, sendJson) {
-  const allow = String(process.env.PROMPT_DEBUG_EMAILS || '')
+function promptDebugEmails() {
+  return String(process.env.PROMPT_DEBUG_EMAILS || '')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+/* 白名单判定（读闸门 /task/prompt 与写口 /generate promptOverride 共用） */
+function isPromptDebugUser(req) {
+  const allow = promptDebugEmails();
+  if (!allow.length) { return false; }
   const bearer = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''));
   const user = bearer ? require('./server/auth').userFromToken(bearer[1]) : null;
-  if (!allow.length || !user || allow.indexOf(String(user.email || '').toLowerCase()) < 0) {
+  return !!(user && allow.indexOf(String(user.email || '').toLowerCase()) >= 0);
+}
+function pixelartPromptGate(req, res, fullUrl, engine, sendJson) {
+  if (!isPromptDebugUser(req)) {
     return sendJson(res, 404, { error: { message: '任务不存在或已过期' } });
   }
   return engine.handleTaskPrompt(req, res, fullUrl, sendJson);
@@ -1111,6 +1119,9 @@ async function handlePixelartGenerate(req, res, engine) {
     return sendJson(res, 401, { error: { code: 'AUTH_REQUIRED', message: '生成需要登录，请先登录后再试' } });
   }
   const token = bearer[1];
+  /* 提示词重跑（promptOverride）的白名单标记：引擎据此决定接受还是忽略该参数。
+     这里判一次挂在 req 上，鉴权细节不出平台层。 */
+  req.promptDebugAllowed = isPromptDebugUser(req);
   const order = await orderService.create({
     token: token,
     product: 'pixelart',
