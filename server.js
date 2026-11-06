@@ -707,6 +707,21 @@ function pixelartPython() {
   return 'python3';
 }
 
+/* GET /api/pixelart(-vp)/task/prompt?id= 的白名单闸门（2026-11-07，算法 dev 调试用）。
+   提示词是核心 IP：环境变量 PROMPT_DEBUG_EMAILS（逗号分隔邮箱）显式放行；
+   未设置 = 端点整体关闭；未登录 / 白名单外一律 404（与任务不存在的响应一致，
+   不向普通用户泄露这个口子的存在）。 */
+function pixelartPromptGate(req, res, fullUrl, engine, sendJson) {
+  const allow = String(process.env.PROMPT_DEBUG_EMAILS || '')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const bearer = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''));
+  const user = bearer ? require('./server/auth').userFromToken(bearer[1]) : null;
+  if (!allow.length || !user || allow.indexOf(String(user.email || '').toLowerCase()) < 0) {
+    return sendJson(res, 404, { error: { message: '任务不存在或已过期' } });
+  }
+  return engine.handleTaskPrompt(req, res, fullUrl, sendJson);
+}
+
 /* GET /api/pixelart/env-check：探测能否跑拼豆 Python 链。
    variant 'apinebula'（默认）：健康探测 apinebula /models（带 Bearer），深检校验 API Key；
    variant 'valperler'（/pixelart 经典版）：健康探测 val-perler.qq.com /health，深检校验 WB ID。
@@ -1493,6 +1508,10 @@ const server = http.createServer((req, res) => {
     if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
     return pixelartMain.handleTaskMeta(req, res, fullUrl, sendJson);
   }
+  if (pathOnly === '/api/pixelart/task/prompt') {
+    if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
+    return pixelartPromptGate(req, res, fullUrl, pixelartMain, sendJson);
+  }
   if (pathOnly === '/api/pixelart/styles') {
     if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
     return pixelartMain.handleStyles(res, sendJson);
@@ -1555,6 +1574,10 @@ const server = http.createServer((req, res) => {
   if (pathOnly === '/api/pixelart-vp/task/meta') {
     if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
     return pixelartVp.handleTaskMeta(req, res, fullUrl, sendJson);
+  }
+  if (pathOnly === '/api/pixelart-vp/task/prompt') {
+    if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }
+    return pixelartPromptGate(req, res, fullUrl, pixelartVp, sendJson);
   }
   if (pathOnly === '/api/pixelart-vp/styles') {
     if (req.method !== 'GET') { return sendJson(res, 405, { error: { message: '仅支持 GET' } }); }

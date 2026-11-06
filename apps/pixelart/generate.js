@@ -1177,6 +1177,34 @@ function createEngine(options) {
     return sendJson(res, 404, { error: { message: '任务不存在或未归档' } });
   }
 
+  /* GET /task/prompt?id= → 当次生成发给上游的完整提示词原文。
+     python 侧组装后落盘在 .wip/提示词/提示词.md（含槽位配置/来源的同目录）；
+     还没跑到组装步骤就回落节点侧的槽位配置 prompt.json。
+     这是核心 IP：闸门在 server.js（PROMPT_DEBUG_EMAILS 白名单，未设=整端点关闭），
+     这里只管取文件。任务目录 72h GC，过期任务的提示词不可恢复（归档里没有）。 */
+  function handleTaskPrompt(req, res, fullUrl, sendJson) {
+    const id = String(fullUrl.searchParams.get('id') || '');
+    if (!/^[0-9a-f]{16}$/.test(id)) {
+      return sendJson(res, 400, { error: { message: '缺少任务 id' } });
+    }
+    /* 不走 resolveTask：它只认「已完成」的任务，运行中/失败中的任务会被误判 404。
+       id 已被正则限制为 16 位 hex，直接拼路径没有穿越风险。 */
+    const workDir = path.join(taskRoot, id);
+    const candidates = [
+      path.join(workDir, '.wip', '提示词', '提示词.md'),
+      path.join(workDir, 'prompt.json')
+    ];
+    for (const fp of candidates) {
+      let text = '';
+      try { text = fs.readFileSync(fp, 'utf8'); } catch (_) { text = ''; }
+      if (text.trim()) {
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+        return res.end(text);
+      }
+    }
+    return sendJson(res, 404, { error: { message: '该任务没有落盘的提示词（目录已清理或未跑到组装步骤）' } });
+  }
+
   /* GET /styles → 画风列表（缩略图走 /apps/pixelart/assets/style-picker/<id>.webp 静态直链，
      不再内联 base64——原来 5 张图塞进同一份 JSON 有 760KB，首屏要等整包才渲染）。
      直链带 ?v=<内容哈希>，命中 serveStatic 的 immutable 一年缓存：改图自动换 URL，未改则零请求。 */
@@ -1207,7 +1235,7 @@ function createEngine(options) {
   return {
     backend, taskRoot, archiveRoot,
     handleGenerate, handleTaskStatus, handleTaskStream, handleTaskHtml, handleTaskPart,
-    handleTaskCover, handleTaskMeta, handleStyles, handleRegen,
+    handleTaskCover, handleTaskMeta, handleTaskPrompt, handleStyles, handleRegen,
     /* 手动归档（补录历史作品 / 运维脚本用）：返回归档后的 meta，失败返回 null */
     archiveTask: (id) => { archiveWork(id); return readArchivedMeta(archiveRoot, id); }
   };
