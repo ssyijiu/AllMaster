@@ -14,8 +14,9 @@
  * 配置读服务器本地 .pixelart-config.json：
  *   accUserId  经典版（valperler）后端的生图服务 WB ID（spawn 时注入 ACC_USER_ID）
  *   pythonExe  解释器路径（不存在回落 python3；自建服务器指向 venv：/opt/allmaster/.venv/bin/python）
- *   promptLLM  { baseUrl, model, apiKey?, providerId?, imageModel? } —— chat 写提示词槽位；
+ *   promptLLM  { baseUrl, model, apiKey?, providerId?, imageModel?, temperature?, seed? } —— chat 写提示词槽位；
  *              baseUrl/apiKey 同时作为 apinebula 生图后端（OpenAI Images 兼容）凭据注入环境变量；null/缺 Key = 模板兜底 + 生图失败
+ *              temperature 默认 0、seed 默认 42（采样锁定：同输入同提示词）；显式 null 则不下发该字段
  *   imageModel 生图模型（可选，默认 gpt-image-2.5）
  * 任务工作目录：各实例 taskRoot 下 <taskId>/（主实例默认 $ROOT/.pixelart-tasks，可用环境变量 PIXELART_TASK_ROOT 覆盖），72h 后自动清理
  */
@@ -237,20 +238,28 @@ function shrinkImage(pngPath, cb) {
 function llmAttempt(cfg, apiKey, imageBase64, system) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 60000);
+  /* 采样锁定（2026-11-07，算法对照实验需要）：同输入 → 同提示词。
+     默认 temperature=0 + seed=42；promptLLM.temperature / promptLLM.seed 可覆盖，
+     显式设 null 则不下发该字段（防个别严格校验的上游拒收未知参数）。 */
+  const body = {
+    model: cfg.model,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: system },
+        { type: 'image_url', image_url: { url: imageBase64 } }
+      ]
+    }],
+    max_tokens: 1500
+  };
+  const temperature = cfg.temperature === undefined ? 0 : cfg.temperature;
+  if (temperature !== null) { body.temperature = temperature; }
+  const seed = cfg.seed === undefined ? 42 : cfg.seed;
+  if (seed !== null) { body.seed = seed; }
   return fetch(String(cfg.baseUrl).replace(/\/+$/, '') + '/chat/completions', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: cfg.model,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'text', text: system },
-          { type: 'image_url', image_url: { url: imageBase64 } }
-        ]
-      }],
-      max_tokens: 1500
-    }),
+    body: JSON.stringify(body),
     signal: ctrl.signal
   }).then(async (res) => {
     if (res.status === 502 || res.status === 503) { return { retryable: true }; }
@@ -1242,4 +1251,4 @@ function createEngine(options) {
 }
 
 /* explainFailure / wbIdFromRequest 单独导出：纯函数，给用例直接测 */
-module.exports = { createEngine, loadStyleGuide, explainFailure, wbIdFromRequest };
+module.exports = { createEngine, loadStyleGuide, explainFailure, wbIdFromRequest, llmAttempt };
