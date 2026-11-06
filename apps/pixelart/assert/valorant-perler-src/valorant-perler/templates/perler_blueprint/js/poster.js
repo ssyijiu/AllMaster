@@ -77,8 +77,15 @@ function snapshot() {
 
 /* ---------- 图片资源 ---------- */
 const srcImg = new Image();
-const HAS_SOURCE = !!(D.images && D.images.length);
-if (HAS_SOURCE) srcImg.src = D.images[0];
+/* 有没有原图看 D.hasSource（构建时写的标记）：原图改成按需取之后 D.images 一开始是空的，
+   用 D.images.length 判断会把海报里的「原图角标」整个关掉。老图纸没有标记，退回看 D.images。 */
+const HAS_SOURCE = !!(D.hasSource || (D.images && D.images.length));
+/* 原图不跟首屏下载：打开海报抽屉时才去取（见 openPoster），取回来后 load 事件触发重绘 */
+async function ensurePosterSource() {
+  if (!HAS_SOURCE || srcImg.src) return;
+  try { await bpEnsureSources(); } catch (e) { return; }
+  if (!srcImg.src && D.images && D.images[0]) srcImg.src = D.images[0];
+}
 [srcImg].forEach(im => im && im.addEventListener('load', () => { if (isOpen()) refresh(); }));
 /* 腾讯体不随页面内联了：两款字重约 197KB，只有这里（海报）用到，翻开图纸时不该让所有人付。
  * 构建时把 CSS 里的 src 换成 /pixelart-fonts/…（见 build_html_blueprint.py 的 LAZY_FONT_NAMES），
@@ -923,6 +930,7 @@ function setOpen(on) {
 }
 function openPoster() {
   snapshot();
+  ensurePosterSource();   // 原图按需：只在这一刻才去取（取不到就只是没有原图角标，海报其余照常）
   if (typeof ironStyle !== 'undefined') {   // 默认跟图纸页「模拟烫豆」当前选的烫法：主图烫法总是跟随，底栏在玩家动过之前跟随
     P.ironStyle = ironStyle;
     if (!thumbsTouched) P.thumbs = [ironStyle];

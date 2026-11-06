@@ -18,7 +18,6 @@
 /* @include css/iron-flat.css */
 /* @include css/fonts.css */
 /* @include css/poster.css */
-/* @include css/style-picker.css */
 </style>
 </head>
 <body>
@@ -81,19 +80,6 @@
           </div>
           <div id="csNote"></div>
         </div>
-      </div>
-    </div>
-    <!-- [STYLE-PICKER] 主体分类与模板条：人物或角色展示六模板，其他主体隐藏本区。点卡查看示意并复制话术回对话重做（js/style-picker.js）。 -->
-    <div class="panel-section" data-st="plan" id="styleSec">
-      <div class="panel-label">是否人物或角色</div>
-      <select id="portraitSelect" aria-label="是否人物或角色">
-        <option value="character">人物或角色</option>
-        <option value="prop">其他主体</option>
-      </select>
-      <div id="portraitTemplates">
-        <div class="panel-label">模板重做</div>
-        <div id="styleStrip"></div>
-        <div class="style-hint" id="styleHint"></div>
       </div>
     </div>
     <!-- 颜色数量、色号规格默认收起，规格调整站一屏内能看到两个标题；点标题展开 -->
@@ -307,22 +293,6 @@
 <div id="psSave"><div class="tip"><b>长按图片保存到相册</b><span class="sz"></span></div><img alt="分享图"><button type="button" class="go" hidden>保存 PDF</button><div class="x">点空白处关闭</div></div>
 <!-- ===== [POSTER] END ===== -->
 <div class="toast" id="toast"></div>
-<!-- ===== [STYLE-PICKER] 画风大图层（js/style-picker.js）：效果图居中，左侧小图是原图，箭头指向效果 ===== -->
-<div id="styleViewer" role="dialog" aria-label="画风预览">
-  <button id="styleViewerClose" title="关闭" aria-label="关闭">✕</button>
-  <div class="sp-stage">
-    <div class="sp-reference">
-      <div class="sp-src"><img id="styleViewerImg" alt="原图"><span class="sp-src-lb">原图</span></div>
-      <span class="sp-arrow">→</span>
-    </div>
-    <div class="sp-eff">
-      <img id="styleViewerEffectImg" alt="画风效果">
-      <div id="styleViewerCapRow"><span id="styleViewerCap"></span><span id="spEffectTag">本图所用</span></div>
-      <button type="button" id="styleCopyBtn">复制提示词</button>
-    </div>
-    <div class="sp-pad"></div>
-  </div>
-</div>
 <!-- [SAVE-FILE] 点「保存」另存出的新 HTML 把本地存档写在这里，打开时回灌到本地（js/save-file.js） -->
 <script id="perlerSaved" type="application/json">null</script>
 <script>
@@ -331,7 +301,6 @@
 <script>
 /* @inline DATA_JS */
 /* @inline THREE_JS */
-/* @inline STYLE_GUIDE_JSON */
 </script>
 <script>
 /* @include js/state.js */
@@ -339,7 +308,7 @@
 /* @include js/save-file.js */
 /* @include js/title.js */
 /* @include js/palette-resolve.js */
-/* @include js/style-picker.js */
+/* @include js/art-style-mark.js */
 /* @include js/sidebar.js */
 /* @include js/view-switch.js */
 /* @include js/canvas.js */

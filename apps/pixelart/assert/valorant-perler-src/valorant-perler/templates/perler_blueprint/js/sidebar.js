@@ -205,15 +205,28 @@ function renderHlStatus() {
   window.dispatchEvent(new Event('resize')); // 提示条显隐会改变顶栏高度，画布按新高度重排标尺与图纸
 }
 
+/* 原图卡：原图不跟首屏下载（构建时拆到 parts/sources，见 lazy-parts.js 的 bpEnsureSources），
+   切到「原图」页签时才取一次。取回来之前先给一行占位，避免整块空白；
+   老图纸、另存出来的单文件里原图本来就在 D.images 里，直接画。 */
 function renderSourceCards() {
   const el = document.getElementById('sourceCards');
+  if (!el) return;
   const sources = D.images && D.images.length ? D.images : [];
+  if (!sources.length && bpPartWanted('sources')) {
+    el.classList.remove('multi');
+    el.innerHTML = '<div class="cap">正在取原图…</div>';
+    bpEnsureSources().then(renderSourceCards, () => {
+      el.innerHTML = '<div class="cap">原图没取到，联网后再看</div>';
+    });
+    return;
+  }
   el.classList.toggle('multi', sources.length > 1);
   el.innerHTML = sources.map((src, i) => `
     <div class="frame"><img src="${src}" alt="原图${sources.length > 1 ? ' ' + (i + 1) : ''}"></div>
     <div class="cap">原图${sources.length > 1 ? ' ' + (i + 1) : ''}</div>`).join('');
 }
-renderSourceCards();
+window.addEventListener('bp-sources', () => { if (state.view === 'source') renderSourceCards(); });
+/* 不在模块加载时渲染：此时多半还停在图纸页，渲染就等于一开页就去取原图 */
 
 function refreshAll() {
   renderBudget(); renderSizes(); renderPalettes(); renderColors(); renderHlStatus();

@@ -43,10 +43,23 @@ async function bpEnsureField() {
   return F;
 }
 
-/* 另存单文件之前把没取过的块补齐：存出来的文件必须自给自足（离线也能改自定义尺寸） */
+/* 原图（玩家上传的那张）：只被「原图」页签、海报里的原图角标、另存单文件用到，
+   翻开图纸先看的是转换图和图纸，所以不跟着首屏下载。构建时拆到 parts/sources.json，
+   D.images 先留空、D.hasSource 记住「本来有原图」（页签显隐靠它，不能靠 D.images.length）。
+   取回来后派发 bp-sources，等在那里的三处各自重绘。 */
+async function bpEnsureSources() {
+  if (D.images && D.images.length) { return D.images; }
+  if (!bpPartWanted('sources')) { return D.images || []; }
+  const part = await bpGetPart('sources');
+  D.images = (part && part.images) || [];
+  window.dispatchEvent(new Event('bp-sources'));
+  return D.images;
+}
+
+/* 另存单文件之前把没取过的块补齐：存出来的文件必须自给自足（离线也能改自定义尺寸、看原图） */
 async function bpCompleteAllParts() {
-  if (!bpPartWanted('field')) { return; }
-  if (D.field && (!D.field.labels || !D.field.ref)) { await bpEnsureField(); }
+  if (bpPartWanted('field') && D.field && (!D.field.labels || !D.field.ref)) { await bpEnsureField(); }
+  if (bpPartWanted('sources') && !(D.images && D.images.length)) { await bpEnsureSources(); }
 }
 
 /* three.js（663KB 原文 / br 159KB）只被 3D 看法用：只看平面图纸的人不该为它付。

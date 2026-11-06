@@ -7,6 +7,7 @@ document.querySelectorAll('.viewtab[data-view]').forEach(t => t.onclick = () => 
   document.getElementById('modeSeg').classList.toggle('show', state.view === 'grid');
   document.getElementById('ironBtn').classList.toggle('show', state.view === 'grid'); // [IRON hook] 烫豆按钮跟着图纸看法显隐
   document.body.classList.toggle('mode3d', state.view === 'grid' && state.mode === '3d');
+  if (state.view === 'source') renderSourceCards();   // 原图按需取：切到这一页才拉（见 sidebar.js）
   if (state.view !== 'grid') { if (V3) V3.leave(); return; }
   if (state.mode === '3d') { V3.enter(); return; } // [VIEW-3D hook]
   resizeCanvas(); if (!state.scale) fitView(); else draw();
@@ -73,8 +74,10 @@ if (NO_DOWNLOAD) {
   };
 };
 
-/* 无原图（文生图）：不出现「原图」页签，「转换图」成为第一个页签并做成平直矩形（样式见 css/stage.css 的 body.no-source） */
-if (!(D.images && D.images.length)) {
+/* 无原图（文生图）：不出现「原图」页签，「转换图」成为第一个页签并做成平直矩形（样式见 css/stage.css 的 body.no-source）
+   有没有原图看 D.hasSource（构建时写的标记）：原图拆成按需取之后 D.images 一开始是空的，
+   用 D.images.length 判断会把所有图纸的「原图」页签都误删掉。老图纸没有这个标记，退回看 D.images。 */
+if (!(D.hasSource || (D.images && D.images.length))) {
   document.body.classList.add('no-source');
   const srcTab = document.querySelector('.viewtab[data-view="source"]');
   if (srcTab) srcTab.remove();

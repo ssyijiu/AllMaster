@@ -643,20 +643,42 @@ def webpify_files(paths: list[Path], dry_run: bool = False) -> int:
 # 页面点「生成」时才按任务号取一次（服务端按任务号做长缓存，第二次打开直接命中）。
 # 没有 parts/ 的老图纸（以及本地保存的单文件）里这两块仍然内联，页面按 field.labels 在不在决定要不要取。
 LAZY_PART_FIELD = "field"
+LAZY_PART_SOURCES = "sources"
 
 
 def split_lazy_parts(data: dict, out: Path) -> list[str]:
-    """把搜索场里的大块搬出去，返回搬走了哪些 key（空 = 没搬，页面就全内联用）。"""
+    """把「翻开用不到」的大块搬出去，返回搬走了哪些 key（空 = 没搬，页面就全内联用）。
+
+    两个块：
+      - field：自定义规格用的搜索场（逐像素细簇标签 + 评估参照图），点「生成」才要；
+      - sources：玩家上传的原图，只有「原图」页签、海报里的原图角标、另存单文件才要。
+        一张原图 300–400KB（webp 已压过，再压没有意义），翻开图纸先看的是转换图与图纸，
+        所以不跟首屏下载。D.images 清空、另记 hasSource，页签显隐靠标记（不能靠 images.length）。
+    老图纸（以及另存出来的单文件）没有 lazyParts，块仍然内联，页面按标记决定要不要取。
+    """
+    moved = []
+    parts = out / "parts"
+
     field = data.get("field") or {}
     big = {k: field.pop(k) for k in ("labels", "ref") if field.get(k)}
-    if not big:
-        return []
-    parts = out / "parts"
-    parts.mkdir(parents=True, exist_ok=True)
-    (parts / f"{LAZY_PART_FIELD}.json").write_text(
-        json.dumps(big, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    data["lazyParts"] = [LAZY_PART_FIELD]
-    return [LAZY_PART_FIELD]
+    if big:
+        parts.mkdir(parents=True, exist_ok=True)
+        (parts / f"{LAZY_PART_FIELD}.json").write_text(
+            json.dumps(big, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        moved.append(LAZY_PART_FIELD)
+
+    images = data.get("images") or []
+    data["hasSource"] = bool(images)
+    if images:
+        parts.mkdir(parents=True, exist_ok=True)
+        (parts / f"{LAZY_PART_SOURCES}.json").write_text(
+            json.dumps({"images": images}, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        data["images"] = []
+        moved.append(LAZY_PART_SOURCES)
+
+    if moved:
+        data["lazyParts"] = moved
+    return moved
 
 
 def main():
@@ -695,7 +717,8 @@ def main():
     if args.subject == "prop" and any(s["id"] == args.art_style and s.get("scope") == "character" and s["id"] != "original"
                                       for s in guide.get("styles", [])):
         ap.error(f"--art-style {args.art_style} 只用于人像，非人像可用还原或自定义描述")
-    guide["officialThumb"] = official_card_data()
+    # 画风示意大图（5 张 jpeg 缩略 + 官方卡）不再进页面：2026-11-06 删掉「模板重做」选择条后，
+    # 页面只需要一句画风名（服务端下发时注入 PIXELART_STYLE），guide 只留作上面的参数校验。
 
     try:
         boards = [A.parse_board(s) for s in args.sizes]
@@ -791,7 +814,6 @@ def main():
             # 不再内联 three.js（663KB）：只留一句地址，第一次切 3D 才去加载
             "THREE_JS": "window.PIXELART_THREE_URL = " + json.dumps(three_url) + ";",
             "PIXEL_ART_PNG": img_data_uri(args.pixel_art),
-            "STYLE_GUIDE_JSON": "window.STYLE_GUIDE_JSON = " + json.dumps(guide, ensure_ascii=False, separators=(",", ":")) + ";",
         },
     )
     # 内联图转 WebP：整份文件的大头在这里（原图按 PNG 内联时一张就 1MB+）
