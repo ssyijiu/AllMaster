@@ -118,6 +118,10 @@ function refreshChannelDot() {
     pollTimer: null,
     watchToken: 0,        /* SSE 观察轮次：每轮生成 +1，回调对不上号即视为已取消 */
     watchAbort: null,     /* SSE 连接的 AbortController（浏览器不支持时为 null） */
+    watchTaskId: null,    /* 本轮正在观察的任务 id（回前台对账 / 断线自愈都要用） */
+    watchStartAt: 0,      /* 本轮任务开始时间（epoch 秒）：恢复后秒数从它回算 */
+    watchRetry: 0,        /* 连续重连次数（活过 20 秒的连接会把计数清零） */
+    watchdogTimer: null,  /* 心跳看门狗计时器 */
     lastTaskId: null,
     regenActive: false,   /* 本轮观察的是「一键重转」任务（不扣积分，文案不同） */
     recent: [],           /* 最近生成：[{ id, thumb, style, time }]，最多 RECENT_MAX 条 */
@@ -329,11 +333,16 @@ function refreshChannelDot() {
   /* ---------- 生成流程 ---------- */
   var GEN_POLL_INTERVAL = 4000;
   var GEN_POLL_MAX = 150;          /* 4s × 150 = 10 分钟上限 */
+  /* 阶段文案分档（秒）：按线上 40 个已完成任务的 P50 分段实测校准（C0，2026-11-07）：
+     读图+提示词 22s / 生图 58s（累计 80s）/ 切格+排版 54s（累计 132s）。
+     旧档位 0/20/50/85 会在 85 秒后永久冻在最后一句，而真实 P50 是 132 秒 ——
+     用户看到的就是「卡住不动」，这也是「看起来失败」的一大来源。 */
   var STAGE_HINTS = [
-    [0,  'AI 正在读懂你的图片…'],
-    [20, '正在生成像素底稿…'],
-    [50, '正在切格与配色（五档规格）…'],
-    [85, '正在拼装可编辑图纸…']
+    [0,   'AI 正在读懂你的图片…'],
+    [22,  '正在生成像素底稿…'],
+    [80,  '正在切格与配色（五档规格）…'],
+    [118, '正在拼装可编辑图纸…'],
+    [175, '图纸还在生成，这单比平时慢一些…']
   ];
 
   function setGenerating(on) {
@@ -346,9 +355,13 @@ function refreshChannelDot() {
     updateSteps();
     if (!on) {
       if (Store.pollTimer) { clearInterval(Store.pollTimer); Store.pollTimer = null; }
+      if (Store.watchdogTimer) { clearInterval(Store.watchdogTimer); Store.watchdogTimer = null; }
       /* 关掉 SSE 观察连接（token 失配让 pump 循环自行退出，AbortController 直接断流） */
       Store.watchToken += 1;
       if (Store.watchAbort) { try { Store.watchAbort.abort(); } catch (_) {} Store.watchAbort = null; }
+      Store.watchTaskId = null;
+      Store.watchStartAt = 0;
+      Store.watchRetry = 0;
     }
   }
 
@@ -381,8 +394,18 @@ function refreshChannelDot() {
 
   /* 老条目（本次改动前存的）没有 api 字段，回落当前 base —— 它们在切换前生成，
      当时 base 恰好就是 vp，绝大多数情况下仍然点得开。 */
+  function taskHtmlUrl(taskId, api) {
+    return (api || PIXELART_API) + '/task/html?id=' + encodeURIComponent(taskId);
+  }
+
   function openTaskHtml(taskId, api) {
-    window.open((api || PIXELART_API) + '/task/html?id=' + encodeURIComponent(taskId), '_blank');
+    window.open(taskHtmlUrl(taskId, api), '_blank');
+  }
+
+  /* 出图收尾的主按钮走同标签跳转：async 回调里 window.open 会被移动端拦掉
+     （iOS Safari / Android Chrome 都拦），同标签导航不依赖弹窗权限，一次点击必定进得去。 */
+  function gototaskHtml(taskId, api) {
+    location.href = taskHtmlUrl(taskId, api);
   }
 
   function showDone(taskId) {
@@ -391,9 +414,25 @@ function refreshChannelDot() {
     $('genDone').hidden = false;
     var wasRegen = Store.regenActive;
     Store.regenActive = false;
+    /* 页内结果卡（A4）：缩略图先给个「出图了」的实感，主按钮同标签进图纸页，
+       不再依赖 window.open —— 异步回调里开新窗口在移动端会被拦成「没反应」。 */
+    var cover = PIXELART_API + '/task/cover?id=' + encodeURIComponent(taskId);
+    var thumb = $('doneThumb'), thumbLink = $('doneThumbLink'), tabLink = $('btnOpenResultTab');
+    if (thumb) {
+      thumb.hidden = false;
+      thumb.setAttribute('src', cover);
+    }
+    if (thumbLink) {
+      thumbLink.hidden = false;
+      thumbLink.setAttribute('href', taskHtmlUrl(taskId));
+    }
+    if (tabLink) {
+      tabLink.hidden = false;
+      tabLink.setAttribute('href', taskHtmlUrl(taskId));
+    }
     $('genDoneMsg').textContent = wasRegen
       ? '重转完成！近色已合并，原图纸仍保留。'
-      : '图纸已生成！新标签页可能被拦截，也可以点这里打开。';
+      : '图纸已生成！点下面的按钮打开。';
     studioMsg(wasRegen ? '重转完成，未消耗积分。图纸页里可切规格、改色号、导出。' : '生成完成，消耗 1 积分。图纸页里可切规格、改色号、导出。', false);
   }
 
@@ -431,13 +470,23 @@ function refreshChannelDot() {
     return '';
   }
 
-  function addRecent(taskId) {
+  /* thumbOverride：恢复出来的任务没有本地原图（页面重开过），优先用它落盘的缩略图；
+     再退一步用服务端封面地址（同源、长缓存），保证「最近生成」里的条目看得见。 */
+  function addRecent(taskId, thumbOverride) {
     /* api：记下这单是在哪个通道生成的。任务 id 只在自己的引擎实例里有效，
        通道切过之后用当前 base 去点会 404 —— 存下来才能一直点得开。 */
-    var entry = { id: taskId, api: PIXELART_API, thumb: null, style: styleLabel(), time: Date.now() };
+    var fallback = PIXELART_API + '/task/cover?id=' + encodeURIComponent(taskId);
+    var entry = {
+      id: taskId,
+      api: PIXELART_API,
+      thumb: thumbOverride || (Store.imgDataUrl ? null : fallback),
+      style: styleLabel(),
+      time: Date.now()
+    };
     Store.recent.unshift(entry);
     if (Store.recent.length > RECENT_MAX) { Store.recent.length = RECENT_MAX; }
     renderRecent();
+    if (entry.thumb || !Store.imgDataUrl) { persistRecent(); return; }
     makeThumb(Store.imgDataUrl, function (small) {
       if (!small) { return; }
       entry.thumb = small;
@@ -518,6 +567,7 @@ function refreshChannelDot() {
     }
     var notes = ($('notesInput').value || '').trim();
     setGenerating(true);
+    Store.regenActive = false;   /* 上一次重转被中途放走时别把「重转」的状态带进这一单 */
     $('genDone').hidden = true;
     $('genStatusText').textContent = '正在提交任务…';
     var startedAt = Math.floor(Date.now() / 1000);
@@ -562,7 +612,9 @@ function refreshChannelDot() {
       /* 2. SSE 心跳流跟踪任务（对齐 /api/ai 防 524 的成熟方案）：
             服务端每 2s 写心跳注释，连接永不空闲，托管平台 30s 空闲 524 不会触发；
             心跳顺便驱动「已等待 N 秒」提示，status 事件驱动完成/失败。
-            流不可用时自动降级为 4s 轮询。 */
+            流不可用时自动降级为 4s 轮询。
+         3. 任务号落盘（A3）：标签页被系统回收 / 用户强杀重开，回来还能接上这一单。 */
+      savePending(taskId, startedAt);
       watchTask(taskId, startedAt);
       updateSteps();
     }).catch(function (err) {
@@ -631,6 +683,7 @@ function refreshChannelDot() {
         return data.taskId;
       });
     }).then(function (taskId) {
+      savePending(taskId, startedAt);
       watchTask(taskId, startedAt);
       updateSteps();
     }).catch(function (err) {
@@ -691,12 +744,12 @@ function refreshChannelDot() {
     }).catch(function () { /* 留存失败静默：本地「最近生成」仍可回看 72 小时 */ });
   }
 
-  function onTaskDone(taskId) {
+  function onTaskDone(taskId, thumbOverride) {
     var wasRegen = Store.regenActive;
     setGenerating(false);
-    openTaskHtml(taskId);
-    showDone(taskId);
-    addRecent(taskId);
+    clearPending();
+    showDone(taskId);   /* 不再自动 window.open：页内结果卡，用户点一下才跳（移动端不会被拦） */
+    addRecent(taskId, thumbOverride);
     updateSteps();
     /* 重转是同一张图的另一种切法，不新增作品行（避免列表里堆重复卡片） */
     if (!wasRegen) { saveWorkToCloud(taskId); }
@@ -711,6 +764,7 @@ function refreshChannelDot() {
 
   function onTaskFailed(st) {
     setGenerating(false);
+    clearPending();
     updateSteps();
     var wasRegen = Store.regenActive;
     Store.regenActive = false;
@@ -727,32 +781,203 @@ function refreshChannelDot() {
     }
   }
 
-  /* 补退入口：把本人被遗弃的 pending 单结掉（服务端幂等，失败静默） */
-  function settleOrders() {
+  /* 补退入口：把本人被遗弃的 pending 单结掉（服务端幂等，失败静默）
+     cb 可选：调用方已经写了结论文案时，用它把「已退回 N 积分」补进同一句，
+     否则这里默认的提示会把上一条更重要的话（比如「已中断」）顶掉。 */
+  function settleOrders(cb) {
     if (!auth || typeof auth.settleStaleOrders !== 'function') { return; }
     auth.settleStaleOrders().then(function (r) {
+      if (typeof cb === 'function') { cb(r); return; }
       if (r && r.refunded > 0) {
         studioMsg('已退回 ' + r.refunded + ' 积分（余额 ' + r.balance + '）');
       }
     });
   }
 
+  /* =========================================================
+   * 任务观察（A 组，2026-11-07）
+   * 数据依据见 .workbuddy/docs/出图等待体验-方案.md 第 10 节：真实 P50 132 秒，
+   * 用户切到别的 App 再回来、地铁里断网、系统回收标签页都会让「流」先死，
+   * 而任务其实还在服务端跑。这一段的全部目的就是：别让观察线死得比任务早。
+   *  ① 流干净关闭 / 读失败不再「就地放弃」：先查一次终态，没终态按 3s/6s/12s 退避重连，
+   *     三次都不成才降级 4s 轮询（旧行为只做最后一步）。
+   *  ② 看门狗：心跳 2s 一行，连续 15s 一行都没收到 = 连接挂死，主动断流走同一条自愈路径。
+   *  ③ /task?id= 404（服务重启 / 任务被清理）说人话：已中断、积分自动退回，并立刻补退。
+   *  ④ 任务号落盘：重开页面能回到「正在生成（已 N 秒）」接着看。
+   * ========================================================= */
+  var WATCH = {
+    ms: 15000,                    /* 连续这么久没收到任何一行（心跳 2s 一行）= 连接挂死 */
+    tick: 5000,                   /* 看门狗检查间隔 */
+    delays: [3000, 6000, 12000]   /* 重连退避；三次都失败才降级轮询 */
+  };
+  var PENDING_LS_KEY = 'pixelart-pending-v1';
+  var PENDING_MAX_AGE = 15 * 60 * 1000;
+
+  /* ---------- 任务号落盘（A3） ---------- */
+  function readPending() {
+    try {
+      var rec = JSON.parse(localStorage.getItem(PENDING_LS_KEY) || 'null');
+      return rec && typeof rec === 'object' ? rec : null;
+    } catch (_) { return null; }
+  }
+
+  function writePending(rec) {
+    try { localStorage.setItem(PENDING_LS_KEY, JSON.stringify(rec)); } catch (_) { /* 隐私模式：只影响恢复能力 */ }
+  }
+
+  function savePending(taskId, startedAt) {
+    var rec = {
+      taskId: taskId,
+      startedAt: startedAt,
+      apiBase: PIXELART_API,
+      styleId: Store.styleId,
+      style: styleLabel(),
+      regen: !!Store.regenActive,
+      thumb: null,
+      savedAt: Date.now()
+    };
+    writePending(rec);
+    /* 缩略图异步补进来：恢复后的「最近生成」条目也有图，不必再等一次上传 */
+    if (!Store.imgDataUrl) { return; }
+    makeThumb(Store.imgDataUrl, function (small) {
+      if (!small) { return; }
+      var cur = readPending();
+      if (!cur || cur.taskId !== taskId) { return; }
+      cur.thumb = small;
+      writePending(cur);
+    });
+  }
+
+  function clearPending() {
+    try { localStorage.removeItem(PENDING_LS_KEY); } catch (_) { /* 忽略 */ }
+  }
+
+  /* ---------- 查一次终态 ---------- */
+  /* cb(st, code)：st = 任务状态对象（null 表示没查到），code = HTTP 状态（0 = 网络失败） */
+  function checkTaskOnce(taskId, cb) {
+    var settled = false;
+    function fin(st, code) {
+      if (settled) { return; }
+      settled = true;
+      cb(st, code || 0);
+    }
+    fetch(PIXELART_API + '/task?id=' + encodeURIComponent(taskId), { cache: 'no-store' })
+      .then(function (r) {
+        if (r.status === 404) { return fin(null, 404); }
+        if (!r.ok) { return fin(null, r.status); }
+        return r.json().then(function (st) { fin(st, r.status); }, function () { fin(null, r.status); });
+      })
+      .catch(function () { fin(null, 0); });
+  }
+
+  /* 任务在服务端没了（重启 / 被清理）：这不是「网络慢」，要明确说清并补退 */
+  function onTaskMissing() {
+    setGenerating(false);
+    clearPending();
+    updateSteps();
+    Store.regenActive = false;
+    var head = '本次生成已中断（服务重启或任务已过期），';
+    studioMsg(head + '积分将自动退回，可在「我的 → 积分明细」核对', true);
+    settleOrders(function (r) {
+      if (r && r.refunded > 0) {
+        studioMsg(head + r.refunded + ' 积分已退回（余额 ' + r.balance + '）', true);
+      }
+    });
+  }
+
+  /* 断流后的统一收口：先查终态 → 有终态收尾；还在跑就退避重连，用尽转轮询 */
+  function resumeWatch(taskId, startedAt) {
+    if (!Store.generating || Store.watchTaskId !== taskId) { return; }
+    checkTaskOnce(taskId, function (st, code) {
+      if (!Store.generating || Store.watchTaskId !== taskId) { return; }
+      if (st) {
+        if (st.status === 'done') { onTaskDone(taskId); return; }
+        if (st.status === 'failed') { onTaskFailed(st); return; }
+      } else if (code === 404) {
+        onTaskMissing();
+        return;
+      }
+      var n = Store.watchRetry || 0;
+      if (n >= WATCH.delays.length) { startPolling(taskId, startedAt); return; }
+      Store.watchRetry = n + 1;
+      var delay = WATCH.delays[n];
+      $('genStatusText').textContent = '连接中断，' + Math.round(delay / 1000) + ' 秒后自动重连…（已 '
+        + Math.max(0, Math.floor(Date.now() / 1000) - startedAt) + ' 秒）';
+      setTimeout(function () {
+        if (!Store.generating || Store.watchTaskId !== taskId) { return; }
+        watchTask(taskId, startedAt, true);
+      }, delay);
+    });
+  }
+
   /* SSE 流：每 2s 一行 ": wait Ns" 心跳（驱动阶段提示），状态变化推 event: status */
-  function watchTask(taskId, startedAt) {
+  function watchTask(taskId, startedAt, isReconnect) {
     var token = ++Store.watchToken;
+    Store.watchTaskId = taskId;
+    Store.watchStartAt = startedAt;
+    if (!isReconnect) { Store.watchRetry = 0; }
+    if (Store.pollTimer) { clearInterval(Store.pollTimer); Store.pollTimer = null; }
+    if (Store.watchdogTimer) { clearInterval(Store.watchdogTimer); Store.watchdogTimer = null; }
     var ac = (typeof window.AbortController === 'function') ? new window.AbortController() : null;
     Store.watchAbort = ac;
     var opts = ac ? { signal: ac.signal } : undefined;
+
+    var closed = false;
+    var connAt = 0;
+    var lastDataAt = Date.now();
+    var myTimer = null;
+
+    /* 这一轮观察结束（任务本身没结束）：清计时器，交给 resumeWatch 决定重连还是轮询 */
+    function bail() {
+      if (closed) { return true; }
+      closed = true;
+      if (myTimer) {
+        clearInterval(myTimer);
+        if (Store.watchdogTimer === myTimer) { Store.watchdogTimer = null; }
+        myTimer = null;
+      }
+      /* 连接活过 20 秒又断：链路本来是好的，退避计数从头算，不要越重连越慢 */
+      if (connAt && Date.now() - connAt > 20000) { Store.watchRetry = 0; }
+      return false;
+    }
+
+    myTimer = setInterval(function () {
+      if (token !== Store.watchToken || closed) {
+        if (myTimer) { clearInterval(myTimer); myTimer = null; }
+        return;
+      }
+      if (Date.now() - lastDataAt < WATCH.ms) { return; }
+      /* 心跳 2s 一行，连续 WATCH.ms 一行都没到 = 连接挂死（切后台回来最典型） */
+      if (bail()) { return; }
+      if (ac) { try { ac.abort(); } catch (_) {} }
+      resumeWatch(taskId, startedAt);
+    }, Math.min(WATCH.tick, WATCH.ms));
+    Store.watchdogTimer = myTimer;
+
     fetch(PIXELART_API + '/task/stream?id=' + encodeURIComponent(taskId), opts)
       .then(function (res) {
+        if (res.status === 404) {
+          var gone = new Error('task gone');
+          gone.gone = true;
+          throw gone;
+        }
         if (!res.ok || !res.body || !res.body.getReader) { throw new Error('stream unavailable'); }
+        connAt = Date.now();
+        lastDataAt = Date.now();
         var reader = res.body.getReader();
         var decoder = (typeof TextDecoder === 'function') ? new TextDecoder('utf-8') : null;
         var buf = '';
         function pump() {
           if (token !== Store.watchToken) { try { reader.cancel(); } catch (_) {} return; }
           return reader.read().then(function (r) {
-            if (r.done) { return; }
+            if (token !== Store.watchToken) { try { reader.cancel(); } catch (_) {} return; }
+            if (r.done) {
+              /* 干净关闭但没等到终态：会话被系统掐了 / 网关断流（最常见），走自愈 */
+              if (bail()) { return; }
+              resumeWatch(taskId, startedAt);
+              return;
+            }
+            lastDataAt = Date.now();
             if (decoder) { buf += decoder.decode(r.value, { stream: true }); }
             else { for (var i = 0; i < r.value.length; i++) { buf += String.fromCharCode(r.value[i]); } }
             var idx;
@@ -770,8 +995,16 @@ function refreshChannelDot() {
                     var st;
                     try { st = JSON.parse(dl.slice(5).trim()); } catch (_) { st = null; }
                     if (!st) { continue; }
-                    if (st.status === 'done') { try { reader.cancel(); } catch (_) {} return onTaskDone(taskId); }
-                    if (st.status === 'failed') { try { reader.cancel(); } catch (_) {} return onTaskFailed(st); }
+                    if (st.status === 'done') {
+                      try { reader.cancel(); } catch (_) {}
+                      if (bail()) { return; }
+                      return onTaskDone(taskId);
+                    }
+                    if (st.status === 'failed') {
+                      try { reader.cancel(); } catch (_) {}
+                      if (bail()) { return; }
+                      return onTaskFailed(st);
+                    }
                   }
                 }
               }
@@ -781,14 +1014,17 @@ function refreshChannelDot() {
         }
         return pump();
       })
-      .catch(function () {
-        if (token !== Store.watchToken) { return; } /* 已取消/已开新一轮 */
-        startPolling(taskId, startedAt);            /* 流不可用 → 降级轮询 */
+      .catch(function (err) {
+        if (token !== Store.watchToken) { return; }   /* 已取消 / 已开新一轮 */
+        if (bail()) { return; }
+        if (err && err.gone) { onTaskMissing(); return; }
+        resumeWatch(taskId, startedAt);               /* 流不可用 → 自愈（重连 → 轮询） */
       });
   }
 
-  /* 降级：4s 间隔轮询（旧行为，SSE 不可用时兜底） */
+  /* 兜底：4s 间隔轮询（旧行为）。只在重连用尽后启用 */
   function startPolling(taskId, startedAt) {
+    if (Store.pollTimer) { clearInterval(Store.pollTimer); }
     var polls = 0;
     Store.pollTimer = setInterval(function () {
       polls += 1;
@@ -802,24 +1038,109 @@ function refreshChannelDot() {
         settleOrders();
         return;
       }
-      fetch(PIXELART_API + '/task?id=' + encodeURIComponent(taskId))
-        .then(function (r) { return r.json(); })
-        .then(function (st) {
-          if (st.status === 'done') { onTaskDone(taskId); }
-          else if (st.status === 'failed') { onTaskFailed(st); }
-        }).catch(function () { /* 单次轮询失败忽略，下一轮再试 */ });
+      checkTaskOnce(taskId, function (st, code) {
+        if (!Store.generating) { return; }
+        if (!st) {
+          if (code === 404) { onTaskMissing(); }
+          return; /* 单次查询失败忽略，下一轮再试 */
+        }
+        if (st.status === 'done') { onTaskDone(taskId); }
+        else if (st.status === 'failed') { onTaskFailed(st); }
+      });
     }, GEN_POLL_INTERVAL);
+  }
+
+  /* ---------- 回前台 / 恢复网络立刻对账（A2） ----------
+     visibilitychange（切回标签页）、pageshow（bfcache 返回）、online（断网恢复）
+     都会让「上一条流」变成尸体：先查一次终态，还在跑就重建流，别让用户盯着一具尸体。 */
+  function recheckGeneration() {
+    if (!Store.generating || !Store.watchTaskId) { return; }
+    if (typeof document !== 'undefined' && document.hidden) { return; }   /* 隐藏态不查，省电 */
+    var taskId = Store.watchTaskId;
+    var startedAt = Store.watchStartAt;
+    checkTaskOnce(taskId, function (st, code) {
+      if (!Store.generating || Store.watchTaskId !== taskId) { return; }
+      if (st) {
+        if (st.status === 'done') { onTaskDone(taskId); return; }
+        if (st.status === 'failed') { onTaskFailed(st); return; }
+      } else if (code === 404) {
+        onTaskMissing();
+        return;
+      }
+      Store.watchRetry = 0;
+      watchTask(taskId, startedAt, true);
+    });
+  }
+
+  /* ---------- 启动时恢复（A3） ---------- */
+  function restorePending() {
+    var rec = readPending();
+    if (!rec) { return; }
+    if (!rec.taskId || !/^[0-9a-f]{16}$/.test(String(rec.taskId))) { clearPending(); return; }
+    /* 通道切过：任务 id 只在建它的那个引擎实例里有效，跨通道查不到，丢弃即可 */
+    if (rec.apiBase && rec.apiBase !== PIXELART_API) { clearPending(); return; }
+    var startedAt = Number(rec.startedAt) || Math.floor((Number(rec.savedAt) || Date.now()) / 1000);
+    var age = Date.now() - (Number(rec.savedAt) || 0);
+    if (!(age >= 0) || age > PENDING_MAX_AGE) {
+      /* 超过 15 分钟：多半早就出图了，只核对一次，不把「正在生成」的假象摆出来 */
+      checkTaskOnce(rec.taskId, function (st) {
+        if (st && st.status === 'done') {
+          addRecent(rec.taskId, rec.thumb);
+          $('genStatus').hidden = true;
+          $('genDone').hidden = false;
+          Store.lastTaskId = rec.taskId;
+          $('genDoneMsg').textContent = '上次的图纸已经生成好了。';
+          var cover = PIXELART_API + '/task/cover?id=' + encodeURIComponent(rec.taskId);
+          if ($('doneThumb')) { $('doneThumb').hidden = false; $('doneThumb').setAttribute('src', cover); }
+          if ($('doneThumbLink')) { $('doneThumbLink').hidden = false; $('doneThumbLink').setAttribute('href', taskHtmlUrl(rec.taskId)); }
+          if ($('btnOpenResultTab')) { $('btnOpenResultTab').hidden = false; $('btnOpenResultTab').setAttribute('href', taskHtmlUrl(rec.taskId)); }
+          updateSteps();
+          studioMsg('上次的图纸已经生成好了，点「打开图纸」查看。');
+        }
+        clearPending();
+      });
+      return;
+    }
+    /* 15 分钟内：直接回到「正在生成」，秒数按 startedAt 回算（不从头计数） */
+    Store.regenActive = !!rec.regen;
+    if (rec.styleId) { Store.styleId = rec.styleId; }
+    setGenerating(true);
+    $('genDone').hidden = true;
+    $('genStatusText').textContent = stageText(Math.max(0, Math.floor(Date.now() / 1000) - startedAt));
+    checkTaskOnce(rec.taskId, function (st, code) {
+      if (!Store.generating) { return; }
+      if (st && st.status === 'done') { onTaskDone(rec.taskId, rec.thumb); return; }
+      if (st && st.status === 'failed') { onTaskFailed(st); return; }
+      if (!st && code === 404) { onTaskMissing(); return; }
+      Store.watchRetry = 0;
+      watchTask(rec.taskId, startedAt, true);
+    });
   }
 
   function bindGenerate() {
     $('btnGenerate').addEventListener('click', generateFlow);
     $('btnCancelPoll').addEventListener('click', function () {
+      /* 不删 pending：后台等待期间重开页面还能接回来（15 分钟内） */
       setGenerating(false);
-      studioMsg('已切到后台等待，完成后不会自动弹出；本轮积分不退，图纸请稍后重试或联系管理员', true);
+      studioMsg('已切到后台等待，页面刷新后 15 分钟内还能接回来；本轮积分不退，失败会自动退回', true);
     });
+    /* 出图收尾：主按钮同标签进图纸页（用户手势，移动端不会被拦）；
+       「新标签打开」是 <a target="_blank">，缩略图点击等同主按钮。 */
     $('btnOpenResult').addEventListener('click', function () {
-      if (Store.lastTaskId) { openTaskHtml(Store.lastTaskId); }
+      if (Store.lastTaskId) { gototaskHtml(Store.lastTaskId); }
     });
+    if ($('doneThumbLink')) {
+      $('doneThumbLink').addEventListener('click', function (e) {
+        e.preventDefault();
+        if (Store.lastTaskId) { gototaskHtml(Store.lastTaskId); }
+      });
+    }
+    if ($('doneThumb')) {
+      /* 封面还没归档好（极少数）时把整块缩略图收起来，不留一个破图 */
+      $('doneThumb').addEventListener('error', function () {
+        if ($('doneThumbLink')) { $('doneThumbLink').hidden = true; }
+      });
+    }
     $('btnRegen').addEventListener('click', regenFlow);
     $('btnDismissDone').addEventListener('click', function () {
       $('genDone').hidden = true;
@@ -841,10 +1162,18 @@ function refreshChannelDot() {
     bindGenerate();
     loadStyles();
     restoreRecent();
+    restorePending();   /* A3：上个页面留下的未完成任务，回来接着看 */
     mountChannelDot();
+    /* A2：切回标签页 / bfcache 返回 / 网络恢复 → 先对一次账，再决定要不要重建流 */
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) { refreshChannelDot(); }
+      if (document.hidden) { return; }
+      refreshChannelDot();
+      recheckGeneration();
     });
+    window.addEventListener('pageshow', function (e) {
+      if (e && e.persisted) { recheckGeneration(); }
+    });
+    window.addEventListener('online', recheckGeneration);
   }
 
   function cloudBootstrap() {
@@ -925,7 +1254,32 @@ function refreshChannelDot() {
   var getAuthToken = auth.getAuthToken;
 
   /* 测试钩子：jsdom 测试直接驱动内部状态与流程（线上无依赖方，仅挂 window 属性） */
-  window.__pixelart = { store: Store, generateFlow: generateFlow, regenFlow: regenFlow, acceptFile: acceptFile, renderStyleStrip: renderStyleStrip, addRecent: addRecent, renderRecent: renderRecent, restoreRecent: restoreRecent, persistRecent: persistRecent, makeThumb: makeThumb };
+  window.__pixelart = {
+    store: Store,
+    generateFlow: generateFlow,
+    regenFlow: regenFlow,
+    acceptFile: acceptFile,
+    renderStyleStrip: renderStyleStrip,
+    addRecent: addRecent,
+    renderRecent: renderRecent,
+    restoreRecent: restoreRecent,
+    persistRecent: persistRecent,
+    makeThumb: makeThumb,
+    /* A 组观察线（断流接管 / 回前台对账 / 任务号落盘恢复） */
+    stageText: stageText,
+    watchTask: watchTask,
+    startPolling: startPolling,
+    checkTaskOnce: checkTaskOnce,
+    recheckGeneration: recheckGeneration,
+    onTaskDone: onTaskDone,
+    onTaskFailed: onTaskFailed,
+    onTaskMissing: onTaskMissing,
+    restorePending: restorePending,
+    savePending: savePending,
+    readPending: readPending,
+    clearPending: clearPending,
+    watch: WATCH
+  };
 
   restoreAuth();
 })();

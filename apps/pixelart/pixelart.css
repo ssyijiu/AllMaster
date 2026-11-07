@@ -374,6 +374,29 @@
       margin-top: var(--space-5);
     }
     .done-actions .btn { flex: 1 1 132px; }
+    /* 结果卡缩略图（A4）：先给一个「确实出图了」的实感；点它等同「打开图纸」 */
+    .done-thumb {
+      display: block;
+      margin-top: var(--space-3);
+      padding: var(--space-2);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-soft);
+      background: #FFFFFF;
+      min-width: 0;
+      animation: pa-rise var(--motion-slow) var(--ease-exit);
+    }
+    .done-thumb img {
+      display: block;
+      width: 100%;
+      max-height: 240px;
+      object-fit: contain;
+      border-radius: var(--radius-md);
+      /* 像素图放大不要糊：最近生成 / 工作台里的缩略图同样受益 */
+      image-rendering: pixelated;
+    }
+    .done-sub { margin: var(--space-3) 0 0; font-size: var(--text-xs); }
+    .done-sub a { color: var(--teal-700); text-decoration: none; }
+    .done-sub a:hover { text-decoration: underline; }
 
     /* ===== 最近生成（本地缩略图回看入口；图纸仅保存 72 小时） ===== */
     .recent { margin-top: var(--space-5); }
