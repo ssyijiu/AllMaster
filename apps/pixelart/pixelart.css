@@ -394,6 +394,13 @@
       /* 像素图放大不要糊：最近生成 / 工作台里的缩略图同样受益 */
       image-rendering: pixelated;
     }
+    /* 「合并相近色」的作用说明：把「不消耗积分」写在按钮外，按钮文案才能只讲动作 */
+    .done-hint {
+      margin: var(--space-2) 0 0;
+      font-size: var(--text-xs);
+      color: var(--muted);
+      text-align: center;
+    }
     .done-sub { margin: var(--space-3) 0 0; font-size: var(--text-xs); }
     .done-sub a { color: var(--teal-700); text-decoration: none; }
     .done-sub a:hover { text-decoration: underline; }

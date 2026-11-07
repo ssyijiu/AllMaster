@@ -133,7 +133,8 @@ function refreshChannelDot() {
     watchRetry: 0,        /* 连续重连次数（活过 20 秒的连接会把计数清零） */
     watchdogTimer: null,  /* 心跳看门狗计时器 */
     lastTaskId: null,
-    regenActive: false,   /* 本轮观察的是「一键重转」任务（不扣积分，文案不同） */
+    regenActive: false,   /* 本轮观察的是「合并相近色」任务（不扣积分，文案不同） */
+    orphanAt: 0,          /* 上次补归档扫描时间（节流用） */
     recent: [],           /* 最近生成：[{ id, thumb, style, time }]，最多 RECENT_MAX 条 */
     lastTxnId: null,
     lastOrderId: null     /* 生成单号：服务端建单扣费时下发，用于对账/补退排查 */
@@ -348,12 +349,20 @@ function refreshChannelDot() {
      旧档位 0/20/50/85 会在 85 秒后永久冻在最后一句，而真实 P50 是 132 秒 ——
      用户看到的就是「卡住不动」，这也是「看起来失败」的一大来源。 */
   var STAGE_HINTS = [
-    [0,   'AI 正在读懂你的图片…'],
+    [0,   '正在读懂你的图片…'],
     [22,  '正在生成像素底稿…'],
     [80,  '正在切格与配色（五档规格）…'],
     [118, '正在拼装可编辑图纸…'],
     [175, '图纸还在生成，这单比平时慢一些…']
   ];
+
+  /* 空状态（图标 + 「生成的图纸会出现在这里」）只在「既没在生成、也没有结果卡」时出现。
+     否则它会一直顶在进度条/结果卡上方（2026-11-07 用户截图）。 */
+  function syncResultEmpty() {
+    var el = $('resultEmpty');
+    if (!el) { return; }
+    el.hidden = Store.generating || $('genDone').hidden === false;
+  }
 
   function setGenerating(on) {
     Store.generating = on;
@@ -362,6 +371,7 @@ function refreshChannelDot() {
     $('btnGenIdle').hidden = on;
     $('btnGenBusy').hidden = !on;
     $('genStatus').hidden = !on;
+    syncResultEmpty();
     updateSteps();
     if (!on) {
       if (Store.pollTimer) { clearInterval(Store.pollTimer); Store.pollTimer = null; }
@@ -441,9 +451,10 @@ function refreshChannelDot() {
       tabLink.setAttribute('href', taskHtmlUrl(taskId));
     }
     $('genDoneMsg').textContent = wasRegen
-      ? '重转完成！近色已合并，原图纸仍保留。'
+      ? '已合并相近色！原图纸仍保留。'
       : '图纸已生成！点下面的按钮打开。';
-    studioMsg(wasRegen ? '重转完成，未消耗积分。图纸页里可切规格、改色号、导出。' : '生成完成，消耗 1 积分。图纸页里可切规格、改色号、导出。', false);
+    studioMsg(wasRegen ? '合并相近色完成，未消耗积分。图纸页里可切规格、改色号、导出。' : '生成完成，消耗 1 积分。图纸页里可切规格、改色号、导出。', false);
+    syncResultEmpty();
   }
 
   /* ---------- 最近生成（本地回看入口，最多 6 条） ----------
@@ -481,16 +492,19 @@ function refreshChannelDot() {
   }
 
   /* thumbOverride：恢复出来的任务没有本地原图（页面重开过），优先用它落盘的缩略图；
-     再退一步用服务端封面地址（同源、长缓存），保证「最近生成」里的条目看得见。 */
-  function addRecent(taskId, thumbOverride) {
+     再退一步用服务端封面地址（同源、长缓存），保证「最近生成」里的条目看得见。
+     apiOverride / styleOverride：补归档孤儿任务时用它们记下**当时**的通道与画风，
+     不能拿当前页面的值顶替（否则在 A 通道生成的单会被记成 B 通道，点开 404）。 */
+  function addRecent(taskId, thumbOverride, apiOverride, styleOverride) {
     /* api：记下这单是在哪个通道生成的。任务 id 只在自己的引擎实例里有效，
        通道切过之后用当前 base 去点会 404 —— 存下来才能一直点得开。 */
-    var fallback = PIXELART_API + '/task/cover?id=' + encodeURIComponent(taskId);
+    var api = apiOverride || PIXELART_API;
+    var fallback = api + '/task/cover?id=' + encodeURIComponent(taskId);
     var entry = {
       id: taskId,
-      api: PIXELART_API,
+      api: api,
       thumb: thumbOverride || (Store.imgDataUrl ? null : fallback),
-      style: styleLabel(),
+      style: styleOverride || styleLabel(),
       time: Date.now()
     };
     Store.recent.unshift(entry);
@@ -577,7 +591,7 @@ function refreshChannelDot() {
     }
     var notes = ($('notesInput').value || '').trim();
     setGenerating(true);
-    Store.regenActive = false;   /* 上一次重转被中途放走时别把「重转」的状态带进这一单 */
+    Store.regenActive = false;   /* 上一次合并被中途放走时别把「合并」的状态带进这一单 */
     $('genDone').hidden = true;
     $('genStatusText').textContent = '正在提交任务…';
     var startedAt = Math.floor(Date.now() / 1000);
@@ -665,20 +679,20 @@ function refreshChannelDot() {
     });
   }
 
-  /* 一键重转：对上一次生成的图纸做「合并近色重新转图」，不重新生图、不扣积分 */
+  /* 合并相近色：对上一次生成的图纸做「合并近色重新转图」，不重新生图、不扣积分 */
   function regenFlow() {
     if (Store.generating) { return; }
     if (!Store.lastTaskId) {
-      studioMsg('还没有可重转的图纸，请先生成一张', true);
+      studioMsg('还没有可处理的图纸，请先生成一张', true);
       return;
     }
     studioMsg('');
     setGenerating(true);
-    Store.lastTxnId = null;   /* 重转不扣积分，失败也无需退回 */
+    Store.lastTxnId = null;   /* 合并不扣积分，失败也无需退回 */
     Store.lastOrderId = null;
     Store.regenActive = true;
     $('genDone').hidden = true;
-    $('genStatusText').textContent = '正在重转图纸（合并近色，不重新生图）…';
+    $('genStatusText').textContent = '正在合并相近色（不重新生图）…';
     var startedAt = Math.floor(Date.now() / 1000);
     fetch(PIXELART_API + '/regen', {
       method: 'POST',
@@ -687,7 +701,7 @@ function refreshChannelDot() {
     }).then(function (res) {
       return res.json().then(function (data) {
         if (!res.ok || !data.taskId) {
-          var e = new Error((data.error && data.error.message) || '重转提交失败，请稍后重试');
+          var e = new Error((data.error && data.error.message) || '提交失败，请稍后重试');
           throw e;
         }
         return data.taskId;
@@ -699,7 +713,7 @@ function refreshChannelDot() {
     }).catch(function (err) {
       setGenerating(false);
       Store.regenActive = false;
-      studioMsg((err && err.message) || '重转失败，请稍后重试', true);
+      studioMsg((err && err.message) || '合并相近色失败，请稍后重试', true);
     });
   }
 
@@ -724,13 +738,16 @@ function refreshChannelDot() {
     });
   }
 
-  function saveWorkToCloud(taskId) {
+  /* apiBase：补归档「孤儿任务」时可能来自另一个入口（/api/pixelart2 等），
+     不传就按当前页面通道走。 */
+  function saveWorkToCloud(taskId, apiBase) {
     var user = Store.state.user;
     var cloud = Platform.cloud.getClient();
+    var base = apiBase || PIXELART_API;
     if (!taskId || !user || !user.id || !cloud || !cloud.storage) { return; }
     var ts = Date.now();
     var localStyle = styleLabel();
-    var metaP = fetch(PIXELART_API + '/task/meta?id=' + encodeURIComponent(taskId))
+    var metaP = fetch(base + '/task/meta?id=' + encodeURIComponent(taskId))
       .then(function (r) { return r.ok ? r.json() : null; })
       .catch(function () { return null; });
     withTimeout(metaP, 6000).then(function (meta) {
@@ -745,7 +762,7 @@ function refreshChannelDot() {
         title: (meta && meta.title) || (label ? label + '拼豆图纸' : '拼豆图纸'),
         colors: (meta && meta.colors) || null,
         createdAt: ts,
-        apiBase: PIXELART_API
+        apiBase: base
       };
       var path;
       try { path = cloud.storage.userPath(user.id, 'pixelart/' + ts + '-' + taskId + '.json'); } catch (_) { return null; }
@@ -761,7 +778,7 @@ function refreshChannelDot() {
     showDone(taskId);   /* 不再自动 window.open：页内结果卡，用户点一下才跳（移动端不会被拦） */
     addRecent(taskId, thumbOverride);
     updateSteps();
-    /* 重转是同一张图的另一种切法，不新增作品行（避免列表里堆重复卡片） */
+    /* 合并相近色是同一张图的另一种切法，不新增作品行（避免列表里堆重复卡片） */
     if (!wasRegen) { saveWorkToCloud(taskId); }
   }
 
@@ -779,7 +796,7 @@ function refreshChannelDot() {
     var wasRegen = Store.regenActive;
     Store.regenActive = false;
     if (wasRegen) {
-      studioMsg('重转没成功，' + failReason(st) + '。原图纸不受影响，也未扣积分', true);
+      studioMsg('合并没成功，' + failReason(st) + '。原图纸不受影响，也未扣积分', true);
       return;
     }
     /* 退款由服务端在任务收尾时完成（order_fail 与状态变更同事务、幂等），
@@ -822,6 +839,12 @@ function refreshChannelDot() {
   };
   var PENDING_LS_KEY = 'pixelart-pending-v1';
   var PENDING_MAX_AGE = 15 * 60 * 1000;
+  /* 孤儿队列：pending 只能记一条，开新单会把旧单挤掉。被挤掉的单服务端仍在跑、
+     仍会出图，必须留个记号在空闲时补归档，否则「我的」里永远看不到它。 */
+  var ORPHAN_LS_KEY = 'pixelart-orphans-v1';
+  var ORPHAN_MAX = 5;
+  var ORPHAN_MAX_AGE = 30 * 60 * 1000;   /* 半小时还没结果：基本是失败单，不再追 */
+  var ORPHAN_DRAIN_GAP = 20000;          /* 两次补归档扫描的最小间隔 */
 
   /* ---------- 任务号落盘（A3） ---------- */
   function readPending() {
@@ -836,6 +859,10 @@ function refreshChannelDot() {
   }
 
   function savePending(taskId, startedAt) {
+    /* 先把被这一单挤掉的旧单记进孤儿队列：它服务端还在跑、还会出图，
+       不能因为 pending 只能存一条就彻底失联。 */
+    var prev = readPending();
+    if (prev && prev.taskId && prev.taskId !== taskId) { parkOrphan(prev); }
     var rec = {
       taskId: taskId,
       startedAt: startedAt,
@@ -862,16 +889,81 @@ function refreshChannelDot() {
     try { localStorage.removeItem(PENDING_LS_KEY); } catch (_) { /* 忽略 */ }
   }
 
+  /* ---------- 孤儿任务：被新单挤掉、但服务端仍在跑的那一单 ----------
+     触发场景（2026-11-07 线上实测）：A 生成中点「后台等待」→ 上传 B 点生成。
+     A 没有被终止（python 子进程独立跑完，13:50:58–13:52:41），图纸也生成了，
+     但 pending 被 B 覆盖、观察线被 B 抢走 → 没人给 A 归档 → 「我的」里看不到。
+     这里把顶掉的 pending 存进队列，页面空闲时补归档（最近生成 + 云端作品）。 */
+  function readOrphans() {
+    try {
+      var list = JSON.parse(localStorage.getItem(ORPHAN_LS_KEY) || '[]');
+      return Array.isArray(list) ? list : [];
+    } catch (_) { return []; }
+  }
+
+  function writeOrphans(list) {
+    try { localStorage.setItem(ORPHAN_LS_KEY, JSON.stringify((list || []).slice(0, ORPHAN_MAX))); } catch (_) { /* 忽略 */ }
+  }
+
+  function parkOrphan(rec) {
+    if (!rec || !/^[0-9a-f]{16}$/.test(String(rec.taskId || ''))) { return; }
+    var list = readOrphans().filter(function (x) { return x && x.taskId !== rec.taskId; });
+    list.unshift({
+      taskId: rec.taskId,
+      apiBase: rec.apiBase || PIXELART_API,
+      style: rec.style || '',
+      regen: !!rec.regen,
+      thumb: rec.thumb || null,
+      at: Number(rec.savedAt) || Date.now()
+    });
+    writeOrphans(list);
+  }
+
+  /* 空闲时补归档：done → 补进「最近生成」+ 云端作品；还在跑 → 留着下次再看。
+     404 / failed / 超过半小时 → 丢弃（任务没了或已失败，不必一直追）。
+     节流 ORPHAN_DRAIN_GAP：回前台/切页签会频繁触发，别把接口刷爆。 */
+  function drainOrphans() {
+    var list = readOrphans();
+    if (!list.length) { return; }
+    var now = Date.now();
+    if (Store.orphanAt && now - Store.orphanAt < ORPHAN_DRAIN_GAP) { return; }
+    Store.orphanAt = now;
+    var keep = [];
+    var left = list.length;
+    function finish() {
+      left -= 1;
+      if (left <= 0) { writeOrphans(keep); }
+    }
+    list.forEach(function (rec) {
+      if (!rec || !rec.taskId) { finish(); return; }
+      var age = now - (Number(rec.at) || 0);
+      if (!(age >= 0) || age > ORPHAN_MAX_AGE) { finish(); return; }
+      var base = rec.apiBase || PIXELART_API;
+      checkTaskOnce(rec.taskId, function (st, code) {
+        if (st && st.status === 'done') {
+          /* 缩略图用服务端封面：这一单上传的原图早就不在页面里了 */
+          addRecent(rec.taskId, rec.thumb || (base + '/task/cover?id=' + encodeURIComponent(rec.taskId)), base, rec.style);
+          if (!rec.regen) { saveWorkToCloud(rec.taskId, base); }
+          finish();
+          return;
+        }
+        if (code === 200 && st && st.status !== 'failed') { keep.push(rec); }
+        finish();
+      }, base);
+    });
+  }
+
   /* ---------- 查一次终态 ---------- */
-  /* cb(st, code)：st = 任务状态对象（null 表示没查到），code = HTTP 状态（0 = 网络失败） */
-  function checkTaskOnce(taskId, cb) {
+  /* cb(st, code)：st = 任务状态对象（null 表示没查到），code = HTTP 状态（0 = 网络失败）
+     base：查哪个引擎实例（补归档孤儿任务时会跨入口），不传按当前页面通道 */
+  function checkTaskOnce(taskId, cb, base) {
     var settled = false;
     function fin(st, code) {
       if (settled) { return; }
       settled = true;
       cb(st, code || 0);
     }
-    fetch(PIXELART_API + '/task?id=' + encodeURIComponent(taskId), { cache: 'no-store' })
+    fetch((base || PIXELART_API) + '/task?id=' + encodeURIComponent(taskId), { cache: 'no-store' })
       .then(function (r) {
         if (r.status === 404) { return fin(null, 404); }
         if (!r.ok) { return fin(null, r.status); }
@@ -1131,9 +1223,10 @@ function refreshChannelDot() {
   function bindGenerate() {
     $('btnGenerate').addEventListener('click', generateFlow);
     $('btnCancelPoll').addEventListener('click', function () {
-      /* 不删 pending：后台等待期间重开页面还能接回来（15 分钟内） */
+      /* 不删 pending：后台等待期间重开页面还能接回来（15 分钟内）。
+         这时允许再开新单（pending 交给新单），旧单进孤儿队列，跑完自动补归档。 */
       setGenerating(false);
-      studioMsg('已切到后台等待，页面刷新后 15 分钟内还能接回来；本轮积分不退，失败会自动退回', true);
+      studioMsg('已切到后台等待：这一张会继续跑完并自动存进「我的」，刷新页面 15 分钟内也接得回来。现在可以再生成一张。', false);
     });
     /* 出图收尾：主按钮同标签进图纸页（用户手势，移动端不会被拦）；
        「新标签打开」是 <a target="_blank">，缩略图点击等同主按钮。 */
@@ -1153,9 +1246,6 @@ function refreshChannelDot() {
       });
     }
     $('btnRegen').addEventListener('click', regenFlow);
-    $('btnDismissDone').addEventListener('click', function () {
-      $('genDone').hidden = true;
-    });
   }
 
   /* ---------- 启动：OAuth 回调分发 → 常规启动 ---------- */
@@ -1174,17 +1264,19 @@ function refreshChannelDot() {
     loadStyles();
     restoreRecent();
     restorePending();   /* A3：上个页面留下的未完成任务，回来接着看 */
+    drainOrphans();     /* 被新单挤掉的旧单：补归档，别让它只存在于服务器上 */
     mountChannelDot();
     /* A2：切回标签页 / bfcache 返回 / 网络恢复 → 先对一次账，再决定要不要重建流 */
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) { return; }
       refreshChannelDot();
       recheckGeneration();
+      drainOrphans();
     });
     window.addEventListener('pageshow', function (e) {
-      if (e && e.persisted) { recheckGeneration(); }
+      if (e && e.persisted) { recheckGeneration(); drainOrphans(); }
     });
-    window.addEventListener('online', recheckGeneration);
+    window.addEventListener('online', function () { recheckGeneration(); drainOrphans(); });
   }
 
   function cloudBootstrap() {
@@ -1289,6 +1381,11 @@ function refreshChannelDot() {
     savePending: savePending,
     readPending: readPending,
     clearPending: clearPending,
+    setGenerating: setGenerating,
+    syncResultEmpty: syncResultEmpty,
+    parkOrphan: parkOrphan,
+    readOrphans: readOrphans,
+    drainOrphans: drainOrphans,
     watch: WATCH
   };
 
