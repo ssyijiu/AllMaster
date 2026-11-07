@@ -9,6 +9,16 @@
 /* API base：主页默认 /api/pixelart；经典版页面由服务端注入 window.PIXELART_API_BASE 切到 /api/pixelart-vp */
 var PIXELART_API = (typeof window !== 'undefined' && window.PIXELART_API_BASE) || '/api/pixelart';
 
+/* 引擎归一：/api/pixelart2 是「固定腾讯」入口，服务端把 /api/pixelart2/* 内部改写成
+   /api/pixelart-vp/*，两者是**同一个引擎实例、同一份任务目录**（shared/my.js 用同一约定）。
+   做通道比对时必须归一，否则「在 / 上生成、从 /apps/pixelart2 打开」会被误判成跨通道而丢弃。 */
+function engineKey(base) {
+  var v = String(base || '');
+  if (v === '/api/pixelart2' || v === '/api/pixelart-vp') { return '/api/pixelart-vp'; }
+  return v;
+}
+function sameEngine(a, b) { return engineKey(a) === engineKey(b); }
+
 /* ---------- 生图通道提示点（左下角 7px 圆点） ----------
  * 腾讯 = 灰蓝，自研 = 琥珀。刻意不写字、不参与布局：它是给「知道的人」看的运维标记，
  * 不是给用户读的说明（2026-11-04 定：所有人可见但不显眼）。
@@ -1077,8 +1087,9 @@ function refreshChannelDot() {
     var rec = readPending();
     if (!rec) { return; }
     if (!rec.taskId || !/^[0-9a-f]{16}$/.test(String(rec.taskId))) { clearPending(); return; }
-    /* 通道切过：任务 id 只在建它的那个引擎实例里有效，跨通道查不到，丢弃即可 */
-    if (rec.apiBase && rec.apiBase !== PIXELART_API) { clearPending(); return; }
+    /* 通道切过：任务 id 只在建它的那个引擎实例里有效，跨引擎查不到，丢弃即可。
+       /api/pixelart2 与 /api/pixelart-vp 是同一引擎（服务端改写），必须归一后再比。 */
+    if (rec.apiBase && !sameEngine(rec.apiBase, PIXELART_API)) { clearPending(); return; }
     var startedAt = Number(rec.startedAt) || Math.floor((Number(rec.savedAt) || Date.now()) / 1000);
     var age = Date.now() - (Number(rec.savedAt) || 0);
     if (!(age >= 0) || age > PENDING_MAX_AGE) {
